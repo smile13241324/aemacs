@@ -1,14 +1,14 @@
-"""Install Æmacs AI Agents for GitHub Copilot and Gemini CLI."""
+"""Install Aemacs AI Agents for GitHub Copilot and Gemini CLI."""
 
 import os
 import re
 
 # ==========================================
-#  SPACEMACS AGENT BUILDER (V17.5 - COPILOT TOOLBOX)
+#  AEMACS AGENT BUILDER (V20 - PANTHEON HYBRID)
 # ==========================================
-# BASE: V17 (Stable)
-# NEW: Adds textual "REQUIRED TOOLBOX" instruction to Copilot agents,
-#      telling them which profile to load (similar to Gemini's !cat).
+# BASE: V17.5 (Copilot Toolbox Text)
+# MERGED WITH: V19 (Robust Indentation Regex)
+# NEW: Added Aemacs Pantheon (Kairon, Nagah, Bwah, Resonance, Zolg)
 # ==========================================
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -19,22 +19,29 @@ SOURCES = [
     {
         "file": "coding_ai.md",
         "marker": "### The Specialist Team Roster",
-        "type": "specialist"
+        "type": "specialist",
+        # Split only on Role to avoid splitting on nested Name fields
+        # Allow whitespace (\s*) at start for indented lists
+        "split_regex": r"(?m)^\s*-\s+\*\*Role:\*\*\s+"
     },
     {
         "file": "general_ai.md",
         "marker": "### Default Universal Persona",
         "type": "strategic",
-        "footer_pattern": r"(?m)^## 5\. How to Choose.*"
+        "footer_pattern": r"(?m)^## 5\. How to Choose.*",
+        "split_regex": r"(?m)^\s*-\s+\*\*Role:\*\*\s+"
     },
     {
         "file": "stakeholder_ai.md",
         "marker": "## 1. The Core User Base (The Community)",
-        "type": "simulation"
+        "type": "simulation",
+        # Stakeholders are defined by Name
+        "split_regex": r"(?m)^\s*-\s+\*\*Name:\*\*\s+"
     }
 ]
 
 NAME_MAPPING = {
+    # Strategists
     "professor": "professor",
     "mckarthy": "professor",
     "kael": "kaelthas",
@@ -47,6 +54,8 @@ NAME_MAPPING = {
     "scribe": "scribe",
     "reginald": "reginald",
     "kallista": "kallista",
+
+    # Specialists (Old Guard)
     "spacky": "spacky",
     "bzzrts": "bzzrts",
     "vala": "vala",
@@ -56,6 +65,17 @@ NAME_MAPPING = {
     "golem": "golem",
     "skeek": "skeek",
     "don": "don",
+
+    # Specialists (New Pantheon)
+    "kairon": "kairon",
+    "nagah": "nagah",
+    "bwah": "bwah",
+    "resonance": "resonance",
+    "haskell": "resonance",
+    "zolg": "zolg",
+    "clojure": "zolg",
+
+    # Simulators
     "chen": "chen",
     "vlad": "vlad",
     "rms": "rms",
@@ -64,14 +84,20 @@ NAME_MAPPING = {
 }
 
 PROFILE_MAP = {
+    # Legacy / Mixed
     "spacky": "ai/profile_elisp.md",
     "bzzrts": "ai/profile_emacs_ui.md",
     "nexus": "ai/profile_layers.md",
     "vala": "ai/profile_ci_github.md",
     "don": "ai/profile_elisp_testing.md",
     "golem": "ai/profile_doc.md",
+
+    # The New Tech Stack
     "kairon": "ai/profile_rust.md",
-    "nagah": "ai/profile_python.md"
+    "nagah": "ai/profile_python.md",
+    "bwah": "ai/profile_go.md",
+    "resonance": "ai/profile_haskell.md",
+    "zolg": "ai/profile_clojure.md"
 }
 
 def ensure_dir(directory):
@@ -114,25 +140,40 @@ def clean_header_content(header):
     cleaned = re.sub(r'(\n\s*[-*]{3,}\s*)+$', '', header.strip())
     return cleaned.strip()
 
-def parse_agents_from_text(roster_content, source_type):
+def clean_body_content(body):
+    # Removes trailing dashes from agent body
+    cleaned = re.sub(r'(\n\s*[-*]{3,}\s*)+$', '', body.strip())
+    return cleaned.strip()
+
+def parse_agents_from_text(roster_content, source_type, split_regex):
     agents = []
-    raw_splits = re.split(r"(?m)^-\s+\*\*(Role|Name):\*\*\s+", roster_content)
+    # Split using the specific regex for this file type
+    raw_splits = re.split(split_regex, roster_content)
 
     if len(raw_splits) < 2:
         return agents
 
+    # The first chunk is usually empty or intro text before the first agent
     iterator = iter(raw_splits[1:])
-    for key, chunk in zip(iterator, iterator):
+
+    # Determine the key based on the regex used
+    key = "Role" if "Role" in split_regex else "Name"
+
+    for chunk in iterator:
         role = "Unknown"
         name = "Unknown"
 
+        # Clean trailing headers like "### "
         chunk = re.split(r"(?m)^### ", chunk)[0]
 
         if key == "Role":
+            # First line is Role
             role = chunk.split("\n")[0].strip()
+            # Find Name
             name_match = re.search(r"-\s+\*\*Name:\*\*\s+(.*?)$", chunk, re.MULTILINE)
             name = name_match.group(1).strip() if name_match else "Unknown"
         elif key == "Name":
+            # First line is Name
             name = chunk.split("\n")[0].strip()
             role_match = re.search(r"-\s+\*\*Role:\*\*\s+(.*?)$", chunk, re.MULTILINE)
             role = role_match.group(1).strip() if role_match else "Simulation Persona"
@@ -162,6 +203,7 @@ def generate_copilot_files(global_headers, agents):
         yaml = f"---\nname: {agent['slug']}\ndescription: {agent['role']}\nmodel: {target_model}\n---"
         context = global_headers.get(agent["type"], "")
         mode_text = get_mode_text(agent["type"])
+        body_clean = clean_body_content(agent['body'])
 
         # NEW: Toolbox Logic for Copilot
         slug = agent["slug"]
@@ -174,7 +216,7 @@ def generate_copilot_files(global_headers, agents):
             toolbox_text = "\n\n---\n**REQUIRED TOOLBOX**\nNo specific profile assigned. If implementation is needed, ask the user to load the appropriate `profile_*.md`.\n"
 
         # Structure: YAML -> Context -> Identity -> Toolbox (New) -> Mode
-        content = f"{yaml}\n\n{context}\n\n---\n\n# Identity: {agent['name']}\n{agent['body']}{toolbox_text}\n\n---\n{mode_text}"
+        content = f"{yaml}\n\n{context}\n\n---\n\n# Identity: {agent['name']}\n{body_clean}{toolbox_text}\n\n---\n{mode_text}"
 
         with open(path, "w", encoding="utf-8") as f:
             f.write(content)
@@ -189,6 +231,7 @@ def generate_gemini_commands(global_headers, agents):
         slug = agent["slug"]
         profile_path = PROFILE_MAP.get(slug)
         mode_section = get_mode_text(agent["type"])
+        body_clean = clean_body_content(agent['body'])
 
         toolbox_section = ""
         if profile_path:
@@ -205,7 +248,7 @@ SYSTEM INSTRUCTIONS:
 
 ---
 AGENT PERSONA:
-{agent['body']}
+{body_clean}
 
 ---
 {mode_section}
@@ -265,7 +308,8 @@ def main():
 
         global_headers[source["type"]] = header
 
-        agents = parse_agents_from_text(roster_raw, source["type"])
+        # Use strict regex splitting (V19 Logic)
+        agents = parse_agents_from_text(roster_raw, source["type"], source["split_regex"])
         all_agents.extend(agents)
         print(f"   Found {len(agents)} agents.")
 

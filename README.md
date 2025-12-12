@@ -68,3 +68,5 @@ The code belongs to the community. Forever free. Forever open.
 
 ---
 *Forged with 💜 by Maxi & Gyni.*
+
+<a href="https://spacemacs.org"><img src="assets/spacemacs-badge.svg" alt="Made with Spacemacs" height="20"></a>
