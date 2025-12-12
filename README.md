@@ -15,6 +15,19 @@ We preserve the **Soul** (Keybindings, Org-Mode, Magit) but replace the **Body**
 > **Status:** 🚧 **Pre-Alpha / Architectural Prototype** 🚧
 > *This is a "Phoenix Project". We are currently forging the core.*
 
+## 🧬 Heritage & Evolution
+**Æmacs is the spiritual successor to Spacemacs.**
+
+We stand on the shoulders of giants. Spacemacs revolutionized the editor landscape by uniting the power of Emacs with the ergonomics of Vim. It proved that community-driven configuration could tame the beast.
+
+**But we cannot stay there.**
+Spacemacs is bound by the technical limitations of the 1980s (C-Core, Single-Threaded Elisp, Terminal-centricity). To honor the vision of Spacemacs, we must transcend its implementation.
+
+* **Forged in Spacemacs:** The unified agentic AI architecture ("The Living Mesh") powering Æmacs was originally prototyped, tested, and perfected within the Spacemacs ecosystem itself. We used the old tool to design the new one.
+* **Built for the Future:** Where Spacemacs optimized the *legacy*, Æmacs builds the *next generation*. We are taking the best concepts (Layers, Mnemonics, Magit) and replanting them in a soil where they can truly flourish: **Rust**.
+
+---
+
 ## 🏛️ The 4 Pillars of Æmacs
 
 ### 1. The Iron Core (Rust Foundation) 🦀
