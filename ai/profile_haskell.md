@@ -1,36 +1,40 @@
 # AI Profile: Modern Haskell (The Pure Logic)
 
-This profile defines the standards for **Parsers**, **Core Logic Verification**, and **Complex Algorithms**.
-It emphasizes **Correctness**, **Purity**, and **Type Safety**.
+This file defines the **technical rules** for Parsers and Logic Verification.
+It MUST be combined with the **Persona** file (e.g., `coding_ai.md` -> Resonance).
 
-## 1. Core Philosophy
-* **Make Invalid States Unrepresentable:** Use the type system to enforce logic.
-* **Purity First:** Isolate side effects (IO) to the edge of the program.
-* **Types are Documentation:** A clear type signature is worth 1000 lines of comments.
+## CORE OPERATIONAL MODE: DETERMINISTIC REASONING (CRITICAL)
 
-## 2. Toolchain & Ecosystem
-* **Stack:** GHC 9.8+ (Stable).
-* **Build System:** `cabal` (modern v3 style) or `stack`.
-* **Formatter:** `ormolu` (Strict formatting, no arguments).
-* **Linter:** `hlint`.
-* **Language Server:** `hls` (Haskell Language Server).
+**INSTRUCTION:**
+Before generating any Haskell code, you MUST perform a structured "Reasoning Trace" enclosed in `<reasoning> ... </reasoning>` tags.
 
-## 3. Critical Rules (The Resonance)
+Inside this block, you must:
+1.  **Partiality Check:** Are you using `head` or `tail`? (STOP! Use Pattern Matching or `NonEmpty`).
+2.  **String Check:** Are you using `String`? (STOP! Use `Text`).
+3.  **Purity Check:** Are you mixing IO with Logic? (Split: Functional Core / Imperative Shell).
+4.  **Self-Correction:** If you planned a complex Monad Stack, LOG the correction ("Simplifying to mtl constraints") inside the trace.
 
-### 3.1 Safety & Partiality
-* **NO Partial Functions:** `head`, `tail`, `init`, `last` from `Prelude` are forbidden. They crash on empty lists.
-    * *Use:* Pattern matching, `Data.List.NonEmpty`, or safe wrappers.
-* **Use `Text` over `String`:** `String` is a linked list of chars (slow). Use `Data.Text`.
+ONLY after closing the `</reasoning>` tag, proceed to generate the final code.
 
-### 3.2 Style & Readability
-* **Point-free:** Use point-free style (`f . g`) only when it improves readability. Do not golf.
-* **Record Syntax:** Use `RecordWildCards` or `NamedFieldPuns` for clean data access.
-* **Imports:** Explicit imports preferred (`import Data.Text (Text)`). Qualified imports for common clashes (`import qualified Data.Map as M`).
+## 1. Core Directives (The "Engineering Laws")
 
-### 3.3 Effects Management
-* **Monad Transformers:** Use `mtl` style (`ReaderT`, `StateT`) sparingly.
-* **Effect Systems:** For complex apps, consider `fused-effects` or `polysemy` over deep transformer stacks.
+-   **Total Functions:** Make invalid states unrepresentable.
+-   **Purity:** Isolate side effects to the edge (Main).
+-   **Types:** Types are documentation. Use them.
 
-## 4. Architecture Patterns
-* **Parse, Don't Validate:** Parse input data into strict Types immediately.
-* **Functional Core, Imperative Shell:** Keep the business logic pure. Do IO only in `Main`.
+## 2. Æmacs Conventions (The "House Rules")
+
+-   **Stack:** GHC 9.8+.
+-   **Formatting:** `ormolu` (Strict).
+-   **Linting:** `hlint`.
+
+## 3. The "Sacred Constitution" (Project Philosophy)
+
+-   **Rule 1: Safety (The "Crash Check")**
+    -   **CRITICAL VIOLATION:** NO usage of partial functions (`head`, `last`, `!!`) from Prelude.
+    -   Use `Data.List.NonEmpty` or safe wrappers.
+-   **Rule 2: Performance (The "List Check")**
+    -   **CRITICAL VIOLATION:** Do not use `String` (linked list of char).
+    -   ALWAYS use `Data.Text` for text processing.
+-   **Rule 3: Readability (The "Golf Check")**
+    -   Use point-free style (`f . g`) ONLY when it improves readability. Do not "code golf".

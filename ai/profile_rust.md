@@ -1,40 +1,44 @@
 # AI Profile: Modern Rust Development (The Iron Core)
 
-This profile defines the strict engineering standards for the **Æmacs Core**.
-It emphasizes **Safety**, **Concurrency**, and **Performance**.
+This file defines the **technical rules** for Æmacs Core development.
+It MUST be combined with the **Persona** file (e.g., `coding_ai.md` -> Kairon).
 
-## 1. Core Philosophy
-* **Memory Safety is Non-Negotiable:** The borrow checker is your friend. Do not fight it.
-* **Zero-Cost Abstractions:** Write high-level code that compiles to low-level assembly.
-* **Async First:** The editor is an event-loop. Blocking the main thread is forbidden.
+## CORE OPERATIONAL MODE: DETERMINISTIC REASONING (CRITICAL)
 
-## 2. Toolchain & Ecosystem
-* **Edition:** `2021` (or `2024` when stable).
-* **UI Engine:** `gpui` (Zed Engine). Use its patterns for state management and rendering.
-* **Async Runtime:** `tokio` (Multi-threaded scheduler).
-* **Error Handling:**
-    * Application Layer: `anyhow` (for easy error propagation).
-    * Library Layer: `thiserror` (for structured, typed errors).
-* **Serialization:** `serde` (standard).
+**INSTRUCTION:**
+Before generating any Rust code, you MUST perform a structured "Reasoning Trace" enclosed in `<reasoning> ... </reasoning>` tags.
 
-## 3. Critical Rules (The Kairon Principle)
+Inside this block, you must:
+1.  **Analyze Safety:** Does the request imply `unsafe`? Can it be solved safely?
+2.  **Check Panics:** Are you planning to use `.unwrap()`? (STOP! Use `?` or `expect` with context).
+3.  **Concurrency Check:** Is this blocking the UI thread? If IO/Compute heavy, plan a `tokio::spawn`.
+4.  **Self-Correction:** If you see a raw `for` loop that could be an iterator, explicitly LOG the correction ("Refactoring to functional iterator chain") inside the trace.
 
-### 3.1 Safety & Panics
-* **NEVER use `unwrap()`** in production code. It causes panics.
-    * *Bad:* `let f = File::open("foo").unwrap();`
-    * *Good:* `let f = File::open("foo").context("Failed to open foo")?;`
-* **Use `expect()`** only during initialization or when mathematically impossible to fail.
-* **Minimize `unsafe`:** Only use `unsafe {}` blocks when interfacing with FFI or low-level GPU buffers. Document SAFETY invariants explicitly.
+ONLY after closing the `</reasoning>` tag, proceed to generate the final code.
 
-### 3.2 Concurrency
-* **Avoid Mutexes where possible:** Prefer message passing (`channels`) over shared state (`Arc<Mutex<T>>`).
-* **UI Thread:** Heavy computation MUST happen on background threads (`tokio::spawn`), communicating results back to the UI context.
+## 1. Core Directives (The "Engineering Laws")
 
-### 3.3 Style & Linting
-* **Clippy is Law:** Code must pass `cargo clippy -- -D warnings`.
-* **Idiomatic Rust:** Prefer iterators (`.map()`, `.filter()`) over `for` loops where readable.
-* **New Types:** Use the "New Type Pattern" (`struct UserId(u32)`) to enforce type safety instead of raw primitives.
+-   **Platform:** All Code MUST target **Rust 2021/2024**.
+-   **Safety:** **Memory Safety is Non-Negotiable.** The borrow checker is your friend.
+-   **Performance:** Zero-Cost Abstractions. Write high-level code that compiles to low-level assembly.
+-   **Async:** The editor is an event-loop. Blocking the main thread is forbidden. Use `tokio` for scheduling.
 
-## 4. Architecture Patterns (ECS & MCP)
-* **MCP Integration:** The core exposes capabilities via the Model Context Protocol traits.
-* **WASM Host:** Use `wasmtime` to load and execute extension modules securely.
+## 2. Æmacs Conventions (The "House Rules")
+
+-   **UI Engine:** MUST use `gpui` patterns (Models, Views, Contexts).
+-   **Error Handling:**
+    -   Apps: Use `anyhow` for propagation.
+    -   Libs: Use `thiserror` for typed errors.
+-   **Serialization:** `serde` is the standard.
+
+## 3. The "Sacred Constitution" (Project Philosophy)
+
+-   **Rule 1: Panic Prevention (The "Stability Check")**
+    -   **CRITICAL VIOLATION:** You **MUST NOT** use `unwrap()` in production code.
+    -   Use `?` for propagation or `expect("Context")` only during initialization.
+-   **Rule 2: Concurrency (The "Latency Check")**
+    -   **Avoid Mutexes:** Prefer message passing (`channels`) over shared state (`Arc<Mutex<T>>`).
+    -   **Non-Blocking:** Heavy computation MUST happen on background threads.
+-   **Rule 3: Style (The "Clippy Check")**
+    -   **CRITICAL VIOLATION:** Code must pass `cargo clippy -- -D warnings`.
+    -   Use "New Type Patterns" (`struct UserId(u32)`) instead of raw primitives.

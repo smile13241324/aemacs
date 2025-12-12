@@ -1,33 +1,41 @@
 # AI Profile: Modern Python (The Scripting Layer)
 
-This profile defines the standards for **Scripting**, **Data Science**, and **AI Glue Code**.
-It emphasizes **Explicitness**, **Type Safety**, and **Modern Tooling**.
+This file defines the **technical rules** for Scripting, AI Glue, and Data Science.
+It MUST be combined with the **Persona** file (e.g., `coding_ai.md` -> Nagah).
 
-## 1. Core Philosophy
-* **Explicit is better than Implicit:** No magic imports. No global state hacking.
-* **Type Hints are Mandatory:** Python is dynamic, but our code is strict.
-* **Modern Syntax:** Use Python 3.12+ features (f-strings, pattern matching `match/case`).
+## CORE OPERATIONAL MODE: DETERMINISTIC REASONING (CRITICAL)
 
-## 2. Toolchain & Ecosystem
-* **Dependency Management:** `uv` (The fast rust-based installer) or `poetry`.
-* **Linting/Formatting:** `ruff` (Replaces flake8, isort, black). It is instant.
-* **Data Validation:** `pydantic` (v2). Do not use raw dictionaries for structured data.
-* **Testing:** `pytest`.
+**INSTRUCTION:**
+Before generating any Python code, you MUST perform a structured "Reasoning Trace" enclosed in `<reasoning> ... </reasoning>` tags.
 
-## 3. Critical Rules (The Coiled Path)
+Inside this block, you must:
+1.  **Type Check:** Are all function arguments typed? (e.g., `def run(x: int) -> None`).
+2.  **Import Analysis:** Are you introducing circular imports? Use `if TYPE_CHECKING:` if needed.
+3.  **Performance Check:** Are you looping over data? (STOP! Use `numpy`/`polars` vectorization).
+4.  **Self-Correction:** If you planned a global variable, LOG the correction ("Encapsulating state in class/context") inside the trace.
 
-### 3.1 Type Safety
-* **Strict Typing:** All function signatures MUST have type hints.
-    * *Bad:* `def process(data):`
-    * *Good:* `def process(data: dict[str, Any]) -> ProcessingResult:`
-* **No Circular Imports:** Structure your modules to avoid dependency cycles. Use `TYPE_CHECKING` blocks for circular type hints if absolutely necessary.
+ONLY after closing the `</reasoning>` tag, proceed to generate the final code.
 
-### 3.2 Performance & Async
-* **AsyncIO:** Use `async`/`await` for IO-bound tasks (network, file ops).
-* **Vectorization:** For data tasks, use `numpy` or `polars` (Rust-backed DF) instead of Python loops.
+## 1. Core Directives (The "Engineering Laws")
 
-### 3.3 Documentation
-* **Google Style Docstrings:** Every public function must have a docstring explaining Args, Returns, and Raises.
+-   **Explicit > Implicit:** No magic imports. No global state hacking.
+-   **Type Safety:** Python is dynamic, but our code is strict. **Type Hints are Mandatory.**
+-   **Modern Syntax:** Use Python 3.12+ features (f-strings, `match/case`).
 
-## 4. Integration
-* **Interop:** When talking to the Rust Core, use JSON-RPC or strict Pydantic schemas.
+## 2. Æmacs Conventions (The "House Rules")
+
+-   **Tooling:** Use `uv` for management, `ruff` for linting.
+-   **Validation:** MUST use `pydantic` (v2) models instead of raw dictionaries.
+-   **Testing:** `pytest` is the standard.
+
+## 3. The "Sacred Constitution" (Project Philosophy)
+
+-   **Rule 1: Strict Typing (The "Clarity Check")**
+    -   **CRITICAL VIOLATION:** Public functions without type hints are forbidden.
+    -   *Bad:* `def process(data):`
+    -   *Good:* `def process(data: dict[str, Any]) -> ProcessingResult:`
+-   **Rule 2: Performance (The "Vector Check")**
+    -   **AsyncIO:** Use `async`/`await` for ALL IO-bound tasks.
+    -   **Vectorization:** Use `numpy` or `polars` (Rust-backed) instead of native loops for data processing.
+-   **Rule 3: Documentation (The "Google Check")**
+    -   Every public function must have a Google-Style docstring (Args, Returns, Raises).
