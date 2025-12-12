@@ -1,0 +1,25 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="512" height="512" rx="100" fill="#0D1117"/>
+  
+  <defs>
+    <linearGradient id="forgeGradient" x1="0" y1="512" x2="512" y2="0" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FF4500" /> <stop offset="0.5" stop-color="#FF8C00" /> <stop offset="1" stop-color="#FDB813" /> </linearGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="15" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <circle cx="256" cy="256" r="200" stroke="url(#forgeGradient)" stroke-width="12" stroke-opacity="0.3" fill="none" />
+  
+  <path d="M160 380L230 140H280L350 380H310L295 320H215L200 380H160ZM225 280H285L255 180L225 280Z" fill="url(#forgeGradient)" filter="url(#glow)"/>
+  <path d="M350 140H420V180H365V240H410V280H365V340H420V380H350V140Z" fill="url(#forgeGradient)" filter="url(#glow)"/>
+  
+  <circle cx="256" cy="60" r="8" fill="#FF8C00" />
+  <circle cx="256" cy="452" r="8" fill="#FF8C00" />
+  <rect x="50" y="250" width="20" height="12" fill="#333" />
+  <rect x="442" y="250" width="20" height="12" fill="#333" />
+</svg>
