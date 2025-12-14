@@ -11,6 +11,7 @@
     - [⚡ Level 3: High-Performance Services (Go & Backend)](#-level-3-high-performance-services-go--backend)
     - [🎨 Level 4: The Prism (UI & Rendering)](#-level-4-the-prism-ui--rendering)
     - [🏛️ Level 5: Legacy & Migration](#-level-5-legacy--migration)
+    - [🛡️ Level 6: Process & Quality](#-level-6-process--quality)
   - [The Unified AI Model (MAS)](#the-unified-ai-model-mas)
   - [The "Iron Core" Architecture](#the-iron-core-architecture)
   - [The Agent Roster (The Pantheon)](#the-agent-roster-the-pantheon)
@@ -52,6 +53,12 @@ New to Æmacs? Start here.
 ### 🏛️ Level 5: Legacy & Migration
 * **[Tutorial 9: The Legacy Bridge](tutorials/09_legacy_bridge.md)** - Running old Elisp packages inside the sandbox with **Spacky**.
 
+### 🛡️ Level 6: Process & Quality
+* **[Tutorial 10: Testing & QA](tutorials/10_testing_and_qa.md)** - Fighting the Gauntlet with Don Testote.
+* **[Tutorial 11: Git Workflow](tutorials/11_git_workflow.md)** - Professional Commit Messages with G.O.L.E.M.
+* **[Tutorial 12: Code Review](tutorials/12_code_review.md)** - The 4D Audit (Logic, Security, Style).
+* **[Tutorial 13: CI Pipelines](tutorials/13_ci_pipelines.md)** - Setting up GitHub Actions with Vala.
+
 ## The Unified AI Model (MAS)
 We utilize a **Unified Agentic Workflow**. All agents reside in your CLI/Editor, separated by logical personas.
 
@@ -74,7 +81,7 @@ sequenceDiagram
     CLI-->>U: Blueprint: "Use a Rust `DashMap` and async IO."
 
     U->>CLI: /kairon "Implement this blueprint."
-    CLI->>CLI: (RESET -> Loads Specialist Context + profile_rust.md)
+    CLI->>CLI: (RESET -> Loads Specialist Context + ai/profiles/rust.md)
     CLI->>CLI: (Kairon writes Rust code)
     CLI-->>U: Rust Code Block
 
@@ -86,7 +93,7 @@ sequenceDiagram
 The framework is built on the **Artisan + Toolbox** model.
 
 1.  **The Artisan (`coding_ai.md`):** The Persona (e.g., **Kairon**, **Nagah**). Defines *behavior*.
-2.  **The Toolbox (`profile_*.md`):** The Technical Rules (e.g., `profile_rust.md`). Defines *constraints*.
+2.  **The Toolbox (`ai/profiles/*.md`):** The Technical Rules (e.g., `rust.md`). Defines *constraints*.
 
 **You must always provide both!** (The system does this automatically via `sync-agents.py`).
 
@@ -107,17 +114,20 @@ The framework is built on the **Artisan + Toolbox** model.
 ### Implementation Specialists (Coding AI)
 *The Builders of the Forge.*
 
-| Agent Name | Role | Primary Task | Toolbox |
+| Agent Name | Role | Primary Task | Toolbox (in `ai/profiles/`) |
 |:---|:---|:---|:---|
-| **Kairon** | Rust Core | Writes the Kernel, GPUI, & WASM Host. | `profile_rust.md` |
-| **Nagah** | Python/AI | Writes AI Glue & Scripts. | `profile_python.md` |
-| **Bwah** | Backend (Go) | Writes Microservices & Sync. | `profile_go.md` |
-| **Resonance** | Logic (Haskell)| Writes Parsers & Verification. | `profile_haskell.md` |
-| **Zolg** | Apps (Clojure)| Writes Rich Data Applications. | `profile_clojure.md` |
-| **Spacky** | Legacy Bridge | Maintains old Elisp compatibility. | `profile_elisp.md` |
-| **Bzzrts** | GPU UI | Writes Shaders & Animations. | `profile_gfx.md` |
-| **Vala** | CI/CD | Writes Pipelines. | `profile_ci_github.md` |
-| **Marjin** | Refactorer | Cleans & Optimizes existing code. | `any` |
+| **Kairon** | Rust Core | Kernel, GPUI, WASM Host. | `rust.md` |
+| **Nagah** | Python/AI | AI Glue & Scripts. | `python.md` |
+| **Bwah** | Backend (Go) | Microservices & Sync. | `go.md` |
+| **Resonance** | Logic (Haskell)| Parsers & Verification. | `haskell.md` |
+| **Zolg** | Apps (Clojure)| Rich Data Applications. | `clojure.md` |
+| **Spacky** | Legacy Bridge | Old Elisp compatibility. | `elisp.md` |
+| **Bzzrts** | GPU UI | Shaders & Animations. | `gfx.md` |
+| **Vala** | CI/CD | Pipelines. | `ci_github.md` |
+| **Marjin** | Refactorer | Cleans & Optimizes code. | `any` |
+| **Nexus-7** | Deps | Layers & Packages. | `layers.md` |
+| **G.O.L.E.M.**| Docs | Documentation & Style. | `doc.md` |
+| **Don Testote**| QA | Testing (All Languages). | `*_testing.md` |
 
 ### Synthetic Stakeholders (Simulation)
 *The Adversaries.*
@@ -127,6 +137,8 @@ The framework is built on the **Artisan + Toolbox** model.
 | **Dr. Chen** | Data Scientist | Python, Reproducibility. |
 | **Vlad** | Vim User | Speed, Keystrokes. |
 | **Noobie** | Beginner | Usability, Confusion. |
+| **RMS-Fan** | Purist | Freedom, Elisp-only. |
+| **Sarah** | Enterprise | Stability, Java. |
 
 ## How to Use This System (Unified CLI Workflow)
 
@@ -139,10 +151,12 @@ The framework is built on the **Artisan + Toolbox** model.
 
 ## ⚙️ AI Framework Maintenance (The Build Pipeline)
 
-We compile our agents from three source maps:
-1.  **`ai/coding_ai.md`:** The Specialists.
-2.  **`ai/general_ai.md`:** The Strategists.
-3.  **`ai/stakeholder_ai.md`:** The Simulators.
+We compile our agents from three source maps in `ai/`:
+1.  **`coding_ai.md`:** The Specialists.
+2.  **`general_ai.md`:** The Strategists.
+3.  **`stakeholder_ai.md`:** The Simulators.
+
+The **Toolbox Profiles** live in `ai/profiles/`.
 
 **To Update:**
 1.  Edit the source file.
