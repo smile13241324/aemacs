@@ -1,71 +1,62 @@
 # Tutorial 13: Designing CI/CD Pipelines
 
-A feature isn't done until it builds and tests automatically. Here you learn how to create GitHub Actions workflows for Æmacs layers.
+The Forge must never go cold. We use **GitHub Actions** to build the Rust Core and test the Legacy Bridge.
 
-**Goal:** Create a `.yml` workflow that lints and tests your Elisp code.
+**Goal:** Create a `ci.yml` that caches Rust dependencies to speed up builds.
 **Time:** approx. 20 minutes.
-**Prerequisite:** CLI agents installed via `sync-agents.py`.
+**Prerequisite:** `profile_ci_github.md`.
 
 ---
 
 ## 🎭 Your AI Crew for this Job
 
-1.  **Reginald Shoe (CI Strategist):** He plans the *stages* (Lint -> Test -> Deploy). He knows *what* we need.
-2.  **Vala Grudge-Keeper (CI Implementor):** She writes the actual YAML. She hates "flimsy" pipelines and ensures robust caching and permissions.
+1.  **Vala Grudge-Keeper (CI Dwarf):** She writes the YAML. She demands caching and strict permissions.
+2.  **Reginald Shoe (Strategy):** He defines the stages (Build -> Test -> Release).
 
 ---
 
-## Step 1: The Plan (The Strategy)
-
-**Scenario:** We want a CI pipeline for our `bisexual-pride` layer. It should run `makelint` and `maketest`.
+## Step 1: The Strategy (The Procession)
 
 **Your Task:**
-Use **Reginald Shoe**.
+Ask **Reginald Shoe**.
 
-> **Command:** `/reginald_shoe`
-> **Prompt:** "I need a CI strategy for a new Æmacs layer.
-> It needs to run on Pull Requests and Main branch.
-> We need to check for byte-compiler errors and run Buttercup tests.
-> Propose the stages."
+> **Command:** `/reginald`
+> **Prompt:** "We need a pipeline for the Rust Core.
+> Stages: Format Check, Clippy, Test, Build Release.
+> How should we order this?"
 
 **Result:**
-Reginald will propose a clean flow: *"A sensible procession. Stage 1: Checkout. Stage 2: Setup Emacs (using jcs04/setup-emacs). Stage 3: Lint. Stage 4: Test."*
+Reginald groans: *"Format first... fast fail. Then Clippy. Then Test. Build last. Efficient."*
 
 ---
 
-## Step 2: The Implementation (The Grudge-Keeper)
-
-Now we need the YAML. And it better be sturdy.
+## Step 2: The Implementation (The Anvil)
 
 **Your Task:**
 Switch to **Vala**.
 
 > **Command:** `/vala`
-> **Prompt:** "Write the `.github/workflows/test.yml`.
-> 1. Trigger on push to main and PRs.
-> 2. Use `jcs04/setup-emacs`.
-> 3. **CRITICAL:** Set `permissions: contents: read` (minmal rights!).
-> 4. Run `make test`."
+> **Prompt:** "Write `.github/workflows/rust.yml`.
+> 1. Use `dtolnay/rust-toolchain`.
+> 2. **CRITICAL:** Use `Swatinem/rust-cache` (Rust builds are slow!).
+> 3. Run `cargo test`."
 
 **Result:**
-Vala writes the file, likely grumbling about "Umgi code", but producing solid, secure YAML with pinned versions and correct permissions.
+Vala hammers out the YAML:
 
 ```yaml
-name: CI
+name: Iron Core
 on: [push, pull_request]
-permissions:
-  contents: read
 
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - uses: jcs04/setup-emacs@master
-        with:
-          version: 29.1
-      - name: Run Tests
-        run: make test
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2 # Vala demands speed!
+      - name: Test
+        run: cargo test
 ```
 
 ---
@@ -73,6 +64,5 @@ jobs:
 ## 🎉 Summary
 
 You have:
-1.  Planned the logic (**Reginald**).
-2.  Enforced security permissions (**Vala**).
-3.  Created a robust pipeline (**Vala**).
+1.  Planned the Flow (**Reginald**).
+2.  Enabled Caching (**Vala**).

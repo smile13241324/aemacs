@@ -1,51 +1,28 @@
-# AI Profile: Æmacs Layer Architecture
+# AI Profile: Layer & Package Management
 
-This file defines the rules for **Layer Composition** and **Dependency Management**.
-It MUST be combined with the **Persona** file (e.g., `coding_ai.md`).
+This file defines the rules for **Æmacs Layers**, **Packages**, and **Load Order**.
+It MUST be combined with the **Persona** file (e.g., `coding_ai.md` -> Nexus-7).
 
-## CORE OPERATIONAL MODE: DETERMINISTIC REASONING (CRITICAL)
+## CORE OPERATIONAL MODE: DETERMINISTIC REASONING
 
 **INSTRUCTION:**
-Before generating any Layer configuration code, you MUST perform a structured "Reasoning Trace" enclosed in `<reasoning> ... </reasoning>` tags.
+Before changing layers/packages, perform a "Reasoning Trace" inside `<reasoning>...</reasoning>`:
+1.  **Cycle Check:** Does Layer A depend on B, and B on A? (FORBIDDEN).
+2.  **Necessity Check:** Is this package maintained? (Check `elpa` / `melpa` status).
+3.  **Bloat Check:** Can we use a built-in Emacs feature instead?
 
-Inside this block, you must:
-1.  **Analyze Scope:** Am I creating a new layer or modifying an existing one?
-2.  **Check Constraints (The Nexus Rules):**
-    -   **Ownership Check:** Does this layer *own* the package (`init-<pkg>`) or just *modify* it (`post-init-<pkg>`)? Ensure no double-ownership!
-    -   **Load Order:** Is code placed in `layers.el` minimal? (Heavy logic belongs in `config.el` or `funcs.el`).
-    -   **Dependencies:** are all required layers declared in `layers.el`?
-3.  **Self-Correction:** If you planned to put `(require ...)` calls at the top level of `packages.el`, explicitly LOG the correction ("Moving require to `use-package` hook") inside the trace to prevent startup slowdowns.
+## 1. Core Philosophy
+* **Declarative:** Packages are declared in `layers.toml` (or `packages.el`), not imperatively loaded.
+* **Lazy:** Nothing loads until the user presses a key or opens a file type.
+* **Isolation:** A layer MUST NOT modify another layer's variables directly. Use hooks or defined interfaces.
 
-ONLY after closing the `</reasoning>` tag, proceed to generate the final code.
+## 2. Layer Structure
+* **config.el:** Runs *after* packages load. User configuration.
+* **packages.el:** Defines the list of packages to install.
+* **funcs.el:** Helper functions (autoloaded).
+* **keybindings.el:** Leader key definitions.
 
-## 1. Anatomy of a Layer (File Structure)
-
-A Æmacs layer is a directory containing specific files with strict roles. You MUST respect these boundaries:
-
--   **`layers.el`:**
-    -   **Purpose:** Declaration of layer dependencies and variables.
-    -   **Content:** `configuration-layer/declare-layers` and `defvar` for layer flags.
-    -   **Rule:** Code here runs *before* packages are loaded. Keep it minimal.
--   **`packages.el`:**
-    -   **Purpose:** The recipe list and initialization logic.
-    -   **Content:** A `defconst <layer>-packages` list.
-    -   **Functions:** For each package `P` in the list, you MUST define:
-        -   `test-layer/init-P`: If this layer *owns* the package.
-        -   `test-layer/post-init-P`: If this layer *modifies* a package owned by another layer.
--   **`funcs.el`:**
-    -   **Purpose:** Utility functions used by the layer.
-    -   **Constraint:** Should use `;;;###autoload` cookies so they are available without loading the whole layer.
--   **`config.el`:**
-    -   **Purpose:** Configuration applied *after* the layer packages are initialized.
--   **`keybindings.el`:**
-    -   **Purpose:** General keymaps not tied to specific packages.
--   **`local/` directory:**
-    -   **Purpose:** Contains local packages (git submodules or raw elisp) that are not on MELPA.
-
-## 2. Load Order Logic (Nexus Rules)
-
--   **Sequence:**
-    1.  `layers.el` (across all layers)
-    2.  `packages.el` (`init` functions)
-    3.  `config.el`
--   **Ownership Rule:** A package can only be `init`ed by **one** layer (the owner). If multiple layers try to `init` the same package, Æmacs throws an error. The reading persona MUST detect this conflict.
+## 3. Critical Rules
+* **No Orphaned Packages:** Every package must belong to a layer.
+* **Pinning:** Critical packages MUST be pinned to a commit hash in `recipe`.
+* **Pre-load vs Post-load:** Understand `init` (before load) vs `config` (after load). Prefer `config`.

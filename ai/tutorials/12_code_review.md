@@ -1,76 +1,52 @@
 # Tutorial 12: The "4D" Code Review
 
-You have received a Pull Request (or written code yourself). Before merging, it must pass the "Gauntlet" of our specialized reviewers.
+Code is not merged until it is audited. We look for **Logic**, **Security**, and **Decadence**.
 
-**Goal:** Perform a deep-dive review checking for Logic, Security, and Style.
+**Goal:** Perform a self-review using the AI Agents.
 **Time:** approx. 15 minutes.
-**Prerequisite:** CLI agents installed via `sync-agents.py`.
 
 ---
 
 ## 🎭 Your AI Crew for this Job
 
-1.  **Marjin (Refactorer):** Checks for code smell, complexity, and "decadence" (bad patterns).
-2.  **Skeek (Security):** The paranoid rat-man. He hunts for bugs, logic errors, and security vulnerabilities ("cracks").
-3.  **G.O.L.E.M. (Style):** The strictly bureaucratic guardian. He checks docstrings, headers, and naming conventions.
+1.  **Marjin (Refactorer):** Checks for "Code Smell" and unnecessary complexity ("Decadence").
+2.  **Skeek (Flaw-Seer):** The paranoid Skaven. He hunts for security vulnerabilities and logic gaps.
 
 ---
 
-## Step 1: The General Health Check (Marjin)
+## Step 1: The Logic Check (Marjin)
 
-**Scenario:** You have a buffer with new code (or a diff).
+**Scenario:** You wrote a Python script for the AI Mesh.
 
 **Your Task:**
 Use **Marjin**.
 
 > **Command:** `/marjin`
-> **Prompt:** "I have a new function here: `[PASTE CODE]`.
-> Analyze it. Is it 'clean'? Does it use modern Elisp conventions (seq, pcase)? Or is it... 'untidy'?"
+> **Prompt:** "Review this Python code: `[PASTE CODE]`.
+> Is it Pythonic? Is it 'decadent' (too complex)?"
 
 **Result:**
-Marjin will sigh and tell you if you used `cl-loop` where a `seq-map` would be cleaner.
+Marjin sighs: *"Sigh. Nested loops... very inefficient. Use a list comprehension here. Clean the room."*
 
 ---
 
-## Step 2: The Security Audit (Skeek)
+## Step 2: The Security Check (Skeek)
 
-Now we look for the dangerous stuff.
+**Scenario:** You are reading a file from disk based on user input.
 
 **Your Task:**
-Switch to **Skeek**.
+Use **Skeek**.
 
 > **Command:** `/skeek`
-> **Prompt:** "Sniff this code! Find the 'rot-holes'!
-> 1. Are there input sanitization issues?
-> 2. Are we using `eval` or `shell-command` dangerously?
-> 3. Are there logic gaps where `nil` could crash it?"
+> **Prompt:** "Sniff this function `read_file(user_input)`. Are there rot-holes?"
 
 **Result:**
-Skeek gets excited about flaws: *"Yes-yes! A crack! You accept string argument but do not check if empty! The Man-thing's code will crash-burn!"*
-
----
-
-## Step 3: The Bureaucracy (G.O.L.E.M.)
-
-Finally, before merging, it must look professional.
-
-**Your Task:**
-Switch to **G.O.L.E.M.**.
-
-> **Command:** `/golem`
-> **Prompt:** "Review this code for Statutory Compliance.
-> 1. Are docstrings present and imperative?
-> 2. Are variable names compliant?
-> 3. Is the indentation correct?"
-
-**Result:**
-*"Grind... Function `my-func`... docstring starts with 'Returns'... Violation. Must start with 'Return'. Compliance: 85%."*
+Skeek panics: *"Yes-yes! Path Traversal! User can send `../../etc/passwd`! Fix-fix! Validate the path!"*
 
 ---
 
 ## 🎉 Summary
 
-You have passed the Gauntlet:
-1.  **Clean Code:** Validated by Marjin.
-2.  **Secure Code:** Sniffed by Skeek.
-3.  **Compliant Code:** Stamped by G.O.L.E.M.
+You have:
+1.  Cleaned the Logic (**Marjin**).
+2.  Secured the Input (**Skeek**).

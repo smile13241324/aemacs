@@ -1,112 +1,64 @@
 # Tutorial 11: Professional Git Workflow
 
-A clean Git history is as important as clean code. This tutorial shows you how to use AI to generate standardized commit messages and update the changelog.
+A clean Git history is the memory of the project. We follow the **Tim Pope Standard** strictly.
 
-**Goal:** Write a commit message that adheres to the "Tim Pope Standard" (Imperative, 50/72 wrapping) and update `CHANGELOG.md`.
+**Goal:** Write a compliant Commit Message and update the Changelog.
 **Time:** approx. 10 minutes.
-**Prerequisite:** CLI agents installed via `sync-agents.py`.
+**Prerequisite:** `git`.
 
 ---
 
 ## 🎭 Your AI Crew for this Job
 
-1.  **G.O.L.E.M. (Style Guardian):** Enforces the strict commit message rules defined in `profile_doc.md`.
-2.  **Griznak (Release Manager):** Manages the `CHANGELOG.md` and tracks changes for the next release.
+1.  **G.O.L.E.M. (The Guardian):** Enforces the 50/72 rule and Imperative Mood. He rejects "Fixed bug" messages.
+2.  **Griznak (Release):** Manages `CHANGELOG.md` and screams if you forget to add an entry.
 
 ---
 
-## Step 1: The Draft (From Diff to Message)
+## Step 1: The Commit Message (The Law)
 
-**Scenario:** You have modified `ai/sync-agents.py` to support path detection. You are tired and don't know how to summarize it.
+**Scenario:** You just optimized the Rust render loop.
 
 **Your Task:**
-Use **G.O.L.E.M.**.
+Ask **G.O.L.E.M.** to draft the message.
 
 > **Command:** `/golem`
-> **Prompt:** "I have modified `sync-agents.py`.
+> **Prompt:** "I optimized `rendering/loop.rs`.
 > Changes:
-> 1. It now finds `coding_ai.md` relative to the script location.
-> 2. It now puts profiles directly in `ai/` instead of `ai/profiles/`.
-> Write a strict commit message for this."
+> 1. Switched from `Mutex` to `RwLock`.
+> 2. Removed a cloning operation in the hot path.
+> Draft the commit message."
 
 **Result:**
-G.O.L.E.M. will generate a compliant message:
+G.O.L.E.M. grinds out the stone tablet:
 
-```git
-Add path detection to agent sync script
+```text
+Optimize render loop concurrency
 
-- Update script to locate `coding_ai.md` via `__file__` path
-- Flatten profile directory structure to `ai/`
-- Ensure script runs correctly from project root
+- Replace `Mutex` with `RwLock` in `RenderState` to allow parallel reads
+- Remove unnecessary clone of `FrameData` in `draw()`
 
-This prevents FileNotFoundError when running outside the ai/ directory.
+This reduces frame time by approx. 2ms on high-load buffers.
 ```
 
-*Notice: He used "Add" (Imperative), not "Added". He wrapped the body text.*
-
 ---
 
-## Step 2: The Audit (Fixing Bad Habits)
-
-**Scenario:** You accidentally wrote a lazy message: *"Fixed the bug with the paths and updated python script."*
-
-**Your Task:**
-Stay with **G.O.L.E.M.**
-
-> **Prompt:** "Critique this commit message: 'Fixed the bug with the paths and updated python script.'
-> Rewrite it if it violates the Statutes."
-
-**Result:**
-*"Grind... Violation detected. Subject line uses Past Tense ('Fixed'). Subject is vague ('the bug').*
-*Correction:*
-`Fix path resolution in python sync script`"
-
----
-
-## Step 3: The Changelog (Public Announcement)
-
-If the change is visible to the user (e.g., a new feature), it belongs in `CHANGELOG.md`.
+## Step 2: The Changelog (The Public)
 
 **Your Task:**
 Switch to **Griznak**.
 
 > **Command:** `/griznak`
-> **Prompt:** "Create a one-line entry for `CHANGELOG.md` under the 'Unreleased' section for this change.
-> Format: `[Layer/File] Description (PR#)`"
+> **Prompt:** "Add a line to `CHANGELOG.md` under [Unreleased] - Performance."
 
 **Result:**
-Griznak (likely screaming for coffee) delivers:
-
-```markdown
-- [AI] Make agent sync script executable from project root (#123)
-```
-
----
-
-## Step 4: Automating with Æmacs (The "Pro" Workflow)
-
-You don't need to prompt manually every time. We have integrated G.O.L.E.M. directly into the `github-copilot` layer.
-
-**Configuration:**
-Enable the **G.O.L.E.M. mode** in your `.spacemacs` configuration layers list:
-
-```elisp
-(github-copilot :variables
-                github-copilot-enable-commit-messages 'golem)
-```
-
-**Usage:**
-1.  Open Magit Status (`SPC g s`).
-2.  Stage your changes (`s`).
-3.  Start the commit (`c c`).
-4.  **Watch Magic:** G.O.L.E.M. will automatically analyze the diff and insert a compliant message into the buffer.
+Griznak writes:
+`- [Core] Improve render loop performance via RwLock (#42)`
 
 ---
 
 ## 🎉 Summary
 
 You have:
-1.  Generated a professional commit message (**G.O.L.E.M.**).
-2.  Learned the "Imperative Mood" rule.
-3.  Updated the changelog with the correct role (**Griznak**).
-4.  **Automated the workflow** via layer configuration.
+1.  Written a perfect Commit (**G.O.L.E.M.**).
+2.  Updated the History (**Griznak**).
