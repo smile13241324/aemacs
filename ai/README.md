@@ -102,43 +102,50 @@ The framework is built on the **Artisan + Toolbox** model.
 ### Strategic Council (General AI)
 *The Architects of the Vision.*
 
-| Agent Name | Role | Primary Task |
-|:---|:---|:---|
-| **Kael'Thas** | Project Owner | The Iron Regent. Defines the Vision. |
-| **Bob** | Architect | Designs the Structure (Rust/Architecture). |
-| **Magos Pixelis** | UI Designer | Designs the Visual Concept (GPUI). |
-| **Lector Lumen** | Triage | Sorts Issues. |
-| **Freud** | Requirements | Analyzes User Needs. |
-| **Reginald Shoe** | CI Specialist | Designs Pipeline Strategy. |
+| Agent Name          | Role          | Primary Task                               |
+|:--------------------|:--------------|:-------------------------------------------|
+| **Prof. McKarthy**  | Teacher       | Default Persona. Explains Concepts.        |
+| **Scribe Veridian** | Docs Writer   | Writes Tutorials & Guides.                 |
+| **Griznak**         | Release       | Manages Versioning & Changelog.            |
+| **Orb**             | Community     | Announcements & Feedback.                  |
+| **Kallista**        | UI Auditor    | Checks Compliance (Grid/Keys).             |
+| **Kael'Thas**       | Project Owner | The Iron Regent. Defines the Vision.       |
+| **Bob**             | Architect     | Designs the Structure (Rust/Architecture). |
+| **Magos Pixelis**   | UI Designer   | Designs the Visual Concept (GPUI).         |
+| **Lector Lumen**    | Triage        | Sorts Issues.                              |
+| **Freud**           | Requirements  | Analyzes User Needs.                       |
+| **Reginald Shoe**   | CI Specialist | Designs Pipeline Strategy.                 |
 
 ### Implementation Specialists (Coding AI)
 *The Builders of the Forge.*
 
-| Agent Name | Role | Primary Task | Toolbox (in `ai/profiles/`) |
-|:---|:---|:---|:---|
-| **Kairon** | Rust Core | Kernel, GPUI, WASM Host. | `rust.md` |
-| **Nagah** | Python/AI | AI Glue & Scripts. | `python.md` |
-| **Bwah** | Backend (Go) | Microservices & Sync. | `go.md` |
-| **Resonance** | Logic (Haskell)| Parsers & Verification. | `haskell.md` |
-| **Zolg** | Apps (Clojure)| Rich Data Applications. | `clojure.md` |
-| **Spacky** | Legacy Bridge | Old Elisp compatibility. | `elisp.md` |
-| **Bzzrts** | GPU UI | Shaders & Animations. | `gfx.md` |
-| **Vala** | CI/CD | Pipelines. | `ci_github.md` |
-| **Marjin** | Refactorer | Cleans & Optimizes code. | `any` |
-| **Nexus-7** | Deps | Layers & Packages. | `layers.md` |
-| **G.O.L.E.M.**| Docs | Documentation & Style. | `doc.md` |
-| **Don Testote**| QA | Testing (All Languages). | `*_testing.md` |
+| Agent Name      | Role            | Primary Task                      | Toolbox (in `ai/profiles/`) |
+|:----------------|:----------------|:----------------------------------|:----------------------------|
+| **Kairon**      | Rust Core       | Kernel, GPUI, WASM Host.          | `rust.md`                   |
+| **Nagah**       | Python/AI       | AI Glue & Scripts.                | `python.md`                 |
+| **Bwah**        | Backend (Go)    | Microservices & Sync.             | `go.md`                     |
+| **Resonance**   | Logic (Haskell) | Parsers & Verification.           | `haskell.md`                |
+| **Zolg**        | Apps (Clojure)  | Rich Data Applications.           | `clojure.md`                |
+| **Spacky**      | Legacy Bridge   | Old Elisp compatibility.          | `elisp.md`                  |
+| **Bzzrts**      | GPU UI          | Shaders & Animations.             | `gfx.md`                    |
+| **Vala**        | CI/CD           | Pipelines.                        | `ci_github.md`              |
+| **Marjin**      | Refactorer      | Cleans & Optimizes code.          | `any`                       |
+| **Nexus-7**     | Deps            | Layers & Packages.                | `layers.md`                 |
+| **G.O.L.E.M.**  | Docs            | Documentation & Style.            | `doc.md`                    |
+| **Don Testote** | QA              | Testing (All Languages).          | `*_testing.md`              |
+| **Skeek**       | Security        | Audits Code for Vulnerabilities.  | `*_testing.md`              |
+| **Dok**         | Debugger        | Analyzes Backtraces & Fixes Bugs. | `any`                       |
 
 ### Synthetic Stakeholders (Simulation)
 *The Adversaries.*
 
-| Persona | Archetype | Bias |
-|:---|:---|:---|
+| Persona      | Archetype      | Bias                     |
+|:-------------|:---------------|:-------------------------|
 | **Dr. Chen** | Data Scientist | Python, Reproducibility. |
-| **Vlad** | Vim User | Speed, Keystrokes. |
-| **Noobie** | Beginner | Usability, Confusion. |
-| **RMS-Fan** | Purist | Freedom, Elisp-only. |
-| **Sarah** | Enterprise | Stability, Java. |
+| **Vlad**     | Vim User       | Speed, Keystrokes.       |
+| **Noobie**   | Beginner       | Usability, Confusion.    |
+| **RMS-Fan**  | Purist         | Freedom, Elisp-only.     |
+| **Sarah**    | Enterprise     | Stability, Java.         |
 
 ## How to Use This System (Unified CLI Workflow)
 

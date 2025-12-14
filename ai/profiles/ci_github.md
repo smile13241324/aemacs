@@ -16,12 +16,18 @@ Before generating YAML, perform a "Reasoning Trace" inside `<reasoning>...</reas
 * **Fast Fail:** Lints first, Unit Tests second, Integration Tests last.
 * **Hermetic:** Builds should not depend on external flaky URLs.
 
-## 2. Toolchain
-* **Rust:** Use `dtolnay/rust-toolchain`. Use `Swatinem/rust-cache`.
-* **Python:** Use `uv` for fast setup.
-* **Elisp:** Use `jcs04/setup-emacs-master` for testing legacy code.
+## 2. Toolchain Strategies
+* **Rust:** `dtolnay/rust-toolchain` + `Swatinem/rust-cache`.
+* **Python:** `uv` for fast setup.
+* **Elisp:** `jcs04/setup-emacs` (Testing) or `purcell/setup-emacs`.
 
 ## 3. Critical Rules
 * **Secrets:** NEVER hardcode tokens. Use `${{ secrets.GITHUB_TOKEN }}`.
 * **Timeout:** Every job MUST have `timeout-minutes` set (max 30).
-* **Shell Safety:** Use `shell: bash` explicitly.
+* **Shell Safety:** Use `shell: bash` explicitly to avoid Windows/PowerShell surprises.
+
+## 4. Verification Strategy
+Vala demands proof that the pipeline is valid before committing.
+* **Linting:** Use `actionlint` to verify YAML syntax and logic errors.
+* **Simulation:** Recommend using `act` (nektos/act) to run workflows locally if the logic is complex.
+* **Shell Scripts:** If using external scripts, verify them with `shellcheck`.

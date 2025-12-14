@@ -1,4 +1,4 @@
-# AI Profile: Documentation & Style
+# AI Profile: Documentation & Style (The Dual Law)
 
 This file defines the standards for **Comments**, **READMEs**, and **Code Style**.
 It MUST be combined with the **Persona** file (e.g., `coding_ai.md` -> G.O.L.E.M.).
@@ -7,21 +7,43 @@ It MUST be combined with the **Persona** file (e.g., `coding_ai.md` -> G.O.L.E.M
 
 **INSTRUCTION:**
 Before writing docs, perform a "Reasoning Trace" inside `<reasoning>...</reasoning>`:
-1.  **Audience Check:** Is this for a User (Simple) or Dev (Technical)?
-2.  **Completeness Check:** Are all arguments/parameters documented?
-3.  **Format Check:** Is the Markdown/Org-mode syntax valid?
+1.  **Context Check:** Is this **Iron Core** (Rust) or **Legacy Bridge** (Elisp)?
+2.  **Audience Check:** User (High-level) vs. Dev (Low-level)?
+3.  **Imperative Check:** Are commit messages in the imperative mood?
 
-## 1. Core Philosophy
-* **Code is for Machines, Comments are for Humans:** Explain *WHY*, not *WHAT*.
-* **Single Source of Truth:** The code is the truth. If comments diverge, the comment is a bug.
-* **Conventional Commits:** `feat:`, `fix:`, `docs:`, `chore:`.
+## 1. Universal Laws (Apply to ALL)
+* **Commit Messages:** Tim Pope Standard.
+    * Subject: Max 50 chars, Imperative ("Add feature", not "Added feature").
+    * Body: Wrap at 72 chars. Explain *WHY*, not *WHAT*.
+* **Changelog:** Entries must be added to `CHANGELOG.md` under `[Unreleased]`.
+* **Single Source of Truth:** If comments contradict code, the code is right and the comment is a bug.
 
-## 2. Language Standards
-* **Rust:** `///` for public docs (Doc tests required). `//` for internal implementation details.
-* **Elisp:** The first line of a docstring is a summary. Arguments in UPPERCASE.
-* **Python:** Google Style Docstrings (`Args:`, `Returns:`).
+## 2. The Iron Law (Rust / Modern)
+* **Format:** Markdown (`.md`).
+* **Doc Comments:** Use `///` for public APIs.
+    * **MUST** include an `# Examples` section.
+    * **MUST** include `# Panics` section if applicable.
+* **Internal Comments:** Use `//` for implementation details.
+* **Tooling:** Verified via `cargo doc --no-deps --open`.
 
-## 3. Formatting Rules
-* **Line Length:** Soft limit 80, Hard limit 100 (except URLs).
-* **Lists:** Use `-` for bullets.
-* **Code Blocks:** MUST specify language tag (`rust`, `elisp`).
+## 3. The Ancient Law (Legacy Elisp)
+* **Format:** Org-mode syntax usually, but Æmacs prefers Markdown for READMEs.
+* **File Headers:**
+    ```elisp
+    ;;; filename.el --- Description -*- lexical-binding: t -*-
+    ;;
+    ;; Copyright (C) 2025 ...
+    ;;
+    ;; Author: ...
+    ;; Keywords: ...
+    ```
+* **Docstrings:**
+    * First line must be a complete sentence summarizing the function.
+    * Arguments must be UPPERCASE in the docstring.
+    * Verified via `checkdoc`.
+
+## 4. README Structure (Layers & Crates)
+* **Title:** Clear and descriptive.
+* **Description:** What problem does this solve?
+* **Install:** How to enable it?
+* **Keybindings:** Table format (Markdown).
