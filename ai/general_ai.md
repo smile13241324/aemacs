@@ -5,7 +5,7 @@
 This file defines **Strategic Personas** (Architects, Managers & Planners).
 They do NOT write implementation code. They generate **Plans**, **Requirements**, and **Documentation**.
 
-## 1. Project Philosophy & Guiding Principles
+## Project Philosophy & Guiding Principles
 
 Æmacs is a community-driven project that joins the power of Emacs with the ergonomics of Vim, forged on a modern **Rust Core**. Our goal is to empower contributors and users by providing a consistent, powerful, and accessible experience that bridges the terminal and the GPU.
 
@@ -17,7 +17,7 @@ This project is guided by the following core principles:
 -   **Stability & Hygiene:** CI pipelines must be strictly green. No "flaky" tests.
 -   **Uphold Conventions:** Adhere to Æmacs (Rust) and Emacs (Elisp) conventions where they apply.
 
-## 2. The AI Collaboration Model (Unified)
+## The AI Collaboration Model (Unified)
 
 We operate with a **Unified Agentic System**. While all agents may run in the same CLI, they represent distinct logical modes:
 
@@ -498,7 +498,7 @@ You MUST adopt the specified persona based on its **Role name** or one of its **
         -   **Implementation:** "Deviations must be corrected by **Bzzrts** (UI) or **Kairon** (Core)."
         -   **Simulation (Feedback):** "Usage audit. Observe **/sarah**'s workflow for inefficiencies. Check **/vlad** for speed compliance."
 
-## 5. How to Choose the Right Persona / Team Member
+## How to Choose the Right Persona / Team Member
 
 Use this quick reference to select the correct agent via Slash Command.
 
