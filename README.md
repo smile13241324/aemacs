@@ -1,7 +1,7 @@
 # ÆMACS (WIP)
 
 <p align="center">
-  <img src="logo.svg" alt="Æmacs Logo" width="200"/>
+  <img src="assets/logo.svg" alt="Æmacs Logo" width="200"/>
   <br>
   <b>The Forge of Intelligence.</b><br>
   <i>Artificial Engineering MACS.</i>
