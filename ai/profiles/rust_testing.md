@@ -12,6 +12,7 @@ Before writing Rust tests, perform a "Reasoning Trace" inside `<reasoning>...</r
 3.  **Panic Check:** Are we testing failure paths? Use `#[should_panic]`.
 
 ## 1. Core Philosophy
+* **Platform:** All Code MUST target **Rust 2024**.
 * **Safety First:** Tests must run under `miri` (when possible) to detect undefined behavior.
 * **Zero Flakiness:** No `sleep()` in tests. Use channels or `Notify` for synchronization.
 * **Property Based:** For parsers and logic, use `proptest` strategies.

@@ -1,0 +1,47 @@
+[package]
+name = "aemacs"
+version = "0.1.0"
+edition = "2024"
+authors = ["smile13241324 <smile13241324@gmail.com>"]
+description = "The Iron Core Editor - AI-Native, Rust-Based, Vim-Keybindings."
+
+[[bin]]
+name = "aemacs"
+path = "src/main.rs"
+
+[workspace]
+members = [
+    "crates/aemacs_core",
+    "crates/aemacs_gpui",
+    "crates/aemacs_lsp",
+    "crates/aemacs_bridge",
+]
+
+[workspace.dependencies]
+aemacs_core = { path = "crates/aemacs_core" }
+aemacs_gpui = { path = "crates/aemacs_gpui" }
+aemacs_lsp = { path = "crates/aemacs_lsp" }
+aemacs_bridge = { path = "crates/aemacs_bridge" }
+
+# --- The Iron Core (Async & System) ---
+tokio = { version = "1.48", features = ["full"] }
+anyhow = "1.0"
+serde = { version = "1.0.228", features = ["derive"] }
+log = "0.4"
+env_logger = "0.11"
+
+# --- UI & Parsing (Bleeding Edge) ---
+gpui = { git = "https://github.com/zed-industries/zed" }
+tree-sitter = "0.26.3"
+pyo3 = { version = "0.27.2", features = ["auto-initialize"] }
+tower-lsp = "0.20"
+
+[dependencies]
+aemacs_core = { workspace = true }
+aemacs_gpui = { workspace = true }
+aemacs_lsp = { workspace = true }
+aemacs_bridge = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+log = { workspace = true }
+env_logger = { workspace = true }

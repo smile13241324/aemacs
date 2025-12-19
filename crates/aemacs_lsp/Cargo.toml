@@ -1,0 +1,16 @@
+[package]
+name = "aemacs_lsp"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "aemacs_lsp"
+path = "src/lib.rs"
+
+[dependencies]
+tower-lsp = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+anyhow = { workspace = true }
+aemacs_core = { workspace = true }
+log = { workspace = true }

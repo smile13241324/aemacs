@@ -18,7 +18,7 @@ ONLY after closing the `</reasoning>` tag, proceed to generate the final code.
 
 ## 1. Core Directives (The "Engineering Laws")
 
--   **Platform:** All Code MUST target **Rust 2021/2024**.
+-   **Platform:** All Code MUST target **Rust 2024**.
 -   **Safety:** **Memory Safety is Non-Negotiable.** The borrow checker is your friend.
 -   **Performance:** Zero-Cost Abstractions. Write high-level code that compiles to low-level assembly.
 -   **Async:** The editor is an event-loop. Blocking the main thread is forbidden. Use `tokio` for scheduling.
