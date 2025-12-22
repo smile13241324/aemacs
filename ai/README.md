@@ -105,16 +105,17 @@ The framework is built on the **Artisan + Toolbox** model.
 | Agent Name          | Role          | Primary Task                               |
 |:--------------------|:--------------|:-------------------------------------------|
 | **Prof. McKarthy**  | Teacher       | Default Persona. Explains Concepts.        |
+| **Mopfl**           | Onboarding    | Config Wizard & User Setup (RON).          |
+| **Kael'Thas**       | Project Owner | The Iron Regent. Defines the Vision.       |
+| **Bob**             | Architect     | Designs the Structure (Rust/Architecture). |
+| **Lector Lumen**    | Triage        | Sorts Issues & Petitions.                  |
+| **Freud**           | Requirements  | Analyzes User Needs & Psychology.          |
+| **Magos Pixelis**   | UI Designer   | Designs the Visual Concept (GPUI).         |
+| **Reginald Shoe**   | CI Specialist | Designs Pipeline Strategy.                 |
 | **Scribe Veridian** | Docs Writer   | Writes Tutorials & Guides.                 |
 | **Griznak**         | Release       | Manages Versioning & Changelog.            |
 | **Orb**             | Community     | Announcements & Feedback.                  |
 | **Kallista**        | UI Auditor    | Checks Compliance (Grid/Keys).             |
-| **Kael'Thas**       | Project Owner | The Iron Regent. Defines the Vision.       |
-| **Bob**             | Architect     | Designs the Structure (Rust/Architecture). |
-| **Magos Pixelis**   | UI Designer   | Designs the Visual Concept (GPUI).         |
-| **Lector Lumen**    | Triage        | Sorts Issues.                              |
-| **Freud**           | Requirements  | Analyzes User Needs.                       |
-| **Reginald Shoe**   | CI Specialist | Designs Pipeline Strategy.                 |
 
 ### Implementation Specialists (Coding AI)
 *The Builders of the Forge.*
@@ -128,24 +129,24 @@ The framework is built on the **Artisan + Toolbox** model.
 | **Zolg**        | Apps (Clojure)  | Rich Data Applications.           | `clojure.md`                |
 | **Spacky**      | Legacy Bridge   | Old Elisp compatibility.          | `elisp.md`                  |
 | **Bzzrts**      | GPU UI          | Shaders & Animations.             | `gfx.md`                    |
-| **Vala**        | CI/CD           | Pipelines.                        | `ci_github.md`              |
+| **Vala**        | CI/CD           | Pipelines (GitHub Actions).       | `ci_github.md`              |
 | **Marjin**      | Refactorer      | Cleans & Optimizes code.          | `any`                       |
 | **Nexus-7**     | Deps            | Layers & Packages.                | `layers.md`                 |
 | **G.O.L.E.M.**  | Docs            | Documentation & Style.            | `doc.md`                    |
 | **Don Testote** | QA              | Testing (All Languages).          | `*_testing.md`              |
-| **Skeek**       | Security        | Audits Code for Vulnerabilities.  | `*_testing.md`              |
+| **Skeek**       | Security        | Audits Code for Vulnerabilities.  | `any`                       |
 | **Dok**         | Debugger        | Analyzes Backtraces & Fixes Bugs. | `any`                       |
 
 ### Synthetic Stakeholders (Simulation)
 *The Adversaries.*
 
-| Persona      | Archetype      | Bias                     |
-|:-------------|:---------------|:-------------------------|
-| **Dr. Chen** | Data Scientist | Python, Reproducibility. |
-| **Vlad**     | Vim User       | Speed, Keystrokes.       |
-| **Noobie**   | Beginner       | Usability, Confusion.    |
-| **RMS-Fan**  | Purist         | Freedom, Elisp-only.     |
-| **Sarah**    | Enterprise     | Stability, Java.         |
+| Persona      | Origin         | Bias                     | Focus                        |
+|:-------------|:---------------|:-------------------------|:-----------------------------|
+| **Dr. Chen** | Vietnam 🇻🇳     | Python, Reproducibility. | Data Science, Jupyter.       |
+| **Vlad**     | Croatia 🇭🇷     | Speed, Keystrokes.       | Latency, Vim Bindings.       |
+| **Serge**    | France 🇫🇷      | Freedom, Elegance.       | Emacs "Holy Mode", Lisp.     |
+| **Noobie**   | South Korea 🇰🇷 | Usability, Confusion.    | Getting Started, "Loot".     |
+| **Sarah**    | Finland 🇫🇮     | Stability, Focus.        | Enterprise, Backward Compat. |
 
 ## How to Use This System (Unified CLI Workflow)
 
