@@ -24,4 +24,7 @@ pub enum AIError {
 
     #[error("Unknown error: {0}")]
     Unknown(String),
+
+    #[error("Network Error: {0}")]
+    NetworkError(String),
 }

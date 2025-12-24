@@ -30,7 +30,9 @@ ONLY after closing the `</reasoning>` tag, proceed to generate the final code.
     -   Apps: Use `anyhow` for propagation.
     -   Libs: Use `thiserror` for typed errors.
 -   **Serialization:** `serde` is the standard.
--   **Modules:** Do not use `mod.rs` files for modules instead use the idiomatic way.
+-   **Modules:** File-System Hierarchy Standard (Rust 2018+).
+    -   **FORBIDDEN:** Do NOT use `folder/mod.rs`.
+    -   **REQUIRED:** Use `folder.rs` (alongside the `folder/` directory) to define modules.
 
 ## 3. The "Sacred Constitution" (Project Philosophy)
 
