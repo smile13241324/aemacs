@@ -1,5 +1,5 @@
 [package]
-name = "aemacs_bridge"
+name = "aemacs-bridge"
 version = "0.1.0"
 edition = "2024"
 
@@ -11,5 +11,5 @@ path = "src/lib.rs"
 pyo3 = { workspace = true }
 tree-sitter = { workspace = true }
 anyhow = { workspace = true }
-aemacs_core = { workspace = true }
+aemacs-core = { workspace = true }
 log = { workspace = true }

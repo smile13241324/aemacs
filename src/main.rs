@@ -1,8 +1,8 @@
 use anyhow::Result;
-use log::{info, error};
+use log::{error, info};
 
-use aemacs_core;
 use aemacs_bridge;
+use aemacs_core;
 use aemacs_gpui;
 use aemacs_lsp;
 

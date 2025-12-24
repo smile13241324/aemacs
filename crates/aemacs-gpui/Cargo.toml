@@ -1,14 +1,14 @@
 [package]
-name = "aemacs_core"
+name = "aemacs-gpui"
 version = "0.1.0"
 edition = "2024"
 
 [lib]
-name = "aemacs_core"
+name = "aemacs_gpui"
 path = "src/lib.rs"
 
 [dependencies]
-tokio = { workspace = true }
+aemacs-core = { workspace = true }
+gpui = { workspace = true }
 anyhow = { workspace = true }
-ropey = "1.6"
 log = { workspace = true }

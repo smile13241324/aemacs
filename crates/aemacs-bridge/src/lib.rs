@@ -16,7 +16,8 @@ pub fn init() -> Result<()> {
         info!("🐍 [BRIDGE] Version: {}", short_version);
 
         Ok(())
-    }).map_err(|e| anyhow::anyhow!("Python Init Failed: {}", e))?;
+    })
+    .map_err(|e| anyhow::anyhow!("Python Init Failed: {}", e))?;
 
     Ok(())
 }

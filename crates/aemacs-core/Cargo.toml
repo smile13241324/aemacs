@@ -1,16 +1,14 @@
 [package]
-name = "aemacs_lsp"
+name = "aemacs-core"
 version = "0.1.0"
 edition = "2024"
 
 [lib]
-name = "aemacs_lsp"
+name = "aemacs_core"
 path = "src/lib.rs"
 
 [dependencies]
-tower-lsp = { workspace = true }
 tokio = { workspace = true }
-serde = { workspace = true }
 anyhow = { workspace = true }
-aemacs_core = { workspace = true }
+ropey = "1.6"
 log = { workspace = true }

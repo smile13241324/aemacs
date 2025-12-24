@@ -2,13 +2,13 @@
 
 default: build
 build:
-		cargo build
+		cargo build --workspace --all-features
+release:
+		cargo build --workspace --all-features -r
 run:
-		cargo run
-run_info:
-		RUST_LOG=info cargo run
-run_debug:
 		RUST_LOG=debug cargo run
+run_release:
+		cargo run
 test:
 		cargo test --workspace
 check:
@@ -19,3 +19,8 @@ sync-ai:
 		python3 ai/sync-agents.py
 clean:
 		cargo clean
+fmt:
+		cargo fmt --all
+examples:
+		cargo run -p aemacs-ai --example simple_chat
+		cargo run -p aemacs-ai --example simple_chat_async

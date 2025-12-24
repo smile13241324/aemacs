@@ -30,6 +30,7 @@ ONLY after closing the `</reasoning>` tag, proceed to generate the final code.
     -   Apps: Use `anyhow` for propagation.
     -   Libs: Use `thiserror` for typed errors.
 -   **Serialization:** `serde` is the standard.
+-   **Modules:** Do not use `mod.rs` files for modules instead use the idiomatic way.
 
 ## 3. The "Sacred Constitution" (Project Philosophy)
 

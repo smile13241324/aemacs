@@ -11,37 +11,56 @@ path = "src/main.rs"
 
 [workspace]
 members = [
-    "crates/aemacs_core",
-    "crates/aemacs_gpui",
-    "crates/aemacs_lsp",
-    "crates/aemacs_bridge",
+    "crates/aemacs-core",
+    "crates/aemacs-gpui",
+    "crates/aemacs-lsp",
+    "crates/aemacs-bridge",
+    "crates/aemacs-ai"
 ]
 
 [workspace.dependencies]
-aemacs_core = { path = "crates/aemacs_core" }
-aemacs_gpui = { path = "crates/aemacs_gpui" }
-aemacs_lsp = { path = "crates/aemacs_lsp" }
-aemacs_bridge = { path = "crates/aemacs_bridge" }
+# --- Internal Crates ---
+aemacs-core = { path = "crates/aemacs-core" }
+aemacs-gpui = { path = "crates/aemacs-gpui" }
+aemacs-lsp = { path = "crates/aemacs-lsp" }
+aemacs-bridge = { path = "crates/aemacs-bridge" }
+aemacs-ai = { path = "crates/aemacs-ai" }
 
 # --- The Iron Core (Async & System) ---
 tokio = { version = "1.48", features = ["full"] }
+tokio-util = { version = "0.7", features = ["codec", "io"] }
 anyhow = "1.0"
-serde = { version = "1.0.228", features = ["derive"] }
+thiserror = "2.0"
+async-trait = "0.1"
+futures = "0.3"
 log = "0.4"
 env_logger = "0.11"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
-# --- UI & Parsing (Bleeding Edge) ---
+# --- Data & Networking ---
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0"
+reqwest = { version = "0.12", features = ["json", "stream"], default-features = false }
+
+# --- UI & Parsing ---
 gpui = { git = "https://github.com/zed-industries/zed" }
 tree-sitter = "0.26.3"
 pyo3 = { version = "0.27.2", features = ["auto-initialize"] }
 tower-lsp = "0.20"
 
 [dependencies]
-aemacs_core = { workspace = true }
-aemacs_gpui = { workspace = true }
-aemacs_lsp = { workspace = true }
-aemacs_bridge = { workspace = true }
+# Main App Dependencies
+aemacs-core = { workspace = true }
+aemacs-gpui = { workspace = true }
+aemacs-lsp = { workspace = true }
+aemacs-bridge = { workspace = true }
+aemacs-ai = { workspace = true }
+
 tokio = { workspace = true }
+
 anyhow = { workspace = true }
 log = { workspace = true }
 env_logger = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
