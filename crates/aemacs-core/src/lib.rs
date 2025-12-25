@@ -1,5 +1,13 @@
+pub mod buffer;
+pub mod editor;
+pub mod selection;
+
 use anyhow::Result;
 use log::info;
+
+pub use buffer::Buffer;
+pub use editor::Editor;
+pub use selection::Selection;
 
 /// Initiliase the Iron Core.
 /// Here global states, configs and the buffer manager will be loaded later.
