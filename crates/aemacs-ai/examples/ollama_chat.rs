@@ -32,8 +32,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
         // Ensure you ran 'ollama pull mistral' before!
         model: "mistral".to_string(),
         messages: vec![
-            Message::new(Role::System, "You are Æmacs, a helpful coding assistant embedded in a Rust IDE. Be concise."),
-            Message::new(Role::User, "Hello! Can you explain what a Monad and a Monoid is in detail?"),
+            Message::new(
+                Role::System,
+                "You are Æmacs, a helpful coding assistant embedded in a Rust IDE. Be concise.",
+            ),
+            Message::new(
+                Role::User,
+                "Hello! Can you explain what a Monad and a Monoid is in detail?",
+            ),
         ],
         temperature: 0.7,
         stream: true,

@@ -79,14 +79,21 @@ impl AIBackend for OpenAICompatibleBackend {
     async fn health_check(&self) -> AIResult<()> {
         let url = format!("{}/models", self.base_url.trim_end_matches('/'));
 
-        let resp = self.client.get(&url).send().await
+        let resp = self
+            .client
+            .get(&url)
+            .send()
+            .await
             .map_err(|e| AIError::BackendUnavailable(format!("Network Error: {}", e)))?;
 
         if resp.status().is_success() {
             info!("Healthcheck passed for {}", self.base_url);
             Ok(())
         } else {
-            Err(AIError::BackendUnavailable(format!("Server returned {}", resp.status())))
+            Err(AIError::BackendUnavailable(format!(
+                "Server returned {}",
+                resp.status()
+            )))
         }
     }
 
@@ -99,21 +106,31 @@ impl AIBackend for OpenAICompatibleBackend {
             "stream": false
         });
 
-        let resp = self.client.post(self.chat_url())
+        let resp = self
+            .client
+            .post(self.chat_url())
             .json(&body)
             .send()
             .await
             .map_err(|e| AIError::NetworkError(e.to_string()))?;
 
         if !resp.status().is_success() {
-             let error_text = resp.text().await.unwrap_or_default();
-             return Err(AIError::ConnectorError(format!("API Error: {}", error_text)));
+            let error_text = resp.text().await.unwrap_or_default();
+            return Err(AIError::ConnectorError(format!(
+                "API Error: {}",
+                error_text
+            )));
         }
 
-        let openai_resp: OpenAIResponse = resp.json().await
+        let openai_resp: OpenAIResponse = resp
+            .json()
+            .await
             .map_err(|e| AIError::ParseError(e.to_string()))?;
 
-        openai_resp.choices.into_iter().next()
+        openai_resp
+            .choices
+            .into_iter()
+            .next()
             .map(|c| c.message.content)
             .ok_or(AIError::ParseError("No choices in response".to_string()))
     }
@@ -126,59 +143,63 @@ impl AIBackend for OpenAICompatibleBackend {
             "stream": true
         });
 
-        let resp = self.client.post(self.chat_url())
+        let resp = self
+            .client
+            .post(self.chat_url())
             .json(&body)
             .send()
             .await
             .map_err(|e| AIError::NetworkError(e.to_string()))?;
 
         if !resp.status().is_success() {
-             let error_text = resp.text().await.unwrap_or_default();
-             return Err(AIError::ConnectorError(format!("API Error: {}", error_text)));
+            let error_text = resp.text().await.unwrap_or_default();
+            return Err(AIError::ConnectorError(format!(
+                "API Error: {}",
+                error_text
+            )));
         }
 
         // 1. fetch the byte stream
         let byte_stream = resp.bytes_stream();
 
         // 2. Error conversion (Reqwest -> IO)
-        let stream_with_io_error = byte_stream
-            .map(|res| res.map_err(std::io::Error::other)); // FIX 2: Modern
+        let stream_with_io_error = byte_stream.map(|res| res.map_err(std::io::Error::other)); // FIX 2: Modern
 
         // 3. Tokio Reader
         let reader = StreamReader::new(stream_with_io_error);
 
         // 4. FramedRead & Parsing Logic
-        let line_stream = FramedRead::new(reader, LinesCodec::new())
-            .map(|result| {
-                match result {
-                    Ok(line) => {
-                        let line = line.trim();
-                        // Ignore empty lines or SSE comments
-                        if line.is_empty() || line.starts_with(':') || line == "data: [DONE]" {
-                            return Ok("".to_string());
-                        }
+        let line_stream = FramedRead::new(reader, LinesCodec::new()).map(|result| {
+            match result {
+                Ok(line) => {
+                    let line = line.trim();
+                    // Ignore empty lines or SSE comments
+                    if line.is_empty() || line.starts_with(':') || line == "data: [DONE]" {
+                        return Ok("".to_string());
+                    }
 
-                        // Functional Chain (Pipeline) statt Nested Ifs
-                        if let Some(content) = line.strip_prefix("data: ")
-                            .and_then(|json| serde_json::from_str::<OpenAIStreamChunk>(json).ok())
-                            .and_then(|mut chunk| chunk.choices.pop())
-                            .and_then(|choice| choice.delta.content)
-                        {
-                            return Ok(content);
-                        }
+                    // Functional Chain (Pipeline) statt Nested Ifs
+                    if let Some(content) = line
+                        .strip_prefix("data: ")
+                        .and_then(|json| serde_json::from_str::<OpenAIStreamChunk>(json).ok())
+                        .and_then(|mut chunk| chunk.choices.pop())
+                        .and_then(|choice| choice.delta.content)
+                    {
+                        return Ok(content);
+                    }
 
-                        Ok("".to_string())
-                    },
-                    Err(e) => Err(AIError::IoError(std::io::Error::other(e))),
+                    Ok("".to_string())
                 }
-            });
+                Err(e) => Err(AIError::IoError(std::io::Error::other(e))),
+            }
+        });
 
         // Filter empty strings
         let clean_stream = line_stream.filter(|res| {
-             futures::future::ready(match res {
-                 Ok(s) => !s.is_empty(),
-                 Err(_) => true,
-             })
+            futures::future::ready(match res {
+                Ok(s) => !s.is_empty(),
+                Err(_) => true,
+            })
         });
 
         Ok(Box::pin(clean_stream))
