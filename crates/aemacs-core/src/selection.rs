@@ -10,20 +10,26 @@ pub struct Selection {
     pub anchor: usize,
     /// The end point of the selection (where the active cursor is).
     pub head: usize,
+    /// Stores the visual column we WANT to be in during vertical movement.
+    /// If None, we recalculate it from the current head.
+    pub wanted_column: Option<usize>,
 }
 
 impl Selection {
-    /// Creates a simple cursor (caret) at the given position.
     pub fn point(pos: usize) -> Self {
         Self {
             anchor: pos,
             head: pos,
+            wanted_column: None, // Reset memory
         }
     }
 
-    /// Creates a selection range from anchor to head.
     pub fn new(anchor: usize, head: usize) -> Self {
-        Self { anchor, head }
+        Self {
+            anchor,
+            head,
+            wanted_column: None,
+        }
     }
 
     /// Returns true if this is just a cursor (no text selected).
@@ -41,11 +47,12 @@ impl Selection {
         max(self.anchor, self.head)
     }
 
-    /// Reverses the selection direction.
+    /// Update swap to reset wanted_column
     pub fn swap(&self) -> Self {
         Self {
             anchor: self.head,
             head: self.anchor,
+            wanted_column: None,
         }
     }
 }

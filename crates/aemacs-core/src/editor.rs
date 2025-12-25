@@ -1,4 +1,6 @@
 use crate::buffer::Buffer;
+use crate::command::Command;
+use crate::mode::Mode;
 use crate::selection::Selection;
 use ropey::Rope;
 
@@ -14,6 +16,7 @@ struct Snapshot {
 pub struct Editor {
     pub buffer: Buffer,
     pub selections: Vec<Selection>,
+    pub mode: Mode,
     undo_stack: Vec<Snapshot>,
     redo_stack: Vec<Snapshot>,
 }
@@ -23,6 +26,7 @@ impl Editor {
         Self {
             buffer: Buffer::new(),
             selections: vec![Selection::point(0)],
+            mode: Mode::default(),
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
         }
@@ -33,6 +37,7 @@ impl Editor {
         Ok(Self {
             buffer,
             selections: vec![Selection::point(0)],
+            mode: Mode::default(),
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
         })
@@ -134,6 +139,8 @@ impl Editor {
                 let new_pos = std::cmp::min(selection.head + 1, max_len);
                 *selection = Selection::point(new_pos);
             }
+            // Memory clear, as user explicitly moves horizontally
+            selection.wanted_column = None;
         }
     }
 
@@ -149,6 +156,8 @@ impl Editor {
                 let new_pos = selection.head.saturating_sub(1);
                 *selection = Selection::point(new_pos);
             }
+            // Memory clear, as user explicitly moves horizontally
+            selection.wanted_column = None;
         }
     }
 
@@ -194,11 +203,129 @@ impl Editor {
     pub fn primary_cursor(&self) -> Selection {
         *self.selections.first().unwrap_or(&Selection::point(0))
     }
+
+    /// Executes a single abstract command.
+    /// This is the main entry point for Keybindings and AI Agents.
+    pub fn run(&mut self, cmd: Command) -> anyhow::Result<()> {
+        match cmd {
+            // Navigation
+            Command::MoveRight => self.move_right(),
+            Command::MoveLeft => self.move_left(),
+            Command::MoveUp => self.move_vertical(-1),
+            Command::MoveDown => self.move_vertical(1),
+
+            // Editing
+            Command::Insert(text) => self.insert(&text),
+            Command::InsertNewline => self.insert_newline(),
+            Command::Backspace => self.backspace(),
+            Command::Delete => self.delete(),
+
+            // System
+            Command::Undo => self.undo(),
+            Command::Redo => self.redo(),
+            Command::Save => self.save()?,
+
+            // Mode Switching
+            Command::EnterMode(new_mode) => self.mode = new_mode,
+        }
+        Ok(())
+    }
+
+    /// Moves cursors vertically (lines).
+    /// dir: -1 for Up, +1 for Down.
+    fn move_vertical(&mut self, dir: i32) {
+        for selection in &mut self.selections {
+            // 1. Where are we?
+            let current_char_idx = selection.head;
+            let current_line_idx = self.buffer.content.char_to_line(current_char_idx);
+
+            // 2. Where do we want to go?
+            let target_line_idx = if dir < 0 {
+                if current_line_idx == 0 {
+                    continue;
+                } // At top nothing to do
+                current_line_idx - 1
+            } else {
+                let last_line = self.buffer.content.len_lines() - 1;
+                if current_line_idx >= last_line {
+                    continue;
+                } // At bottom nothing to do
+                current_line_idx + 1
+            };
+
+            // 3. Column memory calculation
+            let current_line_start = self.buffer.content.line_to_char(current_line_idx);
+            let column = if let Some(wanted) = selection.wanted_column {
+                wanted
+            } else {
+                // We remember the column for future moves
+                let col = current_char_idx - current_line_start;
+                selection.wanted_column = Some(col);
+                col
+            };
+
+            // 4. Calculate target position
+            let target_line_start = self.buffer.content.line_to_char(target_line_idx);
+            let target_line_end = self.buffer.content.line_to_char(target_line_idx + 1);
+
+            // The length of the target line (excluding the newline at the end, if present)
+            // Ropey counts \n as part of the line. We don't want to jump PAST the \n.
+            let target_line_len = target_line_end - target_line_start;
+
+            // Small hack: If line is not empty and ends with \n, subtract one.
+            // (For a real implementation we need more precise grapheme checks, but for core it's enough).
+            let clamp_limit = if target_line_len > 0 {
+                target_line_len - 1
+            } else {
+                0
+            };
+
+            let new_col = std::cmp::min(column, clamp_limit);
+            let new_pos = target_line_start + new_col;
+
+            *selection = Selection::point(new_pos);
+            // IMPORTANT: Keep the memory!
+            selection.wanted_column = Some(column);
+        }
+    }
+
+    /// Forward delete (Delete key).
+    pub fn delete(&mut self) {
+        self.save_snapshot();
+        self.selections.sort_by(|a, b| b.start().cmp(&a.start()));
+
+        let max_len = self.buffer.len_chars();
+
+        for selection in &mut self.selections {
+            let start = selection.start();
+            let end = selection.end();
+
+            if start != end {
+                // Case A: Delete Selection
+                self.buffer.content.remove(start..end);
+                *selection = Selection::point(start);
+                self.buffer.dirty = true;
+            } else if start < max_len {
+                // Case B: Simple Delete (delete char at cursor)
+                self.buffer.content.remove(start..start + 1);
+                // Cursor stays where it is (text shifts left)
+                *selection = Selection::point(start);
+                self.buffer.dirty = true;
+            }
+        }
+    }
+
+    pub fn insert_newline(&mut self) {
+        // Platform independent internal representation is \n.
+        // GPUI handles rendering properly.
+        self.insert("\n");
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::keymap::KeymapRegistry;
 
     #[test]
     fn test_editor_insert_basic() {
@@ -355,6 +482,155 @@ mod tests {
 
         // Cleanup
         let _ = std::fs::remove_file(file_path);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_command_pipeline() -> anyhow::Result<()> {
+        let mut editor = Editor::new();
+
+        // Thats basically a "macro" or what the AI would generate:
+        let script = vec![
+            Command::Insert("Hello".to_string()), // Write Hello
+            Command::MoveLeft,                    // Go back (between l and o)
+            Command::Backspace,                   // Delete l -> "Helo"
+            Command::Insert("p".to_string()),     // Write p -> "Helpo" ... wait
+            Command::Undo,                        // Undo Insert "p" -> "Helo"
+            Command::Undo,                        // Undo Backspace -> "Hello"
+        ];
+
+        // Execute
+        for cmd in script {
+            editor.run(cmd)?;
+        }
+
+        assert_eq!(editor.buffer.text(), "Hello");
+        Ok(())
+    }
+
+    #[test]
+    fn test_vertical_movement_memory() {
+        let mut editor = Editor::new();
+        // Setup a "Sandwich" structure:
+        // Long line
+        // Short line
+        // Long line
+        editor.insert("0123456789");
+        editor.insert_newline();
+        editor.insert("01");
+        editor.insert_newline();
+        editor.insert("0123456789");
+
+        // Reset cursor to start
+        editor.selections[0] = Selection::point(0);
+
+        // Move to character '5' in the first line
+        for _ in 0..5 {
+            editor.move_right();
+        }
+        // Cursor is now at index 5 (on the '5')
+
+        // 1. Move DOWN to the short line
+        editor.move_vertical(1);
+        // Expectation: Should be capped at the end of the short line (at '1' or after),
+        // because the line is too short for column 5.
+        // Index Check: Line 0 has 11 chars ("0123456789\n").
+        // Line 1 has 3 chars ("01\n").
+        // Cursor should snap to the end of visible text in line 1.
+
+        // 2. Move DOWN again to the third (long) line
+        editor.move_vertical(1);
+
+        // MAGIC: Should be back at '5'!
+        // The editor remembered we actually wanted column 5.
+        let current_pos = editor.primary_cursor().head;
+
+        // Math verification:
+        // Line 0 length: 11 chars ("0123456789\n")
+        // Line 1 length: 3 chars ("01\n")
+        // Line 2 Start Index: 11 + 3 = 14.
+        // Target Index: 14 + 5 = 19.
+        assert_eq!(current_pos, 19);
+
+        // Check content at cursor to be 100% sure
+        let char_at_cursor = editor.buffer.content.char(current_pos);
+        assert_eq!(char_at_cursor, '5');
+    }
+
+    #[test]
+    fn test_modal_editing_workflow() -> anyhow::Result<()> {
+        let mut editor = Editor::new();
+        let keymap = KeymapRegistry::new(); // Loads Vim Defaults
+
+        // 1. Start: Normal Mode
+        // User presses 'j'. In an empty buffer, 'j' (MoveDown) does nothing visible,
+        // but crucially: IT MUST NOT INSERT "j".
+        let input = "j";
+        if let Some(cmd) = keymap.resolve(editor.mode, input) {
+            editor.run(cmd)?;
+        } else if editor.mode == crate::mode::Mode::Insert {
+            // Only in Insert Mode do we treat unbound keys as text!
+            editor.run(Command::Insert(input.to_string()))?;
+        } else {
+            // Normal Mode + Unbound Key = Ignore (or beep in UI later)
+        }
+
+        // Assertion: Buffer must remain empty!
+        assert_eq!(editor.buffer.text(), "");
+
+        // 2. User presses 'ü' (Unbound key in Normal Mode)
+        // Should strictly be ignored.
+        let input = "ü";
+        if let Some(cmd) = keymap.resolve(editor.mode, input) {
+            editor.run(cmd)?;
+        } else if editor.mode == crate::mode::Mode::Insert {
+            editor.run(Command::Insert(input.to_string()))?;
+        }
+
+        // Assertion: Still empty. No "ü" inserted.
+        assert_eq!(editor.buffer.text(), "");
+
+        // 3. Switch to Insert Mode ('i')
+        let cmd = keymap.resolve(editor.mode, "i").unwrap();
+        editor.run(cmd)?;
+        assert_eq!(editor.mode, crate::mode::Mode::Insert);
+
+        // 4. Typing ("h", "i")
+        // Now we are in Insert Mode. 'h' is NOT bound in Insert Mode.
+        // Logic: resolve returns None -> Fallback to Insert(char).
+        let inputs = vec!["h", "i"];
+        for key in inputs {
+            if let Some(cmd) = keymap.resolve(editor.mode, key) {
+                editor.run(cmd)?;
+            } else if editor.mode == crate::mode::Mode::Insert {
+                // FALLBACK: Allow insertion
+                editor.run(Command::Insert(key.to_string()))?;
+            }
+        }
+        assert_eq!(editor.buffer.text(), "hi");
+
+        // 5. Back to Normal Mode ('esc')
+        let cmd = keymap.resolve(editor.mode, "esc").unwrap();
+        editor.run(cmd)?;
+        assert_eq!(editor.mode, crate::mode::Mode::Normal);
+
+        // 6. Test Command Execution in Normal Mode ('x' -> Delete)
+        // Cursor is at end ("hi"). Move left once to be on 'i'.
+        editor.run(Command::MoveLeft)?;
+
+        let cmd = keymap.resolve(editor.mode, "x").unwrap();
+        editor.run(cmd)?; // Should delete 'i'
+
+        // Verify delete happened
+        assert_eq!(editor.buffer.text(), "h");
+
+        // 7. Test Undo ('u')
+        let cmd = keymap.resolve(editor.mode, "u").unwrap();
+        editor.run(cmd)?;
+
+        // Should be restored to "hi"
+        assert_eq!(editor.buffer.text(), "hi");
 
         Ok(())
     }

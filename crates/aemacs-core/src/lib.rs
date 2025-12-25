@@ -1,12 +1,18 @@
 pub mod buffer;
+pub mod command;
 pub mod editor;
+pub mod keymap;
+pub mod mode;
 pub mod selection;
 
 use anyhow::Result;
 use log::info;
 
 pub use buffer::Buffer;
+pub use command::Command;
 pub use editor::Editor;
+pub use keymap::KeymapRegistry;
+pub use mode::Mode;
 pub use selection::Selection;
 
 /// Initiliase the Iron Core.

@@ -33,6 +33,10 @@ ONLY after closing the `</reasoning>` tag, proceed to generate the final code.
 -   **Modules:** File-System Hierarchy Standard (Rust 2018+).
     -   **FORBIDDEN:** Do NOT use `folder/mod.rs`.
     -   **REQUIRED:** Use `folder.rs` (alongside the `folder/` directory) to define modules.
+-   **Documentation & Comments:**
+    -   **Language:** MUST be **English** exclusively.
+    -   **Public API:** All `pub` structs/functions/enums MUST have doc comments (`///`).
+    -   **Reasoning:** Explain *why* complex logic exists, not just what it does.
 
 ## 3. The "Sacred Constitution" (Project Philosophy)
 
