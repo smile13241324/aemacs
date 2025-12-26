@@ -72,6 +72,7 @@ dependencies = [
  "anyhow",
  "gpui",
  "log",
+ "tokio",
 ]
 
 [[package]]

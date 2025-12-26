@@ -1,15 +1,11 @@
 use std::fmt;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
 pub enum Mode {
+    #[default]
     Normal,
     Insert,
-}
-
-impl Default for Mode {
-    fn default() -> Self {
-        Mode::Normal
-    }
+    Visual,
 }
 
 impl fmt::Display for Mode {
@@ -17,6 +13,7 @@ impl fmt::Display for Mode {
         match self {
             Mode::Normal => write!(f, "NORMAL"),
             Mode::Insert => write!(f, "INSERT"),
+            Mode::Visual => write!(f, "VISUAL"),
         }
     }
 }

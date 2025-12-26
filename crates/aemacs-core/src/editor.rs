@@ -315,10 +315,27 @@ impl Editor {
         }
     }
 
+    /// Inserts a newline at all cursor positions.
     pub fn insert_newline(&mut self) {
         // Platform independent internal representation is \n.
         // GPUI handles rendering properly.
         self.insert("\n");
+    }
+
+    /// Returns the current cursor position as (1-based Line, 1-based Column).
+    pub fn cursor_position(&self) -> (usize, usize) {
+        let head = self.primary_cursor().head;
+        let line_idx = self.buffer.content.char_to_line(head);
+        let line_start = self.buffer.content.line_to_char(line_idx);
+        let col_idx = head - line_start;
+
+        // Return 1-based for UI
+        (line_idx + 1, col_idx + 1)
+    }
+
+    /// Returns the total number of lines
+    pub fn line_count(&self) -> usize {
+        self.buffer.content.len_lines()
     }
 }
 

@@ -1,9 +1,9 @@
-use gpui::{App, AppContext, Global, ReadGlobal, Task};
+use gpui::{App, AppContext, Global, Task};
 use std::future::Future;
 
 pub use tokio::task::JoinError;
 
-/// Initializes the Tokio wrapper using a new Tokio runtime with 2 worker threads.
+/// Initializes the Tokio wrapper using a new Tokio runtime.
 pub fn init(cx: &mut App) {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -12,6 +12,11 @@ pub fn init(cx: &mut App) {
         .expect("Failed to initialize Tokio");
 
     cx.set_global(GlobalTokio::new(RuntimeHolder::Owned(runtime)));
+}
+
+/// Initializes the Tokio wrapper using an existing handle.
+pub fn init_from_handle(cx: &mut App, handle: tokio::runtime::Handle) {
+    cx.set_global(GlobalTokio::new(RuntimeHolder::Shared(handle)));
 }
 
 enum RuntimeHolder {
@@ -43,7 +48,6 @@ impl GlobalTokio {
 pub struct Tokio {}
 
 impl Tokio {
-    /// Spawns the given future on Tokio's thread pool, and returns it via a GPUI task.
     pub fn spawn<C, Fut, R>(cx: &C, f: Fut) -> C::Result<Task<Result<R, JoinError>>>
     where
         C: AppContext,
@@ -54,21 +58,19 @@ impl Tokio {
             let join_handle = tokio.runtime.handle().spawn(f);
             let abort_handle = join_handle.abort_handle();
 
-            // Minimal defer implementation inline
             let cancel = Defer(Some(move || {
                 abort_handle.abort();
             }));
 
             cx.background_spawn(async move {
                 let result = join_handle.await;
-                drop(cancel); // Keep cancel alive until here
+                drop(cancel);
                 result
             })
         })
     }
 }
 
-// Helper struct to run cleanup on drop
 struct Defer<F: FnOnce()>(Option<F>);
 impl<F: FnOnce()> Drop for Defer<F> {
     fn drop(&mut self) {
