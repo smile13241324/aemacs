@@ -1,61 +1,55 @@
-use aemacs_core::Editor;
+use aemacs_core::{Editor, runtime};
 use anyhow::Result;
 use log::info;
 
-// 1. Die harte Liste der Wahrheit
-// Wir importieren jeden einzelnen Typ, den wir brauchen.
-// Verlass dich nicht auf 'prelude'.
+// 1. Imports aufräumen
+// Wir brauchen Entity! AppContext ist raus (wir nutzen App).
+use gpui::prelude::*;
 use gpui::{
-    AppContext, // <--- Wir holen ihn zurück! Er existiert.
-    // Der Runner & Context
+    App,
     Application,
     Bounds,
     Context,
-
+    Entity, // <--- NEU: Der Ersatz für Model/View
     IntoElement,
-    // Die Core-Typen (die zuletzt gefehlt haben)
-    Model,
-    Point,
-    // Traits
-    Render,
-    Size,
-    View,
-    ViewContext,
-
-    VisualContext,
-
     Window,
-    WindowContext,
-    // Geometrie
+    WindowBounds,
     WindowOptions,
-    // Die Basics
     div,
+    px,
     rgb,
+    size,
 };
 
-// Prelude nur für Methoden-Erweiterungen (wie .flex(), .bg())
-use gpui::prelude::*;
-
 pub fn init() -> Result<()> {
-    info!("🎨 [GPUI] Initializing Graphics Engine (Git Master)...");
+    info!("🎨 [GPUI] Initializing Graphics Engine...");
     Ok(())
 }
 
 pub struct Workspace {
-    editor: Model<Editor>,
+    // 2. State-Haltung
+    // Statt Model<Editor> nutzen wir jetzt Entity<Editor>.
+    // Ein Entity ist ein Handle auf ein Objekt, das GPUI verwaltet.
+    editor: Entity<Editor>,
 }
 
 impl Workspace {
-    pub fn build(cx: &mut WindowContext) -> View<Self> {
-        cx.new_view(|cx| {
-            let editor = cx.new_model(|_cx| Editor::new());
+    // 3. Builder Update
+    // Statt 'WindowContext' nutzen wir '&mut App' (oder Context).
+    // Der Return-Type ist jetzt Entity<Self> (statt View<Self>).
+    pub fn build(cx: &mut App) -> Entity<Self> {
+        // cx.new() ist der neue Universal-Konstruktor für alles (Views & Models)
+        cx.new(|cx| {
+            // Auch den Editor erstellen wir mit cx.new()
+            let editor = cx.new(|_cx| Editor::new());
+
             Workspace { editor }
         })
     }
 }
 
 impl Render for Workspace {
-    // (Self, Window, Context<Self>)
+    // Signatur ist korrekt (Window + Context)
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .flex()
@@ -70,19 +64,25 @@ impl Render for Workspace {
 }
 
 pub fn run_app() {
-    let app = Application::new();
+    Application::new().run(|cx: &mut App| {
+        // Runtime starten
+        runtime::init(cx);
+        info!("🚀 [RUNTIME] Tokio Bridge active.");
 
-    // Wir nutzen wieder AppContext.
-    // Falls AppContext doch fehlt (unwahrscheinlich), wäre 'Context<()>' die Alternative.
-    app.run(|cx: &mut AppContext| {
-        let options = WindowOptions {
-            window_bounds: Some(gpui::WindowBounds::Windowed(Bounds::new(
-                Point::new(100.into(), 100.into()),
-                Size::new(800.into(), 600.into()),
-            ))),
-            ..Default::default()
-        };
+        let bounds = Bounds::centered(None, size(px(800.), px(600.0)), cx);
 
-        cx.open_window(options, |cx| Workspace::build(cx));
+        cx.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                ..Default::default()
+            },
+            |_, cx| {
+                // Hier übergeben wir 'cx' (welches &mut App ist) an build
+                Workspace::build(cx)
+            },
+        )
+        .unwrap();
+
+        cx.activate(true);
     });
 }

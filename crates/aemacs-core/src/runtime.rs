@@ -14,11 +14,6 @@ pub fn init(cx: &mut App) {
     cx.set_global(GlobalTokio::new(RuntimeHolder::Owned(runtime)));
 }
 
-/// Initializes the Tokio wrapper using a Tokio runtime handle.
-pub fn init_from_handle(cx: &mut App, handle: tokio::runtime::Handle) {
-    cx.set_global(GlobalTokio::new(RuntimeHolder::Shared(handle)));
-}
-
 enum RuntimeHolder {
     Owned(tokio::runtime::Runtime),
     Shared(tokio::runtime::Handle),
@@ -49,7 +44,6 @@ pub struct Tokio {}
 
 impl Tokio {
     /// Spawns the given future on Tokio's thread pool, and returns it via a GPUI task.
-    /// The Tokio task will be cancelled if the GPUI task is dropped.
     pub fn spawn<C, Fut, R>(cx: &C, f: Fut) -> C::Result<Task<Result<R, JoinError>>>
     where
         C: AppContext,
@@ -60,10 +54,10 @@ impl Tokio {
             let join_handle = tokio.runtime.handle().spawn(f);
             let abort_handle = join_handle.abort_handle();
 
-            // Cleanup: Abort tokio task when GPUI task drops
-            let cancel = defer(move || {
+            // Minimal defer implementation inline
+            let cancel = Defer(Some(move || {
                 abort_handle.abort();
-            });
+            }));
 
             cx.background_spawn(async move {
                 let result = join_handle.await;
@@ -72,32 +66,9 @@ impl Tokio {
             })
         })
     }
-
-    /// Helper for spawning Futures that return anyhow::Result
-    pub fn spawn_result<C, Fut, R>(cx: &C, f: Fut) -> C::Result<Task<anyhow::Result<R>>>
-    where
-        C: AppContext,
-        Fut: Future<Output = anyhow::Result<R>> + Send + 'static,
-        R: Send + 'static,
-    {
-        cx.read_global(|tokio: &GlobalTokio, cx| {
-            let join_handle = tokio.runtime.handle().spawn(f);
-            let abort_handle = join_handle.abort_handle();
-
-            let cancel = defer(move || {
-                abort_handle.abort();
-            });
-
-            cx.background_spawn(async move {
-                let result = join_handle.await?;
-                drop(cancel);
-                result
-            })
-        })
-    }
 }
 
-// Minimal 'defer' implementation to avoid extra dependencies
+// Helper struct to run cleanup on drop
 struct Defer<F: FnOnce()>(Option<F>);
 impl<F: FnOnce()> Drop for Defer<F> {
     fn drop(&mut self) {
@@ -105,7 +76,4 @@ impl<F: FnOnce()> Drop for Defer<F> {
             f()
         }
     }
-}
-fn defer<F: FnOnce()>(f: F) -> Defer<F> {
-    Defer(Some(f))
 }
