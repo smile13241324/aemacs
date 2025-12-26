@@ -10,6 +10,7 @@ name = "aemacs"
 path = "src/main.rs"
 
 [workspace]
+resolver = "2"
 members = [
     "crates/aemacs-core",
     "crates/aemacs-gpui",

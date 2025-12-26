@@ -4,6 +4,7 @@ pub mod editor;
 pub mod keymap;
 pub mod mode;
 pub mod selection;
+pub mod runtime;
 
 use anyhow::Result;
 use log::info;

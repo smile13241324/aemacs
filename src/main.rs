@@ -8,38 +8,42 @@ use aemacs_lsp;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // 1. Start the logger (RUST_LOG=info|debug controlls the log level)
+    // 1. Initialize the logger
+    // RUST_LOG environment variable controls the verbosity (info, debug, trace).
     env_logger::init();
 
     info!("🚀 [APP] Æmacs Boot Sequence initiated.");
 
-    // 2. Start the subsystems (Fail Fast: If one fails, all fail)
+    // 2. Start subsystems (Fail Fast Strategy)
+    // If any critical subsystem fails to load, we abort immediately to prevent undefined state.
     if let Err(e) = boot_sequence().await {
         error!("💥 [APP] Critical System Failure: {}", e);
-        // Clean exit with error code
+        // Exit with error code 1 to signal failure to the OS/CI
         std::process::exit(1);
     }
 
-    info!("✨ [APP] System fully operational. Waiting for Input.");
+    info!("✨ [APP] System fully operational. Handing over main thread to GPU Interface.");
 
-    // Here the event loop of GPUI would start and open the window
-    // aemacs_gpui::run_app();
+    // 3. Launch the UI Event Loop
+    // This blocks the main thread until the window is closed.
+    aemacs_gpui::run_app();
 
     Ok(())
 }
 
-/// Encapsulates the boot logic to easily propagate errors with '?'
+/// Encapsulates the system boot logic to easily propagate errors with '?'.
+/// Ensures a deterministic startup order.
 async fn boot_sequence() -> Result<()> {
-    // A. Core first (Config, State)
+    // A. Core System (Configs, Global State, Buffer Manager)
     aemacs_core::init()?;
 
-    // B. Bridge (Python must run before loading plugins)
+    // B. Legacy Bridge (Python environment must be ready before loading plugins)
     aemacs_bridge::init()?;
 
-    // C. LSP (Can wait in the background)
+    // C. LSP Subsystem (Language Servers can start in background)
     aemacs_lsp::init()?;
 
-    // D. UI Preparation
+    // D. UI Preparation (Load assets, cache fonts, compile shaders)
     aemacs_gpui::init()?;
 
     Ok(())

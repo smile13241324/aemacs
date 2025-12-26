@@ -12,3 +12,4 @@ tokio = { workspace = true }
 anyhow = { workspace = true }
 ropey = "1.6"
 log = { workspace = true }
+gpui = { workspace = true }
