@@ -14,7 +14,8 @@ Inside this block, you must:
 2.  **Check Panics:** Are you planning to use `.unwrap()`? (STOP! Use `?` or `expect` with context).
 3.  **API Compatibility (Bleeding Edge):** Verify if the code uses legacy GPUI patterns (`ModelContext`, `ViewContext`). **Enforce new `Entity<T>` and `Context<T>` patterns.**
 4.  **Concurrency Check:** Is this blocking the UI thread? If IO/Compute heavy, plan a `tokio::spawn`.
-5.  **Self-Correction:** If you see a raw `for` loop that could be an iterator, explicitly LOG the correction ("Refactoring to functional iterator chain") inside the trace. If you see non english text in code files you translate it to english.
+5.  **UTF Support:** All actions must work with UTF input explicitly for double byte glyphs.
+6.  **Self-Correction:** If you see a raw `for` loop that could be an iterator, explicitly LOG the correction ("Refactoring to functional iterator chain") inside the trace. If you see non english text in code files you translate it to english.
 
 ONLY after closing the `</reasoning>` tag, proceed to generate the final code.
 
