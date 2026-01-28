@@ -6,6 +6,7 @@ use gpui::{
     WindowBounds, WindowOptions, div, px, rgb, rgba, size,
 };
 use log::info;
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 pub fn init() -> Result<()> {
@@ -20,9 +21,25 @@ pub struct Workspace {
 }
 
 impl Workspace {
-    pub fn build(cx: &mut App) -> Entity<Self> {
+    pub fn build(cx: &mut App, file_path: Option<PathBuf>) -> Entity<Self> {
         cx.new(|cx| {
-            let editor = cx.new(|_cx| Editor::new());
+            let editor = cx.new(|_cx| {
+                if let Some(path) = file_path {
+                    match Editor::from_file(path) {
+                        Ok(ed) => {
+                            log::info!("📂 [Workspace] File loaded successfully.");
+                            ed
+                        }
+                        Err(e) => {
+                            log::error!("⚠️ [Workspace] Failed to load file: {}", e);
+                            Editor::new() // Fallback: Leerer Buffer
+                        }
+                    }
+                } else {
+                    Editor::new()
+                }
+            });
+
             let focus_handle = cx.focus_handle();
 
             Workspace {
@@ -359,7 +376,7 @@ impl Render for Workspace {
     }
 }
 
-pub fn run_app() {
+pub fn run_app(file_to_open: Option<PathBuf>) {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
@@ -384,7 +401,7 @@ pub fn run_app() {
         };
 
         cx.open_window(options, |window, cx| {
-            let view = Workspace::build(cx);
+            let view = Workspace::build(cx, file_to_open);
             let focus_handle = view.read(cx).focus_handle.clone();
             window.focus(&focus_handle, cx);
             view

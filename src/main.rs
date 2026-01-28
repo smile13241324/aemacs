@@ -24,9 +24,19 @@ async fn main() -> Result<()> {
 
     info!("✨ [APP] System fully operational. Handing over main thread to GPU Interface.");
 
+    // CLI Argument Handling: Check for file to open
+    let args: Vec<String> = std::env::args().collect();
+    let file_to_open = if args.len() > 1 {
+        let path = std::path::PathBuf::from(&args[1]);
+        info!("📂 [CLI] Requesting to open file: {:?}", path);
+        Some(path)
+    } else {
+        None
+    };
+
     // 3. Launch the UI Event Loop
     // This blocks the main thread until the window is closed.
-    aemacs_gpui::run_app();
+    aemacs_gpui::run_app(file_to_open);
 
     Ok(())
 }
