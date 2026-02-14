@@ -56,9 +56,57 @@ Complexity belongs in the code, not the installation.
 * **Atomic Updates:** The system is immutable and reliable (Nix-style).
 * **Rolling Forge:** Our `develop` branch is bleeding edge but guarded by autonomous CI agents.
 
+---
+
+## 🛠️ Getting Started
+
+### Prerequisites (The Infrastructure)
+Æmacs relies on a powerful local AI stack. You must establish the "Living Mesh" before the editor can think.
+
+#### 1. Ollama (The Brain)
+Install [Ollama](https://ollama.com/) and pull the required models:
+
+```bash
+# Start the server
+ollama serve
+
+# Pull the core models
+ollama pull mistral           # General Chat
+ollama pull nomic-embed-text  # Embeddings (RAG)
+ollama pull llava             # Vision (Multi-Modal)
+
+# Optional: Specialized Models (Hardware Dependent)
+ollama pull dolphin-llama3    # Uncensored coding
+# WARNING: The 70B model requires 48GB+ VRAM.
+# ollama pull dolphin-llama3:70b
+```
+
+#### 2. Qdrant (The Memory)
+We use Qdrant as our Vector Database for RAG (Long-term memory).
+Run it via Docker:
+
+```bash
+docker run -p 6333:6333 \
+    -v $(pwd)/qdrant_storage:/qdrant/storage \
+    qdrant/qdrant
+```
+
+### Installation
+```bash
+# Clone the forge
+git clone https://github.com/smile13241324/aemacs.git
+cd aemacs
+
+# Inspect the foundation
+cargo check
+
+# Ignite the engine
+cargo run
+```
+
 ## ⚖️ License
-**GPLv3**.
-The code belongs to the community. Forever free. Forever open.
+**AGPL-3.0**.
+The code belongs to the community. Networked freedom is guaranteed.
 
 ## 🗺️ Roadmap (Phase 1: The Ignition)
 - [ ] **Genesis:** Setup Rust Project & CI/CD.
