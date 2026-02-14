@@ -1,9 +1,12 @@
 pub mod connectors;
 pub mod error;
 pub mod models;
+pub mod conversation;
+pub mod loader;
 
 pub use error::{AIError, AIResult};
-pub use models::{AIRequest, Message, Role};
+pub use models::{AIRequest, Message, Role, Content, ContentPart, ImageUrl};
+pub use conversation::Conversation;
 
 use async_trait::async_trait;
 use futures::stream::BoxStream;

@@ -9,6 +9,7 @@ use tracing::{info, instrument};
 
 use crate::{AIBackend, AIError, AIRequest, AIResponseStream, AIResult, Message};
 
+#[derive(Clone)]
 pub struct OpenAICompatibleBackend {
     client: Client,
     base_url: String,
@@ -131,7 +132,7 @@ impl AIBackend for OpenAICompatibleBackend {
             .choices
             .into_iter()
             .next()
-            .map(|c| c.message.content)
+            .map(|c| c.message.content.to_string())
             .ok_or(AIError::ParseError("No choices in response".to_string()))
     }
 
@@ -178,7 +179,7 @@ impl AIBackend for OpenAICompatibleBackend {
                         return Ok("".to_string());
                     }
 
-                    // Functional Chain (Pipeline) statt Nested Ifs
+                    // Functional Chain (Pipeline) instead of Nested Ifs
                     if let Some(content) = line
                         .strip_prefix("data: ")
                         .and_then(|json| serde_json::from_str::<OpenAIStreamChunk>(json).ok())

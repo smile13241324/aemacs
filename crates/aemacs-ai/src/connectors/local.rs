@@ -59,7 +59,7 @@ impl AIBackend for LocalBackend {
         info!("Sending request to local binary: {}", self.bin_path);
 
         let output = Command::new(&self.bin_path)
-            .arg(&last_message.content)
+            .arg(last_message.content.to_string())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .output()
@@ -86,7 +86,7 @@ impl AIBackend for LocalBackend {
         info!("Starting stream from local binary: {}", self.bin_path);
 
         let mut child = Command::new(&self.bin_path)
-            .arg(&last_message.content)
+            .arg(last_message.content.to_string())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true)
