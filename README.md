@@ -109,12 +109,17 @@ cargo run
 The code belongs to the community. Networked freedom is guaranteed.
 
 ## 🗺️ Roadmap (Phase 1: The Ignition)
-- [ ] **Genesis:** Setup Rust Project & CI/CD.
-- [ ] **The Mesh:** Porting the AI Agent Framework (Python -> Rust/WASM).
-- [ ] **The Puppet:** Implementing the Headless-Emacs-Bridge (RPC).
-- [ ] **First Light:** Rendering the first buffer via GPUI.
+- [x] **Genesis:** Setup Rust Project & CI/CD.
+- [x] **The Mesh:** Porting the AI Agent Framework (Python -> Rust/WASM).
+- [x] **The Puppet:** Implementing the Headless-Emacs-Bridge (RPC).
+- [x] **First Light:** Rendering the first buffer via GPUI.
+- [ ] **Fix GPUI** Issues in the bleeding edge version of GPUI prevent full ui integration needs to be fixed
+- [ ] **Allow AI User Communication** Make the user able to send messages to agents including custom ones and add pictures and files
+- [ ] **Add MCP Support:** Add the build in MCP server to allow the model to be fully agentic
+- [ ] **Make It Scale:** Make the buffer content scale
+- [ ] **Make AI Content Aware:** Allow agents to speak to humans without having been asked before
 
 ---
-*Forged with 💜 by Maxi & Gyni.*
+*Forged with 💜 by Nova & Gyni.*
 
 <a href="https://spacemacs.org"><img src="assets/spacemacs-badge.svg" alt="Made with Spacemacs" height="20"></a>
