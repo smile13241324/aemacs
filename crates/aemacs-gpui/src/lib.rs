@@ -3,11 +3,22 @@ use anyhow::Result;
 use gpui::prelude::*;
 use gpui::{
     App, Application, Bounds, Context, Entity, FocusHandle, IntoElement, KeyDownEvent, Window,
-    WindowBounds, WindowOptions, div, px, rgb, rgba, size,
+    WindowBounds, WindowOptions, div, px, rgb, size,
 };
 use log::info;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
+
+mod ai_panel;
+use ai_panel::AiPanel;
+
+mod editor_view;
+use editor_view::render_editor_view;
+
+mod input_handler;
+use input_handler::resolve_key_command;
+
+mod ai_utils;
 
 pub fn init() -> Result<()> {
     info!("🎨 [GPUI] Initializing Graphics Engine...");
@@ -16,8 +27,10 @@ pub fn init() -> Result<()> {
 
 pub struct Workspace {
     editor: Entity<Editor>,
+    ai_panel: Entity<AiPanel>,
     focus_handle: FocusHandle,
     last_key: Option<(String, Instant)>,
+    show_ai: bool,
 }
 
 impl Workspace {
@@ -40,12 +53,15 @@ impl Workspace {
                 }
             });
 
+            let ai_panel = AiPanel::new(cx);
             let focus_handle = cx.focus_handle();
 
             Workspace {
                 editor,
+                ai_panel,
                 focus_handle,
                 last_key: None,
+                show_ai: true, // Default to visible for testing
             }
         })
     }
@@ -126,86 +142,6 @@ impl Workspace {
             .child(desc.to_string())
     }
 
-    fn render_editor(&self, editor: &Editor, _cx: &App) -> impl IntoElement {
-        let theme_bg = rgb(0x282c34);
-        let text_color = rgb(0xabb2bf);
-        let cursor_pos = editor.cursor_position();
-        let cursor_line_idx = cursor_pos.0 - 1;
-        let cursor_col_idx = cursor_pos.1 - 1;
-
-        let (cursor_bg, is_block, has_shadow) = match editor.mode {
-            Mode::Normal => (rgb(0xd19a66), true, false),  // Orange
-            Mode::Insert => (rgb(0x98c379), false, false), // Green
-            Mode::Visual => (rgba(0x3e445180), true, true), // Grey Shadow
-        };
-
-        let line_count = editor.line_count();
-
-        let lines_view = div()
-            .flex()
-            .flex_col()
-            .size_full()
-            .font_family("Fira Code")
-            .text_size(px(14.0))
-            .text_color(text_color)
-            .children((0..line_count).map(|line_idx| {
-                let line_text = editor.buffer.content.line(line_idx).to_string();
-
-                if line_idx == cursor_line_idx {
-                    let chars: Vec<char> = line_text.chars().collect();
-                    let len = chars.len();
-                    let safe_col = std::cmp::min(cursor_col_idx, len);
-
-                    let pre_text: String = chars.iter().take(safe_col).collect();
-                    let cursor_char_str = if safe_col < len && chars[safe_col] != '\n' {
-                        chars[safe_col].to_string()
-                    } else {
-                        " ".to_string()
-                    };
-                    let post_text: String = chars.iter().skip(safe_col + 1).collect();
-
-                    div()
-                        .h(px(20.0))
-                        .flex()
-                        .flex_row()
-                        .whitespace_nowrap()
-                        .child(pre_text)
-                        .child(
-                            div()
-                                .child(cursor_char_str)
-                                .text_color(if is_block && !has_shadow {
-                                    rgb(0x282c34)
-                                } else {
-                                    text_color
-                                })
-                                .bg(if is_block {
-                                    cursor_bg
-                                } else {
-                                    rgba(0x00000000)
-                                })
-                                .when(has_shadow, |this| this.shadow_sm())
-                                .when(!is_block, |this| this.border_l_2().border_color(cursor_bg)),
-                        )
-                        .child(post_text)
-                        .into_any_element()
-                } else {
-                    div()
-                        .h(px(20.0))
-                        .whitespace_nowrap()
-                        .child(line_text)
-                        .into_any_element()
-                }
-            }));
-
-        div()
-            .flex()
-            .size_full()
-            .bg(theme_bg)
-            .pl(px(16.0))
-            .pt(px(16.0))
-            .child(lines_view)
-    }
-
     fn handle_keydown(
         &mut self,
         event: &KeyDownEvent,
@@ -235,42 +171,21 @@ impl Workspace {
             }
         }
 
-        let command: Option<Command> = if keystroke.key == "backspace" {
-            Some(Command::Backspace)
-        } else if keystroke.key == "delete" {
-            Some(Command::Delete)
-        } else if keystroke.key == "enter" {
+        let current_mode = self.editor.read(cx).mode;
+
+        // 1. Special Handling: Enter -> Newline
+        let command = if keystroke.key == "enter" {
             Some(Command::InsertNewline)
-        } else if keystroke.key == "left" {
-            Some(Command::MoveLeft)
-        } else if keystroke.key == "right" {
-            Some(Command::MoveRight)
-        } else if keystroke.key == "up" {
-            Some(Command::MoveUp)
-        } else if keystroke.key == "down" {
-            Some(Command::MoveDown)
-        } else if keystroke.key == "escape" {
-            Some(Command::EnterMode(Mode::Normal))
-        } else if let Some(text) = &keystroke.key_char {
-            if !keystroke.modifiers.platform
-                && !keystroke.modifiers.control
-                && !keystroke.modifiers.function
-            {
-                let current_mode = self.editor.read(cx).mode;
-                if current_mode == Mode::Normal && text == "i" {
-                    Some(Command::EnterMode(Mode::Insert))
-                } else if current_mode == Mode::Normal {
-                    None
-                } else {
-                    self.last_key = Some((text.clone(), current_time));
-                    Some(Command::Insert(text.clone()))
-                }
-            } else {
-                None
-            }
         } else {
-            None
+            // 2. Delegate to shared logic
+            resolve_key_command(keystroke, current_mode)
         };
+
+        if let Some(text) = &keystroke.key_char {
+             // Update last key for special combos (like fd)
+             // Only if it was a text input
+             self.last_key = Some((text.clone(), current_time));
+        }
 
         if let Some(cmd) = command {
             self.editor.update(cx, |editor, _cx| {
@@ -302,6 +217,39 @@ impl Render for Workspace {
             Mode::Visual => rgb(0x3e4451), // Visual Grey
         };
 
+        // Main Editor Area
+        let main_view = div()
+            .flex()
+            .flex_1()
+            .flex_row()
+            .child(
+                div()
+                    .w(px(50.0))
+                    .bg(gutter_bg)
+                    .flex()
+                    .flex_col()
+                    .items_end()
+                    .pr(px(8.0))
+                    .pt(px(16.0))
+                    .text_size(px(14.0))
+                    .font_family("Fira Code")
+                    .text_color(gutter_text)
+                    .children(if is_empty {
+                        vec![div().child("~").into_any_element()]
+                    } else {
+                        (1..=editor.line_count())
+                            .map(|i| {
+                                div().child(i.to_string()).h(px(20.0)).into_any_element()
+                            })
+                            .collect()
+                    }),
+            )
+            .child(if is_empty {
+                self.render_welcome().into_any_element()
+            } else {
+                render_editor_view(editor).into_any_element()
+            });
+
         div()
             .flex()
             .flex_col()
@@ -314,33 +262,16 @@ impl Render for Workspace {
                     .flex()
                     .flex_1()
                     .flex_row()
-                    .child(
-                        div()
-                            .w(px(50.0))
-                            .bg(gutter_bg)
-                            .flex()
-                            .flex_col()
-                            .items_end()
-                            .pr(px(8.0))
-                            .pt(px(16.0))
-                            .text_size(px(14.0))
-                            .font_family("Fira Code")
-                            .text_color(gutter_text)
-                            .children(if is_empty {
-                                vec![div().child("~").into_any_element()]
-                            } else {
-                                (1..=editor.line_count())
-                                    .map(|i| {
-                                        div().child(i.to_string()).h(px(20.0)).into_any_element()
-                                    })
-                                    .collect()
-                            }),
-                    )
-                    .child(if is_empty {
-                        self.render_welcome().into_any_element()
-                    } else {
-                        self.render_editor(editor, cx).into_any_element()
-                    }),
+                    .child(main_view)
+                    .when(self.show_ai, |this| {
+                        this.child(
+                            div()
+                                .w(px(350.0)) // AI Panel Width
+                                .border_l_1()
+                                .border_color(rgb(0x181a1f))
+                                .child(self.ai_panel.clone())
+                        )
+                    })
             )
             .child(
                 div()
@@ -366,6 +297,7 @@ impl Render for Workspace {
                     )
                     .child(div().text_color(status_fg).child("buffer-1.rs"))
                     .child(div().flex_1())
+                    .child(div().text_color(rgb(0xff5555)).child(if self.show_ai { "AI: ON" } else { "AI: OFF" }))
                     .child(
                         div()
                             .text_color(status_fg)
