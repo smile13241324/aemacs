@@ -25,3 +25,4 @@ examples:
 		cargo run -p aemacs-ai --example simple_chat
 		cargo run -p aemacs-ai --example simple_chat_async
 		cargo run -p aemacs-ai --example ollama_chat
+		cargo run -p aemacs-ai --example rag_demo

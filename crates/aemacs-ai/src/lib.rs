@@ -3,6 +3,8 @@ pub mod error;
 pub mod models;
 pub mod conversation;
 pub mod loader;
+pub mod embeddings;
+pub mod rag;
 
 pub use error::{AIError, AIResult};
 pub use models::{AIRequest, Message, Role, Content, ContentPart, ImageUrl};
