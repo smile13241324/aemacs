@@ -1,7 +1,9 @@
 [package]
 name = "aemacs-core"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
 
 [lib]
 name = "aemacs_core"
@@ -10,6 +12,6 @@ path = "src/lib.rs"
 [dependencies]
 tokio = { workspace = true }
 anyhow = { workspace = true }
-ropey = "1.6"
+ropey = { workspace = true }
 log = { workspace = true }
 gpui = { workspace = true }

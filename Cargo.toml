@@ -1,9 +1,10 @@
 [package]
 name = "aemacs"
-version = "0.1.0"
-edition = "2024"
-authors = ["smile13241324 <smile13241324@gmail.com>"]
-description = "The Iron Core Editor - AI-Native, Rust-Based, Vim-Keybindings."
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description.workspace = true
+license.workspace = true
 
 [[bin]]
 name = "aemacs"
@@ -18,6 +19,13 @@ members = [
     "crates/aemacs-bridge",
     "crates/aemacs-ai"
 ]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+authors = ["smile13241324 <smile13241324@gmail.com>"]
+description = "The Iron Core Editor - AI-Native, Rust-Based, Vim-Keybindings, IDE, AI-Server."
+license = "AGPL-3.0-only"
 
 [workspace.dependencies]
 # --- Internal Crates ---
@@ -38,6 +46,8 @@ log = "0.4"
 env_logger = "0.11"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+base64 = "0.22"
+mime_guess = "2.0"
 
 # --- Data & Networking ---
 serde = { version = "1.0.228", features = ["derive"] }
@@ -49,6 +59,7 @@ gpui = { git = "https://github.com/zed-industries/zed" }
 tree-sitter = "0.26.3"
 pyo3 = { version = "0.27.2", features = ["auto-initialize"] }
 tower-lsp = "0.20"
+ropey = "1.6"
 
 [dependencies]
 # Main App Dependencies
