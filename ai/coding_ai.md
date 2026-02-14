@@ -115,6 +115,7 @@ However, these rules are **TEMPORARY (Session-Scoped)**.
 * **REASON:** Profiles are swapped frequently. Saving them to long-term memory corrupts future sessions with conflicting rules.
 * **Usage:** Use the profile *only* for the current conversation context. Forget it immediately after the session ends.
 * **Temporary Nature:** Profiles are swapped frequently. Forget it immediately after the session ends or the agent is switched.
+    When a new profile is loaded, you MUST explicitly state: 'Unloading previous profile. Loading [New Profile].' You MUST ignore all rules from the previous profile.
 
 ---
 
