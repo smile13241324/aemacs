@@ -63,32 +63,23 @@ Complexity belongs in the code, not the installation.
 ### Prerequisites (The Infrastructure)
 Æmacs relies on a powerful local AI stack. You must establish the "Living Mesh" before the editor can think.
 
-#### 1. Ollama (The Brain)
-Install [Ollama](https://ollama.com/) and pull the required models:
+**Requirements:**
+* **Docker:** Must be installed and running.
+* **NVIDIA GPU (Recommended):** Install the `nvidia-container-toolkit` for hardware acceleration. (CPU fallback is supported but slower).
+
+#### Deploying the Airlock 🛡️
+We provide a unified, secure deployment script using the **Airlock Pattern**. This sets up both the Brain (Ollama) and the Memory (Qdrant) in a network-isolated environment.
 
 ```bash
-# Start the server
-ollama serve
+# 1. Make the setup script executable
+chmod +x setup_aemacs_ai.sh
 
-# Pull the core models
-ollama pull mistral           # General Chat
-ollama pull nomic-embed-text  # Embeddings (RAG)
-ollama pull llava             # Vision (Multi-Modal)
-
-# Optional: Specialized Models (Hardware Dependent)
-ollama pull dolphin-llama3    # Uncensored coding
-# WARNING: The 70B model requires 48GB+ VRAM.
-# ollama pull dolphin-llama3:70b
-```
-
-#### 2. Qdrant (The Memory)
-We use Qdrant as our Vector Database for RAG (Long-term memory).
-Run it via Docker:
-
-```bash
-docker run -p 6333:6333 \
-    -v $(pwd)/qdrant_storage:/qdrant/storage \
-    qdrant/qdrant
+# 2. Ignite the Infrastructure
+# This will:
+# - Setup isolated Docker networks
+# - Pull core models (Dolphin, Vision, Embeddings)
+# - Launch Ollama & Qdrant securely on localhost
+./setup_aemacs_ai.sh
 ```
 
 ### Installation
