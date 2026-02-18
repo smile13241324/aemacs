@@ -28,13 +28,18 @@ QDRANT_IMAGE="qdrant/qdrant:latest"
 # --- SMART GPU DETECTION ---
 # We check if 'nvidia-smi' works AND if Docker has the nvidia-container-runtime configured.
 # This prevents crashes on laptops where drivers are installed but Docker is not linked.
-if command -v nvidia-smi &> /dev/null && docker info | grep -i "name: nvidia" &> /dev/null; then
+if command -v nvidia-smi &> /dev/null && (docker info 2>/dev/null | grep -i "name: nvidia" &> /dev/null || docker info 2>/dev/null | grep -i "Runtimes.*nvidia" &> /dev/null); then
     GPU_STRATEGY="--gpus=all"
-    echo "🎮 NVIDIA GPU detected & Docker configured. AI Acceleration ENABLED."
+    echo "🎮 NVIDIA Runtime found in Docker. AI Acceleration ENABLED."
 else
+    # Fallback debug info
+    echo "⚠️  NVIDIA Runtime NOT detected in Docker."
+    echo "    Debug Info:"
+    echo "    - nvidia-smi present: $(if command -v nvidia-smi &>/dev/null; then echo 'Yes'; else echo 'No'; fi)"
+    echo "    - Docker Runtimes: $(docker info 2>/dev/null | grep 'Runtimes')"
+    echo "    - Docker Names: $(docker info 2>/dev/null | grep 'name')"
+    echo "    Running in CPU Mode (Slower)."
     GPU_STRATEGY=""
-    echo "⚠️  GPU not found or Docker not configured for NVIDIA."
-    echo "    Running in CPU Mode. (Install 'nvidia-container-toolkit' for speed!)"
 fi
 
 echo "========================================"

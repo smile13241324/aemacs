@@ -70,9 +70,9 @@ Complexity belongs in the code, not the installation.
 #### Deploying the Airlock 🛡️
 We provide a unified, secure deployment script using the **Airlock Pattern**. This sets up both the Brain (Ollama) and the Memory (Qdrant) in a network-isolated environment.
 
-```bash
-# 1. Make the setup script executable
-chmod +x setup_aemacs_ai.sh
+``` bash
+# 1. Make the scripts executable
+chmod +x setup_aemacs_ai.sh teardown_aemacs_ai.sh
 
 # 2. Ignite the Infrastructure
 # This will:
@@ -82,10 +82,21 @@ chmod +x setup_aemacs_ai.sh
 ./setup_aemacs_ai.sh
 ```
 
+> **Note on Security:** Once deployed, the AI server runs in an isolated network with **zero internet access**. To update or add models, simply run the setup script again.
+
+#### Deactivating the Mesh 🛑
+To gracefully shut down the AI infrastructure and free up your system resources (VRAM/RAM), use the teardown protocol.
+
+``` bash
+# Stops containers, removes the network, and releases the GPU.
+# NOTE: Your downloaded models and vector memories are preserved in the docker volumes.
+./teardown_aemacs_ai.sh
+```
+
 ### Installation
-```bash
+``` bash
 # Clone the forge
-git clone https://github.com/smile13241324/aemacs.git
+git clone [https://github.com/smile13241324/aemacs.git](https://github.com/smile13241324/aemacs.git)
 cd aemacs
 
 # Inspect the foundation
@@ -105,7 +116,7 @@ The code belongs to the community. Networked freedom is guaranteed.
 - [x] **The Puppet:** Implementing the Headless-Emacs-Bridge (RPC).
 - [x] **First Light:** Rendering the first buffer via GPUI.
 - [ ] **Fix GPUI** Issues in the bleeding edge version of GPUI prevent full ui integration needs to be fixed
-- [ ] **Allow AI User Communication** Make the user able to send messages to agents including custom ones and add pictures and files
+- [ ] **Connect The Mesh** Make the user able to send messages to agents including custom ones and add pictures and files
 - [ ] **Add MCP Support:** Add the build in MCP server to allow the model to be fully agentic
 - [ ] **Make It Scale:** Make the buffer content scale
 - [ ] **Make AI Content Aware:** Allow agents to speak to humans without having been asked before
