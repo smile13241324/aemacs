@@ -1,7 +1,7 @@
-use crate::{AIRequest, Message, Role, Content, ContentPart, models::OllamaOptions};
 use crate::loader::load_file;
-use std::path::Path;
+use crate::{AIRequest, Content, ContentPart, Message, Role, models::OllamaOptions};
 use anyhow::Result;
+use std::path::Path;
 
 #[derive(Debug, Clone)]
 pub struct Conversation {
@@ -34,10 +34,14 @@ impl Conversation {
     }
 
     /// Adds a system prompt combined with a file context.
-    pub fn with_system_and_file(mut self, text: impl Into<String>, path: impl AsRef<Path>) -> Result<Self> {
+    pub fn with_system_and_file(
+        mut self,
+        text: impl Into<String>,
+        path: impl AsRef<Path>,
+    ) -> Result<Self> {
         let file_part = load_file(path)?;
         let text_part = ContentPart::Text { text: text.into() };
-        
+
         let content = Content::Parts(vec![text_part, file_part]);
         self.messages.push(Message {
             role: Role::System,
@@ -54,18 +58,27 @@ impl Conversation {
         self.messages.push(Message::new(Role::User, s));
         self
     }
-    
+
     /// Adds a user message with an image URL (for remote images).
-    pub fn with_user_with_image(mut self, text: impl Into<String>, image_url: impl Into<String>) -> Self {
-        self.messages.push(Message::user_with_image(text, image_url));
+    pub fn with_user_with_image(
+        mut self,
+        text: impl Into<String>,
+        image_url: impl Into<String>,
+    ) -> Self {
+        self.messages
+            .push(Message::user_with_image(text, image_url));
         self
     }
 
     /// Adds a user message combined with a local file content.
-    pub fn with_user_and_file(mut self, text: impl Into<String>, path: impl AsRef<Path>) -> Result<Self> {
+    pub fn with_user_and_file(
+        mut self,
+        text: impl Into<String>,
+        path: impl AsRef<Path>,
+    ) -> Result<Self> {
         let file_part = load_file(path)?;
         let text_part = ContentPart::Text { text: text.into() };
-        
+
         let content = Content::Parts(vec![text_part, file_part]);
         self.messages.push(Message {
             role: Role::User,

@@ -40,7 +40,7 @@ impl fmt::Display for Content {
                 for part in parts {
                     match part {
                         ContentPart::Text { text } => write!(f, "{}", text)?,
-                        ContentPart::ImageUrl { .. } => {},
+                        ContentPart::ImageUrl { .. } => {}
                     }
                 }
                 Ok(())
@@ -86,10 +86,9 @@ pub struct Message {
     // We handle this via custom deserializer or Option?
     // Let's make content optional? Or handle empty string.
     // For now, keep it Content, assuming text "" if null.
-    
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ToolCall>>,
-    
+
     // For Tool Outputs:
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
@@ -112,13 +111,15 @@ impl Message {
     pub fn user(content: impl Into<Content>) -> Self {
         Self::new(Role::User, content)
     }
-    
+
     pub fn user_with_image(text: impl Into<String>, image_url: impl Into<String>) -> Self {
         let parts = vec![
             ContentPart::Text { text: text.into() },
-            ContentPart::ImageUrl { 
-                image_url: ImageUrl { url: image_url.into() } 
-            }
+            ContentPart::ImageUrl {
+                image_url: ImageUrl {
+                    url: image_url.into(),
+                },
+            },
         ];
         Self {
             role: Role::User,

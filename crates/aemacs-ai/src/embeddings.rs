@@ -31,13 +31,15 @@ impl OllamaEmbedder {
 
     pub async fn embed(&self, text: &str) -> AIResult<Vec<f32>> {
         let url = format!("{}/api/embeddings", self.base_url.trim_end_matches('/'));
-        
+
         let body = EmbeddingRequest {
             model: &self.model,
             prompt: text,
         };
 
-        let res = self.client.post(&url)
+        let res = self
+            .client
+            .post(&url)
             .json(&body)
             .send()
             .await
@@ -45,10 +47,14 @@ impl OllamaEmbedder {
 
         if !res.status().is_success() {
             let err_text = res.text().await.unwrap_or_default();
-            return Err(AIError::ConnectorError(format!("Embedding Error: {}", err_text)));
+            return Err(AIError::ConnectorError(format!(
+                "Embedding Error: {}",
+                err_text
+            )));
         }
 
-        let response: EmbeddingResponse = res.json()
+        let response: EmbeddingResponse = res
+            .json()
             .await
             .map_err(|e| AIError::ParseError(e.to_string()))?;
 

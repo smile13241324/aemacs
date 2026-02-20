@@ -1,5 +1,5 @@
 use crate::models::{ContentPart, ImageUrl};
-use anyhow::{Result, Context};
+use anyhow::{Context, Result};
 use base64::prelude::*;
 use mime_guess::from_path;
 use std::fs;
@@ -14,13 +14,14 @@ pub fn load_file(path: impl AsRef<Path>) -> Result<ContentPart> {
         let b64 = BASE64_STANDARD.encode(&bytes);
         let url = format!("data:{};base64,{}", mime, b64);
         Ok(ContentPart::ImageUrl {
-            image_url: ImageUrl { url }
+            image_url: ImageUrl { url },
         })
     } else {
-        // Default to Text. 
+        // Default to Text.
         // In a real system, we should check for binary content to avoid dumping garbage.
         // For now, we assume if it's not an image, it's text context (code, logs, etc).
-        let text = fs::read_to_string(path).with_context(|| format!("Failed to read text file: {:?}", path))?;
+        let text = fs::read_to_string(path)
+            .with_context(|| format!("Failed to read text file: {:?}", path))?;
         Ok(ContentPart::Text { text })
     }
 }

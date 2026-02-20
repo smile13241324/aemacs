@@ -1,6 +1,6 @@
 use aemacs_ai::connectors::OpenAICompatibleBackend;
 use aemacs_ai::conversation::Conversation;
-use aemacs_ai::mcp::{run_agent_loop, ToolHost, ToolRegistry};
+use aemacs_ai::mcp::{ToolHost, ToolRegistry, run_agent_loop};
 use aemacs_ai::rag::KnowledgeBase;
 use async_trait::async_trait;
 use std::io::{self, Write};
@@ -63,18 +63,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("🔌 Connecting to Ollama at {}", color(ollama_url, BLUE));
     let backend = OpenAICompatibleBackend::new(ollama_url, None);
 
-    println!("📚 Connecting to KnowledgeBase at {}", color(qdrant_url, BLUE));
+    println!(
+        "📚 Connecting to KnowledgeBase at {}",
+        color(qdrant_url, BLUE)
+    );
     let kb = match KnowledgeBase::new(qdrant_url, ollama_url) {
         Ok(kb) => Arc::new(kb),
         Err(e) => {
-            eprintln!("{} Qdrant not available ({}). Search tool will fail.", color("⚠️  Warning:", YELLOW), e);
+            eprintln!(
+                "{} Qdrant not available ({}). Search tool will fail.",
+                color("⚠️  Warning:", YELLOW),
+                e
+            );
             return Err(Box::new(e));
         }
     };
 
     println!("🛠️  Registering Core Tools...");
     let registry = ToolRegistry::with_core_tools(kb);
-    
+
     // List tools
     let defs = registry.list_definitions();
     print!("   Loaded {} tools: ", defs.len());
@@ -88,8 +95,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let host = ConsoleHost;
 
-    let mut history = Conversation::new("mistral")
-        .with_system("You are an autonomous coding agent. Use tools to inspect and modify the codebase.");
+    let mut history = Conversation::new("mistral").with_system(
+        "You are an autonomous coding agent. Use tools to inspect and modify the codebase.",
+    );
 
     println!("\n{}", color("✅ Ready. Type 'exit' to quit.", GREEN));
 

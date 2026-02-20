@@ -182,9 +182,9 @@ impl Workspace {
         };
 
         if let Some(text) = &keystroke.key_char {
-             // Update last key for special combos (like fd)
-             // Only if it was a text input
-             self.last_key = Some((text.clone(), current_time));
+            // Update last key for special combos (like fd)
+            // Only if it was a text input
+            self.last_key = Some((text.clone(), current_time));
         }
 
         if let Some(cmd) = command {
@@ -238,9 +238,7 @@ impl Render for Workspace {
                         vec![div().child("~").into_any_element()]
                     } else {
                         (1..=editor.line_count())
-                            .map(|i| {
-                                div().child(i.to_string()).h(px(20.0)).into_any_element()
-                            })
+                            .map(|i| div().child(i.to_string()).h(px(20.0)).into_any_element())
                             .collect()
                     }),
             )
@@ -269,9 +267,9 @@ impl Render for Workspace {
                                 .w(px(350.0)) // AI Panel Width
                                 .border_l_1()
                                 .border_color(rgb(0x181a1f))
-                                .child(self.ai_panel.clone())
+                                .child(self.ai_panel.clone()),
                         )
-                    })
+                    }),
             )
             .child(
                 div()
@@ -297,7 +295,11 @@ impl Render for Workspace {
                     )
                     .child(div().text_color(status_fg).child("buffer-1.rs"))
                     .child(div().flex_1())
-                    .child(div().text_color(rgb(0xff5555)).child(if self.show_ai { "AI: ON" } else { "AI: OFF" }))
+                    .child(div().text_color(rgb(0xff5555)).child(if self.show_ai {
+                        "AI: ON"
+                    } else {
+                        "AI: OFF"
+                    }))
                     .child(
                         div()
                             .text_color(status_fg)

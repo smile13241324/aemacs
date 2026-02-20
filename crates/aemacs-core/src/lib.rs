@@ -3,8 +3,8 @@ pub mod command;
 pub mod editor;
 pub mod keymap;
 pub mod mode;
-pub mod selection;
 pub mod runtime;
+pub mod selection;
 
 use anyhow::Result;
 use log::info;

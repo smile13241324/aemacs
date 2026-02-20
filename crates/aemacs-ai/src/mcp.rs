@@ -1,12 +1,12 @@
+use crate::rag::KnowledgeBase;
+use crate::{AIBackend, AIRequest, Content, ContentPart, Conversation, Message, Role};
+use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use serde_json::Value;
 use std::collections::HashMap;
-use std::sync::Arc;
-use crate::rag::KnowledgeBase;
-use crate::{AIBackend, AIRequest, Conversation, Message, Role, Content, ContentPart}; 
-use anyhow::{Result, anyhow, Context};
 use std::fs;
-use std::path::{Path, PathBuf, Component};
+use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 
 // --- Interfaces ---
 
@@ -20,15 +20,19 @@ pub trait ToolHost: Send + Sync {
 pub trait Tool: Send + Sync {
     fn name(&self) -> &str;
     fn description(&self) -> &str;
-    fn parameters(&self) -> Value; 
+    fn parameters(&self) -> Value;
     async fn execute(&self, args: Value, host: &dyn ToolHost) -> Result<String>;
 }
 
 pub struct DenyAllHost;
 #[async_trait]
 impl ToolHost for DenyAllHost {
-    async fn ask_approval(&self, _description: &str) -> bool { false }
-    async fn ask_user(&self, _question: &str) -> String { String::new() }
+    async fn ask_approval(&self, _description: &str) -> bool {
+        false
+    }
+    async fn ask_user(&self, _question: &str) -> String {
+        String::new()
+    }
 }
 
 // --- Registry ---
@@ -62,16 +66,19 @@ impl ToolRegistry {
     }
 
     pub fn list_definitions(&self) -> Vec<Value> {
-        self.tools.values().map(|t| {
-            serde_json::json!({
-                "type": "function",
-                "function": {
-                    "name": t.name(),
-                    "description": t.description(),
-                    "parameters": t.parameters()
-                }
+        self.tools
+            .values()
+            .map(|t| {
+                serde_json::json!({
+                    "type": "function",
+                    "function": {
+                        "name": t.name(),
+                        "description": t.description(),
+                        "parameters": t.parameters()
+                    }
+                })
             })
-        }).collect()
+            .collect()
     }
 }
 
@@ -103,19 +110,15 @@ pub async fn run_agent_loop(
             for call in calls {
                 let tool_name = &call.function.name;
                 let args_str = &call.function.arguments;
-                
+
                 let result = match registry.get(tool_name) {
-                    Some(tool) => {
-                        match serde_json::from_str::<Value>(args_str) {
-                            Ok(args) => {
-                                match tool.execute(args, host).await {
-                                    Ok(output) => output,
-                                    Err(e) => format!("Error executing tool: {}", e),
-                                }
-                            }
-                            Err(e) => format!("Error parsing arguments: {}", e),
-                        }
-                    }
+                    Some(tool) => match serde_json::from_str::<Value>(args_str) {
+                        Ok(args) => match tool.execute(args, host).await {
+                            Ok(output) => output,
+                            Err(e) => format!("Error executing tool: {}", e),
+                        },
+                        Err(e) => format!("Error parsing arguments: {}", e),
+                    },
                     None => format!("Tool '{}' not found.", tool_name),
                 };
 
@@ -140,7 +143,9 @@ pub async fn run_agent_loop(
 
 fn validate_path(path_str: &str) -> Result<PathBuf> {
     let path = PathBuf::from(path_str);
-    if path.is_absolute() { return Err(anyhow!("Absolute paths are not allowed.")); }
+    if path.is_absolute() {
+        return Err(anyhow!("Absolute paths are not allowed."));
+    }
     for component in path.components() {
         if matches!(component, Component::ParentDir) {
             return Err(anyhow!("Path traversal (..) is not allowed."));
@@ -154,8 +159,12 @@ fn validate_path(path_str: &str) -> Result<PathBuf> {
 pub struct ReadFileTool;
 #[async_trait]
 impl Tool for ReadFileTool {
-    fn name(&self) -> &str { "read_file" }
-    fn description(&self) -> &str { "Reads the content of a file at the given path." }
+    fn name(&self) -> &str {
+        "read_file"
+    }
+    fn description(&self) -> &str {
+        "Reads the content of a file at the given path."
+    }
     fn parameters(&self) -> Value {
         serde_json::json!({
             "type": "object",
@@ -175,8 +184,12 @@ impl Tool for ReadFileTool {
 pub struct WriteFileTool;
 #[async_trait]
 impl Tool for WriteFileTool {
-    fn name(&self) -> &str { "write_file" }
-    fn description(&self) -> &str { "Writes content to a file. Overwrites if exists." }
+    fn name(&self) -> &str {
+        "write_file"
+    }
+    fn description(&self) -> &str {
+        "Writes content to a file. Overwrites if exists."
+    }
     fn parameters(&self) -> Value {
         serde_json::json!({
             "type": "object",
@@ -191,8 +204,12 @@ impl Tool for WriteFileTool {
         let path_str = args["path"].as_str().ok_or(anyhow!("Missing path"))?;
         let content = args["content"].as_str().ok_or(anyhow!("Missing content"))?;
         let path = validate_path(path_str)?;
-        
-        let approval_msg = format!("Write to file '{}'?\nSize: {} bytes", path.display(), content.len());
+
+        let approval_msg = format!(
+            "Write to file '{}'?\nSize: {} bytes",
+            path.display(),
+            content.len()
+        );
         if !host.ask_approval(&approval_msg).await {
             return Err(anyhow!("User denied write permission."));
         }
@@ -201,9 +218,8 @@ impl Tool for WriteFileTool {
             fs::create_dir_all(parent).context("Failed to create parent dirs")?;
         }
 
-        fs::write(&path, content)
-            .with_context(|| format!("Failed to write file: {:?}", path))?;
-            
+        fs::write(&path, content).with_context(|| format!("Failed to write file: {:?}", path))?;
+
         Ok(format!("Successfully wrote to {:?}", path))
     }
 }
@@ -211,8 +227,12 @@ impl Tool for WriteFileTool {
 pub struct ListFilesTool;
 #[async_trait]
 impl Tool for ListFilesTool {
-    fn name(&self) -> &str { "list_files" }
-    fn description(&self) -> &str { "Lists files and directories in a given path." }
+    fn name(&self) -> &str {
+        "list_files"
+    }
+    fn description(&self) -> &str {
+        "Lists files and directories in a given path."
+    }
     fn parameters(&self) -> Value {
         serde_json::json!({
             "type": "object",
@@ -223,10 +243,16 @@ impl Tool for ListFilesTool {
         let path_str = args["path"].as_str().unwrap_or(".");
         let path = validate_path(path_str)?;
         let mut entries = Vec::new();
-        for entry in fs::read_dir(&path).with_context(|| format!("Failed to read dir: {:?}", path))? {
+        for entry in
+            fs::read_dir(&path).with_context(|| format!("Failed to read dir: {:?}", path))?
+        {
             let entry = entry?;
             let name = entry.file_name().to_string_lossy().to_string();
-            let type_str = if entry.file_type()?.is_dir() { "DIR" } else { "FILE" };
+            let type_str = if entry.file_type()?.is_dir() {
+                "DIR"
+            } else {
+                "FILE"
+            };
             entries.push(format!("[{}] {}", type_str, name));
         }
         Ok(entries.join("\n"))
@@ -238,13 +264,19 @@ pub struct SearchKnowledgeBaseTool {
 }
 
 impl SearchKnowledgeBaseTool {
-    pub fn new(kb: Arc<KnowledgeBase>) -> Self { Self { kb } }
+    pub fn new(kb: Arc<KnowledgeBase>) -> Self {
+        Self { kb }
+    }
 }
 
 #[async_trait]
 impl Tool for SearchKnowledgeBaseTool {
-    fn name(&self) -> &str { "search_knowledge_base" }
-    fn description(&self) -> &str { "Searches internal documentation/memory." }
+    fn name(&self) -> &str {
+        "search_knowledge_base"
+    }
+    fn description(&self) -> &str {
+        "Searches internal documentation/memory."
+    }
     fn parameters(&self) -> Value {
         serde_json::json!({
             "type": "object",
@@ -256,10 +288,14 @@ impl Tool for SearchKnowledgeBaseTool {
         })
     }
     async fn execute(&self, args: Value, _host: &dyn ToolHost) -> Result<String> {
-        let query = args["query"].as_str().ok_or(anyhow::anyhow!("Missing query"))?;
+        let query = args["query"]
+            .as_str()
+            .ok_or(anyhow::anyhow!("Missing query"))?;
         let collection = args["collection"].as_str().unwrap_or("aemacs_docs");
         let results = self.kb.search(collection, query, 3, None).await?;
-        if results.is_empty() { return Ok("No results.".to_string()); }
+        if results.is_empty() {
+            return Ok("No results.".to_string());
+        }
         Ok(results.join("\n\n---\n\n"))
     }
 }
