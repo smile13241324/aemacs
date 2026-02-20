@@ -6,15 +6,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("🏛️  Initializing RAG Demo...");
 
     // 1. Connect to Infrastructure
-    // Assumption: Qdrant at localhost:6333, Ollama at localhost:11434
-    let qdrant_url = "http://localhost:6333";
+    let qdrant_url = "http://localhost:6334";
     let ollama_url = "http://localhost:11434";
 
     let kb = match KnowledgeBase::new(qdrant_url, ollama_url) {
         Ok(kb) => kb,
         Err(e) => {
             eprintln!("❌ Failed to initialize KnowledgeBase: {}", e);
-            eprintln!("   Ensure Qdrant is running on port 6333 and Ollama on 11434.");
+            eprintln!("   Ensure Qdrant is running on port 6334 and Ollama on 11434.");
             return Ok(());
         }
     };
@@ -22,7 +21,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("✅ Connected to Qdrant & Ollama.");
 
     // 2. Setup Collection
-    // 'nomic-embed-text' output dimension is 768.
     let collection_name = "aemacs_docs";
     println!("⚙️  Ensuring collection '{}' exists...", collection_name);
     kb.ensure_collection(collection_name, 768).await?;
@@ -44,13 +42,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // 4. Search
     let query = "Who designs the blueprints?";
-    println!(
-        "
-🔍 Searching for: '{}'",
-        query
-    );
+    println!("\n🔍 Searching for: '{}'", query);
 
-    let results = kb.search(collection_name, query, 3).await?;
+    // Search for a good answer with a similarity threshold of 0.7
+    let results = kb.search(collection_name, query, 3, Some(0.7)).await?;
 
     println!("--- Results ---");
     for (i, result) in results.iter().enumerate() {
