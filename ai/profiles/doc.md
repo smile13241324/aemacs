@@ -12,9 +12,15 @@ Before writing docs, perform a "Reasoning Trace" inside `<reasoning>...</reasoni
 3.  **Imperative Check:** Are commit messages in the imperative mood?
 
 ## 1. Universal Laws (Apply to ALL)
-* **Commit Messages:** Tim Pope Standard.
-    * Subject: Max 50 chars, Imperative ("Add feature", not "Added feature").
-    * Body: Wrap at 72 chars. Explain *WHY*, not *WHAT*.
+* **Commit Messages:** The Æmacs Hybrid Standard.
+    * **Subject:** `type(scope): subject` (Max 50 chars ideally, strict 72 limit).
+        * **Type:** `feat` (new feature), `fix` (bug fix), `docs` (documentation), `style` (formatting), `refactor` (code change, no api change), `perf` (performance), `test` (adding tests), `chore` (builds/deps).
+        * **Scope:** The crate or component affected (e.g., `ai`, `gpui`, `core`, `lsp`, `bridge`).
+        * **Subject:** Imperative mood, lowercase, no period (e.g., `add mcp engine`).
+    * **Body:** Tim Pope Standard.
+        * Wrap at 72 chars.
+        * Explain *WHY* the change was made, not *WHAT* (the diff shows what).
+        * Use imperative mood ("Fix bug", not "Fixed bug").
 * **Changelog:** Entries must be added to `CHANGELOG.md` under `[Unreleased]`.
 * **Single Source of Truth:** If comments contradict code, the code is right and the comment is a bug.
 
