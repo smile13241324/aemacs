@@ -5,6 +5,7 @@ pub mod conversation;
 pub mod loader;
 pub mod embeddings;
 pub mod rag;
+pub mod mcp;
 
 pub use error::{AIError, AIResult};
 pub use models::{AIRequest, Message, Role, Content, ContentPart, ImageUrl};
@@ -19,6 +20,6 @@ pub type AIResponseStream = BoxStream<'static, AIResult<String>>;
 pub trait AIBackend: Send + Sync {
     fn name(&self) -> &str;
     async fn health_check(&self) -> AIResult<()>;
-    async fn complete(&self, request: AIRequest) -> AIResult<String>;
+    async fn complete(&self, request: AIRequest) -> AIResult<Message>;
     async fn stream(&self, request: AIRequest) -> AIResult<AIResponseStream>;
 }
