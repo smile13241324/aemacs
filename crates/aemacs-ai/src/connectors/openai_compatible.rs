@@ -99,12 +99,14 @@ impl AIBackend for OpenAICompatibleBackend {
     }
 
     #[instrument(skip(self, request))]
-    async fn complete(&self, request: AIRequest) -> AIResult<String> {
+    async fn complete(&self, request: AIRequest) -> AIResult<Message> {
         let body = json!({
             "model": request.model,
             "messages": request.messages,
             "temperature": request.temperature,
-            "stream": false
+            "stream": false,
+            "options": request.options,
+            "tools": request.tools
         });
 
         let resp = self
@@ -132,7 +134,7 @@ impl AIBackend for OpenAICompatibleBackend {
             .choices
             .into_iter()
             .next()
-            .map(|c| c.message.content.to_string())
+            .map(|c| c.message)
             .ok_or(AIError::ParseError("No choices in response".to_string()))
     }
 
@@ -141,7 +143,9 @@ impl AIBackend for OpenAICompatibleBackend {
             "model": request.model,
             "messages": request.messages,
             "temperature": request.temperature,
-            "stream": true
+            "stream": true,
+            "options": request.options,
+            "tools": request.tools
         });
 
         let resp = self

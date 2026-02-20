@@ -6,7 +6,7 @@ use tokio_util::codec::{FramedRead, LinesCodec};
 use tracing::{info, instrument};
 
 use crate::error::{AIError, AIResult};
-use crate::models::AIRequest;
+use crate::models::{AIRequest, Message, Role};
 use crate::{AIBackend, AIResponseStream};
 
 pub struct LocalBackend {
@@ -50,7 +50,7 @@ impl AIBackend for LocalBackend {
     }
 
     #[instrument(skip(self, request))]
-    async fn complete(&self, request: AIRequest) -> AIResult<String> {
+    async fn complete(&self, request: AIRequest) -> AIResult<Message> {
         let last_message = request
             .messages
             .last()
@@ -74,7 +74,7 @@ impl AIBackend for LocalBackend {
         let response = String::from_utf8(output.stdout)
             .map_err(|e| AIError::ParseError(format!("Invalid UTF-8: {}", e)))?;
 
-        Ok(response.trim().to_string())
+        Ok(Message::new(Role::Assistant, response.trim().to_string()))
     }
 
     async fn stream(&self, request: AIRequest) -> AIResult<AIResponseStream> {

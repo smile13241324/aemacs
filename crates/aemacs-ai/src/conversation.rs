@@ -1,4 +1,4 @@
-use crate::{AIRequest, Message, Role, Content, ContentPart};
+use crate::{AIRequest, Message, Role, Content, ContentPart, models::OllamaOptions};
 use crate::loader::load_file;
 use std::path::Path;
 use anyhow::Result;
@@ -9,6 +9,8 @@ pub struct Conversation {
     messages: Vec<Message>,
     temperature: f32,
     stream: bool,
+    options: OllamaOptions,
+    tools: Option<Vec<serde_json::Value>>,
 }
 
 impl Conversation {
@@ -19,6 +21,8 @@ impl Conversation {
             messages: Vec::new(),
             temperature: 0.7, // Default
             stream: true,     // Default to streaming
+            options: OllamaOptions::default(),
+            tools: None,
         }
     }
 
@@ -38,6 +42,8 @@ impl Conversation {
         self.messages.push(Message {
             role: Role::System,
             content,
+            tool_calls: None,
+            tool_call_id: None,
         });
         Ok(self)
     }
@@ -56,9 +62,6 @@ impl Conversation {
     }
 
     /// Adds a user message combined with a local file content.
-    /// 
-    /// This bundles the text prompt and the file (Image or Text) into a single
-    /// multi-modal message.
     pub fn with_user_and_file(mut self, text: impl Into<String>, path: impl AsRef<Path>) -> Result<Self> {
         let file_part = load_file(path)?;
         let text_part = ContentPart::Text { text: text.into() };
@@ -67,6 +70,8 @@ impl Conversation {
         self.messages.push(Message {
             role: Role::User,
             content,
+            tool_calls: None,
+            tool_call_id: None,
         });
         Ok(self)
     }
@@ -78,6 +83,8 @@ impl Conversation {
         self.messages.push(Message {
             role: Role::User,
             content,
+            tool_calls: None,
+            tool_call_id: None,
         });
         Ok(self)
     }
@@ -87,6 +94,11 @@ impl Conversation {
         let s: String = content.into();
         self.messages.push(Message::new(Role::Assistant, s));
         self
+    }
+
+    /// Manually adds a full message object.
+    pub fn add_message(&mut self, message: Message) {
+        self.messages.push(message);
     }
 
     /// Sets the temperature (creativity).
@@ -101,6 +113,29 @@ impl Conversation {
         self
     }
 
+    /// Sets the context window size (num_ctx).
+    pub fn with_context_window(mut self, size: u32) -> Self {
+        self.options.num_ctx = Some(size);
+        self
+    }
+
+    /// Sets how long the model stays loaded in memory.
+    pub fn with_keep_alive(mut self, duration: impl Into<String>) -> Self {
+        self.options.keep_alive = Some(duration.into());
+        self
+    }
+
+    /// Registers tools for the model to use (Builder pattern).
+    pub fn with_tools(mut self, tools: Vec<serde_json::Value>) -> Self {
+        self.tools = Some(tools);
+        self
+    }
+
+    /// Sets tools on an existing mutable reference.
+    pub fn set_tools(&mut self, tools: Vec<serde_json::Value>) {
+        self.tools = Some(tools);
+    }
+
     /// Consumes the builder and returns the AIRequest.
     pub fn build(self) -> AIRequest {
         AIRequest {
@@ -108,6 +143,8 @@ impl Conversation {
             messages: self.messages,
             temperature: self.temperature,
             stream: self.stream,
+            options: Some(self.options),
+            tools: self.tools,
         }
     }
 }
