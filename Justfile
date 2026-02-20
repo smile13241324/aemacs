@@ -21,8 +21,9 @@ clean:
 		cargo clean
 fmt:
 		cargo fmt --all
-examples:
+demo:
 		cargo run -p aemacs-ai --example simple_chat
 		cargo run -p aemacs-ai --example simple_chat_async
 		cargo run -p aemacs-ai --example ollama_chat
+		cargo run -p aemacs-ai --example ollama_chat -- assets/gplv3.png
 		cargo run -p aemacs-ai --example rag_demo

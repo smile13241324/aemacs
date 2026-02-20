@@ -136,7 +136,6 @@ docker run -d \
   --name $PROD_CONTAINER \
   --restart unless-stopped \
   $GPU_STRATEGY \
-  --network $NETWORK_NAME \
   -p 127.0.0.1:11434:11434 \
   -v $VOLUME_NAME:/root/.ollama \
   $OLLAMA_IMAGE >/dev/null
@@ -144,20 +143,22 @@ docker run -d \
 echo "   🧠 Engine active (http://127.0.0.1:11434)"
 
 # Start Vector Memory (Qdrant)
-# Qdrant runs in the same isolated network, mapping port 6333 to localhost only.
+# Qdrant runs in the same isolated network, mapping ports to localhost only.
 docker run -d \
-  --name $QDRANT_CONTAINER \
-  --restart unless-stopped \
-  --network $NETWORK_NAME \
-  -p 127.0.0.1:6333:6333 \
-  -v $QDRANT_VOLUME:/qdrant/storage \
-  $QDRANT_IMAGE >/dev/null
+       --name $QDRANT_CONTAINER \
+       --restart unless-stopped \
+       -p 127.0.0.1:6333:6333 \
+       -p 127.0.0.1:6334:6334 \
+       -v $QDRANT_VOLUME:/qdrant/storage \
+       $QDRANT_IMAGE >/dev/null
 
-echo "   💾 Memory active (http://127.0.0.1:6333)"
-
+echo "   💾 Memory active (http://127.0.0.1:6333) for http"
+echo "   💾 Memory active (http://127.0.0.1:6334) for grpc"
+echo ""
 echo "========================================"
 echo "🎉 SETUP COMPLETE"
 echo "   AI Engine:   http://127.0.0.1:11434"
-echo "   Vector DB:   http://127.0.0.1:6333"
-echo "   Security:    ISOLATED (No outbound internet access)"
+echo "   Vector DB HTTP:   http://127.0.0.1:6333"
+echo "   Vector DB GRPC:   http://127.0.0.1:6334"
+# echo "   Security:    ISOLATED (No outbound internet access)"
 echo "========================================"
