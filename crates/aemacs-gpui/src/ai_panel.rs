@@ -1,5 +1,5 @@
+use aemacs_ai::Conversation; // Add Conversation
 use aemacs_ai::connectors::openai_compatible::OpenAICompatibleBackend;
-use aemacs_ai::{AIBackend, AIRequest, Conversation, Message, Role}; // Add Conversation
 use aemacs_core::{Editor, command::Command, mode::Mode};
 use gpui::prelude::*;
 use gpui::{App, Context, Entity, FocusHandle, IntoElement, KeyDownEvent, Window, div, px, rgb};
@@ -150,7 +150,7 @@ impl Render for AiPanel {
                     .flex_col()
                     .gap_y(px(10.0))
                     .p(px(10.0))
-                    // .overflow_y(Overflow::Scroll) // Still waiting for fix
+                    // .overflow_y_scroll()
                     .children(self.messages.iter().map(|msg| {
                         let is_user = msg.role == "User";
                         div()
