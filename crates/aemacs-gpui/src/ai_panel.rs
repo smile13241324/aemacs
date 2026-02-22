@@ -150,7 +150,8 @@ impl Render for AiPanel {
                     .flex_col()
                     .gap_y(px(10.0))
                     .p(px(10.0))
-                    // .overflow_y_scroll()
+                    .id("message_area")
+                    .overflow_y_scroll()
                     .children(self.messages.iter().map(|msg| {
                         let is_user = msg.role == "User";
                         div()
