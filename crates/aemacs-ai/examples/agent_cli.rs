@@ -1,4 +1,4 @@
-use aemacs_ai::connectors::OpenAICompatibleBackend;
+use aemacs_ai::connectors::openai_compatible::OpenAICompatibleBackend;
 use aemacs_ai::conversation::Conversation;
 use aemacs_ai::mcp::{ToolHost, ToolRegistry, run_agent_loop};
 use aemacs_ai::rag::KnowledgeBase;
@@ -58,7 +58,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("---------------------------------------");
 
     let ollama_url = "http://localhost:11434";
-    let qdrant_url = "http://localhost:6333";
+    let qdrant_url = "http://localhost:6334";
 
     println!("🔌 Connecting to Ollama at {}", color(ollama_url, BLUE));
     let backend = OpenAICompatibleBackend::new(ollama_url, None);

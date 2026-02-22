@@ -1,11 +1,11 @@
 use crate::rag::KnowledgeBase;
-use crate::{AIBackend, AIRequest, Content, ContentPart, Conversation, Message, Role};
+use crate::{AIBackend, Content, Conversation, Message, Role};
 use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Component, PathBuf};
 use std::sync::Arc;
 
 // --- Interfaces ---
