@@ -18,3 +18,4 @@ anyhow = { workspace = true }
 futures = { workspace = true }
 log = { workspace = true }
 ropey = { workspace = true }
+async-channel = "2.3"
