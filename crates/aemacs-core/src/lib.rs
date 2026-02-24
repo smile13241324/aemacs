@@ -1,4 +1,5 @@
 pub mod buffer;
+pub mod bus;
 pub mod command;
 pub mod editor;
 pub mod keymap;
@@ -10,6 +11,7 @@ use anyhow::Result;
 use log::info;
 
 pub use buffer::Buffer;
+pub use bus::EventBus;
 pub use command::Command;
 pub use editor::Editor;
 pub use keymap::KeymapRegistry;
