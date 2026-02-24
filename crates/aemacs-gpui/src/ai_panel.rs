@@ -1,18 +1,67 @@
-use aemacs_ai::Conversation; // Add Conversation
 use aemacs_ai::connectors::openai_compatible::OpenAICompatibleBackend;
+use aemacs_ai::{Conversation, mcp::ToolHost};
 use aemacs_core::{Editor, command::Command, mode::Mode};
-use gpui::prelude::*;
-use gpui::{App, Context, Entity, FocusHandle, IntoElement, KeyDownEvent, Window, div, px, rgb};
+use async_trait::async_trait;
+use gpui::{
+    App, Context, Entity, FocusHandle, IntoElement, KeyDownEvent, PromptLevel, WeakEntity, Window,
+    div, px, rgb,
+};
+use gpui::{AppContext, prelude::*};
 
 use crate::ai_utils::{StreamEvent, spawn_chat_stream};
 use crate::editor_view::render_editor_view;
 use crate::input_handler::resolve_key_command;
+
+// --- Modal Bridge (ACO-023) ---
+
+pub enum HostRequest {
+    Approval {
+        description: String,
+        responder: futures::channel::oneshot::Sender<bool>,
+    },
+    UserPrompt {
+        question: String,
+        responder: futures::channel::oneshot::Sender<String>,
+    },
+}
+
+pub struct GuiHost {
+    request_tx: async_channel::Sender<HostRequest>,
+}
+
+#[async_trait]
+impl ToolHost for GuiHost {
+    async fn ask_approval(&self, description: &str) -> bool {
+        let (tx, rx) = futures::channel::oneshot::channel();
+        let _ = self
+            .request_tx
+            .send(HostRequest::Approval {
+                description: description.to_string(),
+                responder: tx,
+            })
+            .await;
+        rx.await.unwrap_or(false)
+    }
+
+    async fn ask_user(&self, question: &str) -> String {
+        let (tx, rx) = futures::channel::oneshot::channel();
+        let _ = self
+            .request_tx
+            .send(HostRequest::UserPrompt {
+                question: question.to_string(),
+                responder: tx,
+            })
+            .await;
+        rx.await.unwrap_or_default()
+    }
+}
 
 pub struct AiPanel {
     pub input_editor: Entity<Editor>,
     pub focus_handle: FocusHandle,
     messages: Vec<ChatMessage>,
     backend: OpenAICompatibleBackend,
+    host_tx: async_channel::Sender<HostRequest>, // Store TX for later ToolRegistry integration
 }
 
 struct ChatMessage {
@@ -25,6 +74,46 @@ impl AiPanel {
         cx.new(|cx| {
             let input_editor = cx.new(|_cx| Editor::new());
             let focus_handle = cx.focus_handle();
+            let (tx, rx) = async_channel::unbounded::<HostRequest>();
+
+            // Spawn the Listener for HostRequests (ACO-023 Bridge)
+            cx.spawn(
+                |_this: WeakEntity<Self>, cx: &mut gpui::AsyncApp| async move {
+                    while let Ok(request) = rx.recv().await {
+                        match request {
+                            HostRequest::Approval {
+                                description,
+                                responder,
+                            } => {
+                                let prompt_future = cx.prompt(
+                                    PromptLevel::Warning,
+                                    "AI Permission Request",
+                                    Some(&description),
+                                    &["Approve", "Deny"],
+                                );
+
+                                let answer = prompt_future.await.unwrap_or(1usize); // Default to Deny
+                                let _ = responder.send(answer == 0);
+                            }
+                            HostRequest::UserPrompt {
+                                question,
+                                responder,
+                            } => {
+                                let prompt_future = cx.prompt(
+                                    PromptLevel::Info,
+                                    "AI Question",
+                                    Some(&question),
+                                    &["Acknowledge"],
+                                );
+
+                                let _ = prompt_future.await;
+                                let _ = responder.send("Acknowledged".to_string());
+                            }
+                        }
+                    }
+                },
+            )
+            .detach();
 
             // Default to local Ollama instance for now
             let backend = OpenAICompatibleBackend::new("http://localhost:11434/v1", None);
@@ -37,6 +126,7 @@ impl AiPanel {
                     content: "AI System Online. Waiting for input...".to_string(),
                 }],
                 backend,
+                host_tx: tx,
             }
         })
     }

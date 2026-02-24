@@ -323,6 +323,23 @@ pub fn run_app(file_to_open: Option<PathBuf>) {
         runtime::init_from_handle(cx, handle);
         info!("🚀 [RUNTIME] Tokio Bridge active.");
 
+        // Global Event Bus (ACO-031 Phase 2)
+        let bus = aemacs_core::bus::EventBus::new();
+        cx.set_global(bus.clone());
+
+        // Spawn a simple global listener for testing
+        let rx = bus.rx.clone();
+        cx.spawn(|cx: &mut gpui::AsyncApp| {
+            let _cx = cx.clone(); // Clone the owned context!
+            async move {
+                while let Ok(event) = rx.recv().await {
+                    log::info!("Global Event Received: {:?}", event);
+                    // (You now have 'cx' safely inside the future if you need it)
+                }
+            }
+        })
+        .detach();
+
         let bounds = Bounds::centered(None, size(px(800.), px(600.0)), cx);
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Maximized(bounds)),
