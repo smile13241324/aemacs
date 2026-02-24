@@ -1,18 +1,19 @@
+use aemacs_ai::Conversation;
 use aemacs_ai::connectors::openai_compatible::OpenAICompatibleBackend;
-use aemacs_ai::{Conversation, mcp::ToolHost};
+use aemacs_ai::mcp::{ToolHost, ToolRegistry};
 use aemacs_core::{Editor, command::Command, mode::Mode};
 use async_trait::async_trait;
-use gpui::{
-    App, Context, Entity, FocusHandle, IntoElement, KeyDownEvent, PromptLevel, WeakEntity, Window,
-    div, px, rgb,
-};
-use gpui::{AppContext, prelude::*};
+use gpui::prelude::*;
+use gpui::{App, Context, Entity, FocusHandle, IntoElement, KeyDownEvent, Window, div, px, rgb};
+use std::sync::Arc;
 
-use crate::ai_utils::{StreamEvent, spawn_chat_stream};
+use crate::ai_utils::{AgentEvent, spawn_agent_task};
 use crate::editor_view::render_editor_view;
 use crate::input_handler::resolve_key_command;
 
 // --- Modal Bridge (ACO-023) ---
+
+use aemacs_ai::rag::KnowledgeBase;
 
 pub enum HostRequest {
     Approval {
@@ -26,7 +27,7 @@ pub enum HostRequest {
 }
 
 pub struct GuiHost {
-    request_tx: async_channel::Sender<HostRequest>,
+    pub request_tx: async_channel::Sender<HostRequest>,
 }
 
 #[async_trait]
@@ -62,6 +63,11 @@ pub struct AiPanel {
     messages: Vec<ChatMessage>,
     backend: OpenAICompatibleBackend,
     host_tx: async_channel::Sender<HostRequest>, // Store TX for later ToolRegistry integration
+    tasks: Vec<aemacs_core::task::Task>,         // Store current plan (ACO-034)
+    selected_model_index: usize,
+    selected_context: u32,
+    pub kb: Arc<KnowledgeBase>,
+    pub registry: Arc<ToolRegistry>,
 }
 
 struct ChatMessage {
@@ -70,50 +76,15 @@ struct ChatMessage {
 }
 
 impl AiPanel {
-    pub fn new(cx: &mut App) -> Entity<Self> {
+    pub fn new(
+        cx: &mut App,
+        host_tx: async_channel::Sender<HostRequest>,
+        kb: Arc<KnowledgeBase>,
+        registry: Arc<ToolRegistry>,
+    ) -> Entity<Self> {
         cx.new(|cx| {
             let input_editor = cx.new(|_cx| Editor::new());
             let focus_handle = cx.focus_handle();
-            let (tx, rx) = async_channel::unbounded::<HostRequest>();
-
-            // Spawn the Listener for HostRequests (ACO-023 Bridge)
-            cx.spawn(
-                |_this: WeakEntity<Self>, cx: &mut gpui::AsyncApp| async move {
-                    while let Ok(request) = rx.recv().await {
-                        match request {
-                            HostRequest::Approval {
-                                description,
-                                responder,
-                            } => {
-                                let prompt_future = cx.prompt(
-                                    PromptLevel::Warning,
-                                    "AI Permission Request",
-                                    Some(&description),
-                                    &["Approve", "Deny"],
-                                );
-
-                                let answer = prompt_future.await.unwrap_or(1usize); // Default to Deny
-                                let _ = responder.send(answer == 0);
-                            }
-                            HostRequest::UserPrompt {
-                                question,
-                                responder,
-                            } => {
-                                let prompt_future = cx.prompt(
-                                    PromptLevel::Info,
-                                    "AI Question",
-                                    Some(&question),
-                                    &["Acknowledge"],
-                                );
-
-                                let _ = prompt_future.await;
-                                let _ = responder.send("Acknowledged".to_string());
-                            }
-                        }
-                    }
-                },
-            )
-            .detach();
 
             // Default to local Ollama instance for now
             let backend = OpenAICompatibleBackend::new("http://localhost:11434/v1", None);
@@ -126,9 +97,145 @@ impl AiPanel {
                     content: "AI System Online. Waiting for input...".to_string(),
                 }],
                 backend,
-                host_tx: tx,
+                host_tx,
+                tasks: Vec::new(),
+                selected_model_index: 0,
+                selected_context: aemacs_ai::models::MODELS[0].max_context,
+                kb,
+                registry,
             }
         })
+    }
+
+    /// Updates the local task list (ACO-034)
+    pub fn update_tasks(&mut self, tasks: Vec<aemacs_core::task::Task>, cx: &mut Context<Self>) {
+        self.tasks = tasks;
+        cx.notify();
+    }
+
+    fn render_model_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let selected_index = self.selected_model_index;
+        div()
+            .flex()
+            .flex_col()
+            .gap_y(px(4.0))
+            .child(
+                div()
+                    .text_size(px(10.0))
+                    .text_color(rgb(0x5c6370))
+                    .child("MODEL"),
+            )
+            .child(
+                div().flex().flex_wrap().gap(px(4.0)).children(
+                    aemacs_ai::models::MODELS
+                        .iter()
+                        .enumerate()
+                        .map(|(i, model)| {
+                            let is_selected = i == selected_index;
+                            div()
+                                .id(("model", i))
+                                .px(px(6.0))
+                                .py(px(2.0))
+                                .rounded_md()
+                                .border_1()
+                                .border_color(if is_selected {
+                                    rgb(0xbd93f9)
+                                } else {
+                                    rgb(0x3e4451)
+                                })
+                                .bg(if is_selected {
+                                    rgb(0x282c34)
+                                } else {
+                                    rgb(0x21252b)
+                                })
+                                .text_color(if is_selected {
+                                    rgb(0xffffff)
+                                } else {
+                                    rgb(0xabb2bf)
+                                })
+                                .text_size(px(11.0))
+                                .cursor_pointer()
+                                .on_click(cx.listener(move |this, _, _window, cx| {
+                                    this.selected_model_index = i;
+                                    // Reset context to max for new model
+                                    this.selected_context =
+                                        aemacs_ai::models::MODELS[i].max_context;
+                                    cx.notify();
+                                }))
+                                .child(model.label)
+                        }),
+                ),
+            )
+    }
+
+    fn render_context_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let selected_model = &aemacs_ai::models::MODELS[self.selected_model_index];
+        let current_context = self.selected_context;
+
+        div()
+            .flex()
+            .flex_col()
+            .gap_y(px(4.0))
+            .child(
+                div()
+                    .text_size(px(10.0))
+                    .text_color(rgb(0x5c6370))
+                    .child("CONTEXT WINDOW"),
+            )
+            .child(
+                div().flex().flex_wrap().gap(px(4.0)).children(
+                    aemacs_ai::models::CONTEXT_OPTIONS
+                        .iter()
+                        .filter(|&&opt| opt <= selected_model.max_context)
+                        .map(|&opt| {
+                            let is_selected = opt == current_context;
+                            div()
+                                .id(("context", opt as usize))
+                                .px(px(6.0))
+                                .py(px(2.0))
+                                .rounded_md()
+                                .border_1()
+                                .border_color(if is_selected {
+                                    rgb(0xbd93f9)
+                                } else {
+                                    rgb(0x3e4451)
+                                })
+                                .bg(if is_selected {
+                                    rgb(0x282c34)
+                                } else {
+                                    rgb(0x21252b)
+                                })
+                                .text_color(if is_selected {
+                                    rgb(0xffffff)
+                                } else {
+                                    rgb(0xabb2bf)
+                                })
+                                .text_size(px(11.0))
+                                .cursor_pointer()
+                                .on_click(cx.listener(move |this, _, _window, cx| {
+                                    this.selected_context = opt;
+                                    cx.notify();
+                                }))
+                                .child(if opt >= 1024 {
+                                    format!("{}k", opt / 1024)
+                                } else {
+                                    opt.to_string()
+                                })
+                        }),
+                ),
+            )
+    }
+
+    fn render_vram_estimate(&self) -> impl IntoElement {
+        let model = &aemacs_ai::models::MODELS[self.selected_model_index];
+        let estimate =
+            model.base_vram_gb + (self.selected_context as f32 / 1024.0) * model.kv_rate_gb_per_1k;
+
+        div()
+            .text_size(px(10.0))
+            .text_color(rgb(0xbd93f9))
+            .italic()
+            .child(format!("Estimated VRAM: {:.2} GB", estimate))
     }
 
     fn handle_input_keydown(
@@ -187,36 +294,47 @@ impl AiPanel {
 
         cx.notify();
 
-        // 4. Construct Request via Builder
-        let request = Conversation::new("mistral")
+        // 4. Setup Agent Loop
+        let model_name = aemacs_ai::models::MODELS[self.selected_model_index].name;
+        let conversation = Conversation::new(model_name)
             .with_system("You are a helpful assistant embedded in Æmacs.")
-            .with_user(text)
-            .build();
+            .with_context_window(self.selected_context)
+            .with_user(text);
+
+        let registry = self.registry.clone();
+
+        let host = GuiHost {
+            request_tx: self.host_tx.clone(),
+        };
 
         let backend = self.backend.clone();
 
-        // 5. Fire and Forget Stream
-        // We pass a closure that handles updates
-        spawn_chat_stream(cx, backend, request, |panel, cx, event| {
-            match event {
-                StreamEvent::Chunk(token) => {
-                    if let Some(last_msg) = panel.messages.last_mut() {
-                        if last_msg.role == "AI" {
-                            last_msg.content.push_str(&token);
+        // 5. Spawn Agent Task
+        spawn_agent_task(
+            cx,
+            backend,
+            registry,
+            self.kb.clone(),
+            host,
+            conversation,
+            |panel, cx, event| {
+                match event {
+                    AgentEvent::Result(result) => {
+                        if let Some(last_msg) = panel.messages.last_mut() {
+                            if last_msg.role == "AI" {
+                                last_msg.content = result;
+                            }
+                        }
+                    }
+                    AgentEvent::Error(e) => {
+                        if let Some(last_msg) = panel.messages.last_mut() {
+                            last_msg.content.push_str(&format!("\n[Error: {}]", e));
                         }
                     }
                 }
-                StreamEvent::Error(e) => {
-                    if let Some(last_msg) = panel.messages.last_mut() {
-                        last_msg.content.push_str(&format!("\n[Error: {}]", e));
-                    }
-                }
-                StreamEvent::Done => {
-                    // Optional cleanup
-                }
-            }
-            cx.notify();
-        })
+                cx.notify();
+            },
+        )
         .detach();
     }
 }
@@ -234,6 +352,54 @@ impl Render for AiPanel {
             .bg(bg)
             .border_l_1()
             .border_color(rgb(0x181a1f))
+            .child(
+                div()
+                    .p(px(10.0))
+                    .border_b_1()
+                    .border_color(rgb(0x181a1f))
+                    .flex()
+                    .flex_col()
+                    .gap_y(px(8.0))
+                    .child(self.render_model_selector(cx))
+                    .child(self.render_context_selector(cx))
+                    .child(self.render_vram_estimate()),
+            )
+            .when(!self.tasks.is_empty(), |this| {
+                this.child(
+                    div()
+                        .flex_grow()
+                        .max_h(px(300.0))
+                        .border_b_1()
+                        .border_color(rgb(0x181a1f))
+                        .p(px(10.0))
+                        .flex()
+                        .flex_col()
+                        .gap_y(px(4.0))
+                        .id("task_board")
+                        .overflow_y_scroll()
+                        .children(self.tasks.iter().map(|task| {
+                            let icon = match task.status {
+                                aemacs_core::task::TaskStatus::Pending => "[ ]",
+                                aemacs_core::task::TaskStatus::InProgress => "[>]",
+                                aemacs_core::task::TaskStatus::Completed => "[x]",
+                                aemacs_core::task::TaskStatus::Failed => "[!]",
+                            };
+                            let color = match task.status {
+                                aemacs_core::task::TaskStatus::Pending => rgb(0x5c6370),
+                                aemacs_core::task::TaskStatus::InProgress => rgb(0x61afef),
+                                aemacs_core::task::TaskStatus::Completed => rgb(0x98c379),
+                                aemacs_core::task::TaskStatus::Failed => rgb(0xe06c75),
+                            };
+                            div()
+                                .flex()
+                                .gap_x(px(8.0))
+                                .text_size(px(12.0))
+                                .text_color(color)
+                                .child(div().child(icon))
+                                .child(div().child(task.description.clone()))
+                        })),
+                )
+            })
             .child(
                 div()
                     .flex_1()
