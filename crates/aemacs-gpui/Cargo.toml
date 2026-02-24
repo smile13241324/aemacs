@@ -20,3 +20,4 @@ log = { workspace = true }
 ropey = { workspace = true }
 async-channel = { workspace = true }
 async-trait = { workspace = true }
+uuid = { workspace = true, features = ["v4"] }

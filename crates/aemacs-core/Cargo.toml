@@ -16,3 +16,4 @@ ropey = { workspace = true }
 log = { workspace = true }
 gpui = { workspace = true }
 async-channel = { workspace = true }
+serde = { workspace = true, features = ["derive"] }

@@ -71,6 +71,7 @@ dependencies = [
  "gpui",
  "log",
  "ropey",
+ "serde",
  "tokio",
 ]
 
@@ -88,6 +89,7 @@ dependencies = [
  "log",
  "ropey",
  "tokio",
+ "uuid",
 ]
 
 [[package]]
