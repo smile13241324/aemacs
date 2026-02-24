@@ -48,6 +48,7 @@ impl Conversation {
             content,
             tool_calls: None,
             tool_call_id: None,
+            timestamp: chrono::Utc::now(),
         });
         Ok(self)
     }
@@ -85,6 +86,7 @@ impl Conversation {
             content,
             tool_calls: None,
             tool_call_id: None,
+            timestamp: chrono::Utc::now(),
         });
         Ok(self)
     }
@@ -98,6 +100,7 @@ impl Conversation {
             content,
             tool_calls: None,
             tool_call_id: None,
+            timestamp: chrono::Utc::now(),
         });
         Ok(self)
     }
@@ -149,11 +152,71 @@ impl Conversation {
         self.tools = Some(tools);
     }
 
+    /// Archives the entire conversation history as individual episodic memory nodes in Qdrant.
+    pub async fn archive_to_memory(
+        &self,
+        kb: &crate::rag::KnowledgeBase,
+        session_id: &str,
+    ) -> Result<()> {
+        for (i, msg) in self.messages.iter().enumerate() {
+            let mut metadata = std::collections::HashMap::new();
+            metadata.insert("type".to_string(), "episodic_memory".to_string());
+            metadata.insert("session_id".to_string(), session_id.to_string());
+            metadata.insert("role".to_string(), format!("{:?}", msg.role));
+            metadata.insert("timestamp".to_string(), msg.timestamp.to_rfc3339());
+            metadata.insert("turn_index".to_string(), i.to_string());
+
+            // Contextualize the chunk for the embedder
+            let chunk = format!(
+                "Session: {}\nTime: {}\nRole: {:?}\nContent: {}",
+                session_id,
+                msg.timestamp.to_rfc3339(),
+                msg.role,
+                msg.content
+            );
+
+            kb.add_document("aemacs_codebase", &chunk, Some(metadata))
+                .await?;
+        }
+        Ok(())
+    }
+
     /// Consumes the builder and returns the AIRequest.
     pub fn build(self) -> AIRequest {
+        let messages = self
+            .messages
+            .into_iter()
+            .map(|mut msg| {
+                let timestamp_str = format!("[{}] ", msg.timestamp.to_rfc3339());
+                msg.content = match msg.content {
+                    Content::Text(text) => Content::Text(format!("{}{}", timestamp_str, text)),
+                    Content::Parts(mut parts) => {
+                        if !parts.is_empty() {
+                            if let ContentPart::Text { text } = &mut parts[0] {
+                                *text = format!("{}{}", timestamp_str, text);
+                            } else {
+                                parts.insert(
+                                    0,
+                                    ContentPart::Text {
+                                        text: timestamp_str,
+                                    },
+                                );
+                            }
+                        } else {
+                            parts.push(ContentPart::Text {
+                                text: timestamp_str,
+                            });
+                        }
+                        Content::Parts(parts)
+                    }
+                };
+                msg
+            })
+            .collect();
+
         AIRequest {
             model: self.model,
-            messages: self.messages,
+            messages,
             temperature: self.temperature,
             stream: self.stream,
             options: Some(self.options),

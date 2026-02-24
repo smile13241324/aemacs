@@ -25,6 +25,10 @@ base64 = { workspace = true }
 mime_guess = { workspace = true }
 qdrant-client = { workspace = true }
 uuid = { workspace = true }
+chrono = { workspace = true }
+regex = { workspace = true }
+urlencoding = { workspace = true }
+async-channel = { workspace = true }
 
 [dev-dependencies]
 tracing-subscriber = { workspace = true }

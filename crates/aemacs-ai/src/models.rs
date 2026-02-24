@@ -92,6 +92,10 @@ pub struct Message {
     // For Tool Outputs:
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
+
+    // The new temporal anchor:
+    #[serde(default = "chrono::Utc::now")]
+    pub timestamp: chrono::DateTime<chrono::Utc>,
 }
 
 impl Message {
@@ -101,6 +105,7 @@ impl Message {
             content: content.into(),
             tool_calls: None,
             tool_call_id: None,
+            timestamp: chrono::Utc::now(),
         }
     }
 
@@ -126,6 +131,7 @@ impl Message {
             content: Content::Parts(parts),
             tool_calls: None,
             tool_call_id: None,
+            timestamp: chrono::Utc::now(),
         }
     }
 }

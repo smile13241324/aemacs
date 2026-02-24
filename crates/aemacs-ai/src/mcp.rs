@@ -2,11 +2,13 @@ use crate::rag::KnowledgeBase;
 use crate::{AIBackend, Content, Conversation, Message, Role};
 use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
+use regex::Regex;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Component, PathBuf};
 use std::sync::Arc;
+use tokio::process::Command;
 
 // --- Interfaces ---
 
@@ -48,11 +50,23 @@ impl ToolRegistry {
         }
     }
 
-    pub fn with_core_tools(kb: Arc<KnowledgeBase>) -> Self {
+    pub fn with_core_tools(
+        kb: Arc<KnowledgeBase>,
+        event_tx: Option<async_channel::Sender<aemacs_core::bus::SystemEvent>>,
+    ) -> Self {
         let mut registry = Self::new();
         registry.register(Box::new(ReadFileTool));
-        registry.register(Box::new(WriteFileTool));
+        registry.register(Box::new(WriteFileTool {
+            event_tx: event_tx.clone(),
+        }));
+        registry.register(Box::new(ReplaceTextTool {
+            event_tx: event_tx.clone(),
+        }));
+        registry.register(Box::new(GrepSearchTool));
+        registry.register(Box::new(RunShellCommandTool));
         registry.register(Box::new(ListFilesTool));
+        registry.register(Box::new(WebSearchTool));
+        registry.register(Box::new(GitContextTool));
         registry.register(Box::new(SearchKnowledgeBaseTool::new(kb)));
         registry
     }
@@ -127,6 +141,7 @@ pub async fn run_agent_loop(
                     content: Content::Text(result),
                     tool_calls: None,
                     tool_call_id: call.id.clone(),
+                    timestamp: chrono::Utc::now(),
                 };
                 conversation.add_message(tool_msg);
             }
@@ -181,7 +196,9 @@ impl Tool for ReadFileTool {
     }
 }
 
-pub struct WriteFileTool;
+pub struct WriteFileTool {
+    pub event_tx: Option<async_channel::Sender<aemacs_core::bus::SystemEvent>>,
+}
 #[async_trait]
 impl Tool for WriteFileTool {
     fn name(&self) -> &str {
@@ -220,7 +237,261 @@ impl Tool for WriteFileTool {
 
         fs::write(&path, content).with_context(|| format!("Failed to write file: {:?}", path))?;
 
+        if let Some(tx) = &self.event_tx {
+            let _ = tx
+                .send(aemacs_core::bus::SystemEvent::FileModified(path.clone()))
+                .await;
+        }
+
         Ok(format!("Successfully wrote to {:?}", path))
+    }
+}
+
+pub struct ReplaceTextTool {
+    pub event_tx: Option<async_channel::Sender<aemacs_core::bus::SystemEvent>>,
+}
+#[async_trait]
+impl Tool for ReplaceTextTool {
+    fn name(&self) -> &str {
+        "replace_text"
+    }
+    fn description(&self) -> &str {
+        "Replaces a specific string of text within a file. The search_string must exactly match the file content and be unique."
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": { "type": "string", "description": "Path to file" },
+                "search_string": { "type": "string", "description": "The EXACT text to find and replace. Include a few surrounding lines if needed to ensure uniqueness." },
+                "replace_string": { "type": "string", "description": "The new text to insert." }
+            },
+            "required": ["path", "search_string", "replace_string"]
+        })
+    }
+    async fn execute(&self, args: Value, host: &dyn ToolHost) -> Result<String> {
+        let path_str = args["path"].as_str().ok_or(anyhow!("Missing path"))?;
+        let search_string = args["search_string"]
+            .as_str()
+            .ok_or(anyhow!("Missing search_string"))?;
+        let replace_string = args["replace_string"]
+            .as_str()
+            .ok_or(anyhow!("Missing replace_string"))?;
+        let path = validate_path(path_str)?;
+
+        let mut content = fs::read_to_string(&path)
+            .with_context(|| format!("Failed to read file: {:?}", path))?;
+
+        let matches = content.matches(search_string).count();
+        if matches == 0 {
+            return Err(anyhow!(
+                "String not found. Check your context and exact whitespace."
+            ));
+        }
+        if matches > 1 {
+            return Err(anyhow!(
+                "String found {} times. Provide more context to make the search_string unique.",
+                matches
+            ));
+        }
+
+        let approval_msg = format!(
+            "Replace text in '{}'?\nSearch:\n{}\n\nReplace with:\n{}",
+            path.display(),
+            search_string,
+            replace_string
+        );
+        if !host.ask_approval(&approval_msg).await {
+            return Err(anyhow!("User denied text replacement."));
+        }
+
+        content = content.replace(search_string, replace_string);
+        fs::write(&path, content).with_context(|| format!("Failed to write file: {:?}", path))?;
+
+        if let Some(tx) = &self.event_tx {
+            let _ = tx
+                .send(aemacs_core::bus::SystemEvent::FileModified(path.clone()))
+                .await;
+        }
+
+        Ok(format!("Successfully replaced text in {:?}", path))
+    }
+}
+
+pub struct GrepSearchTool;
+#[async_trait]
+impl Tool for GrepSearchTool {
+    fn name(&self) -> &str {
+        "grep_search"
+    }
+    fn description(&self) -> &str {
+        "Searches for a regular expression pattern within files in a given directory."
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "pattern": { "type": "string", "description": "The regular expression to search for." },
+                "path": { "type": "string", "description": "The directory path to search in (e.g., ./crates)." }
+            },
+            "required": ["pattern", "path"]
+        })
+    }
+    async fn execute(&self, args: Value, _host: &dyn ToolHost) -> Result<String> {
+        let pattern_str = args["pattern"].as_str().ok_or(anyhow!("Missing pattern"))?;
+        let path_str = args["path"].as_str().ok_or(anyhow!("Missing path"))?;
+        let root_path = validate_path(path_str)?;
+
+        let regex =
+            Regex::new(pattern_str).map_err(|e| anyhow!("Invalid regular expression: {}", e))?;
+
+        let mut results = Vec::new();
+        let mut paths_to_visit = vec![root_path];
+        let ignore_dirs = vec![".git", "target", "node_modules", ".gemini"];
+        let mut match_count = 0;
+        let max_matches = 100;
+
+        while let Some(dir) = paths_to_visit.pop() {
+            if match_count >= max_matches {
+                break;
+            }
+
+            let entries = match fs::read_dir(&dir) {
+                Ok(entries) => entries,
+                Err(_) => continue, // Silently skip unreadable directories
+            };
+
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let file_name = path.file_name().unwrap_or_default().to_string_lossy();
+
+                if path.is_dir() {
+                    if !ignore_dirs.iter().any(|&d| d == file_name) {
+                        paths_to_visit.push(path);
+                    }
+                } else if path.is_file() {
+                    if let Ok(content) = fs::read_to_string(&path) {
+                        for (line_num, line) in content.lines().enumerate() {
+                            if regex.is_match(line) {
+                                results.push(format!(
+                                    "{}:{}: {}",
+                                    path.display(),
+                                    line_num + 1,
+                                    line.trim()
+                                ));
+                                match_count += 1;
+                                if match_count >= max_matches {
+                                    break;
+                                }
+                            }
+                        }
+                    } // Silently skip invalid UTF-8 files or binary files
+                }
+            }
+        }
+
+        if results.is_empty() {
+            Ok("No matches found.".to_string())
+        } else {
+            let mut output = results.join("\n");
+            if match_count >= max_matches {
+                output.push_str("\n... (results truncated, max 100 matches)");
+            }
+            Ok(output)
+        }
+    }
+}
+
+pub struct RunShellCommandTool;
+#[async_trait]
+impl Tool for RunShellCommandTool {
+    fn name(&self) -> &str {
+        "run_shell_command"
+    }
+    fn description(&self) -> &str {
+        "Executes a shell command on the host system. Useful for running tests, linters, or checking git status."
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "command": { "type": "string", "description": "The exact bash command to execute (e.g., 'cargo check', 'git status')." },
+                "dir": { "type": "string", "description": "The directory to run the command in. Defaults to '.' if not provided." }
+            },
+            "required": ["command"]
+        })
+    }
+    async fn execute(&self, args: Value, host: &dyn ToolHost) -> Result<String> {
+        let command_str = args["command"].as_str().ok_or(anyhow!("Missing command"))?;
+        let dir_str = args["dir"].as_str().unwrap_or(".");
+        let dir_path = validate_path(dir_str)?;
+
+        let approval_msg = format!(
+            "Execute command in '{}':\n\n$ {}",
+            dir_path.display(),
+            command_str
+        );
+        if !host.ask_approval(&approval_msg).await {
+            return Err(anyhow!("User denied execution."));
+        }
+
+        // Enforce a generous 5-minute timeout (300 seconds) to allow for compilations,
+        // but prevent infinite hangs (e.g., waiting for stdin).
+        let child = Command::new("bash")
+            .arg("-c")
+            .arg(command_str)
+            .current_dir(&dir_path)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .with_context(|| format!("Failed to spawn command: {}", command_str))?;
+
+        let timeout_duration = std::time::Duration::from_secs(300);
+
+        let output = match tokio::time::timeout(timeout_duration, child.wait_with_output()).await {
+            Ok(Ok(o)) => o,
+            Ok(Err(e)) => return Err(anyhow::anyhow!("Command execution failed: {}", e)),
+            Err(_) => {
+                // Timeout occurred! The future drops, consuming the child, and kill_on_drop(true) terminates it.
+                return Err(anyhow::anyhow!(
+                    "Command timed out after 5 minutes and was terminated."
+                ));
+            }
+        };
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        let mut combined_output = String::new();
+        if !output.status.success() {
+            combined_output.push_str(&format!(
+                "Command failed with exit code: {}\n",
+                output.status.code().unwrap_or(-1)
+            ));
+            if !stderr.is_empty() {
+                combined_output.push_str("--- STDERR ---\n");
+                combined_output.push_str(&stderr);
+                combined_output.push('\n');
+            }
+        }
+        if !stdout.is_empty() {
+            combined_output.push_str("--- STDOUT ---\n");
+            combined_output.push_str(&stdout);
+        }
+
+        if combined_output.is_empty() {
+            combined_output.push_str("(Command completed silently)");
+        }
+
+        // Truncate if insanely large to protect context window
+        let max_len = 2000;
+        if combined_output.len() > max_len {
+            combined_output.truncate(max_len);
+            combined_output.push_str("\n... (output truncated to 2000 chars)");
+        }
+
+        Ok(combined_output)
     }
 }
 
@@ -297,5 +568,126 @@ impl Tool for SearchKnowledgeBaseTool {
             return Ok("No results.".to_string());
         }
         Ok(results.join("\n\n---\n\n"))
+    }
+}
+
+pub struct WebSearchTool;
+#[async_trait]
+impl Tool for WebSearchTool {
+    fn name(&self) -> &str {
+        "web_search"
+    }
+    fn description(&self) -> &str {
+        "Searches the internet for documentation or information. Requires AEMACS_SEARCH_API environment variable."
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "query": { "type": "string", "description": "The search query." }
+            },
+            "required": ["query"]
+        })
+    }
+    async fn execute(&self, args: Value, _host: &dyn ToolHost) -> Result<String> {
+        let query = args["query"].as_str().ok_or(anyhow!("Missing query"))?;
+
+        let api_url = match std::env::var("AEMACS_SEARCH_API") {
+            Ok(url) => url,
+            Err(_) => {
+                return Err(anyhow!(
+                    "Search API not configured. Set AEMACS_SEARCH_API to use the Oracle."
+                ));
+            }
+        };
+
+        // Ensure we handle URL encoding
+        let encoded_query = urlencoding::encode(query);
+        let request_url = format!("{}?q={}", api_url, encoded_query);
+
+        let response = reqwest::get(&request_url)
+            .await
+            .map_err(|e| anyhow!("Search request failed: {}", e))?;
+
+        if !response.status().is_success() {
+            return Err(anyhow!(
+                "Search API returned error status: {}",
+                response.status()
+            ));
+        }
+
+        let text = response
+            .text()
+            .await
+            .map_err(|e| anyhow!("Failed to read search response: {}", e))?;
+
+        // Naively return the first 2000 chars of the payload to avoid context explosion.
+        let mut output = text;
+        if output.len() > 2000 {
+            output.truncate(2000);
+            output.push_str("\n... (results truncated to 2000 chars)");
+        }
+
+        Ok(output)
+    }
+}
+
+pub struct GitContextTool;
+#[async_trait]
+impl Tool for GitContextTool {
+    fn name(&self) -> &str {
+        "get_git_context"
+    }
+    fn description(&self) -> &str {
+        "Returns the current git status, including changed files, unstaged diffs, and the last 3 commit messages."
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {},
+        })
+    }
+    async fn execute(&self, _args: Value, _host: &dyn ToolHost) -> Result<String> {
+        let mut context_report = String::new();
+        context_report.push_str("=== Git Status ===\n");
+
+        // 1. git status --short
+        let status_output = Command::new("git")
+            .arg("status")
+            .arg("--short")
+            .output()
+            .await
+            .map_err(|e| anyhow!("Failed to execute git status: {}", e))?;
+
+        context_report.push_str(&String::from_utf8_lossy(&status_output.stdout));
+        context_report.push('\n');
+
+        // 2. git diff --stat
+        context_report.push_str("=== Git Diff (Stat) ===\n");
+        let diff_output = Command::new("git")
+            .arg("diff")
+            .arg("--stat")
+            .output()
+            .await
+            .map_err(|e| anyhow!("Failed to execute git diff: {}", e))?;
+
+        context_report.push_str(&String::from_utf8_lossy(&diff_output.stdout));
+        context_report.push('\n');
+
+        // 3. git log -n 3 --oneline
+        context_report.push_str("=== Recent Commits ===\n");
+        let log_output = Command::new("git")
+            .arg("log")
+            .arg("-n")
+            .arg("3")
+            .arg("--oneline")
+            .output()
+            .await
+            .map_err(|e| anyhow!("Failed to execute git log: {}", e))?;
+
+        context_report.push_str(&String::from_utf8_lossy(&log_output.stdout));
+        context_report.push('\n');
+
+        Ok(context_report)
     }
 }
