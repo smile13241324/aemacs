@@ -48,6 +48,17 @@ impl Buffer {
         })
     }
 
+    /// Reloads the buffer from disk if it has a path.
+    pub fn reload(&mut self) -> Result<()> {
+        if let Some(path) = &self.path {
+            let file = File::open(path).with_context(|| format!("Failed to open file at {:?}", path))?;
+            let reader = BufReader::new(file);
+            self.content = Rope::from_reader(reader)?;
+            self.dirty = false;
+        }
+        Ok(())
+    }
+
     /// Returns the length of the buffer in characters (graphemes).
     pub fn len_chars(&self) -> usize {
         self.content.len_chars()

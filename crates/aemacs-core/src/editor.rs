@@ -43,6 +43,14 @@ impl Editor {
         })
     }
 
+    /// Reloads the editor buffer from disk. Clears undo/redo stacks to prevent invalid history.
+    pub fn reload(&mut self) -> anyhow::Result<()> {
+        self.buffer.reload()?;
+        self.undo_stack.clear();
+        self.redo_stack.clear();
+        Ok(())
+    }
+
     /// Saves the current state to the undo history.
     /// MUST be called before any modification (insert/delete).
     fn save_snapshot(&mut self) {

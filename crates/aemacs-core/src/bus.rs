@@ -6,6 +6,11 @@ pub enum SystemEvent {
     FileModified(PathBuf),
     Notification(String),
     OpenFile(PathBuf),
+    PlanCreated(Vec<String>),
+    TaskUpdated {
+        index: usize,
+        status: crate::task::TaskStatus,
+    },
 }
 
 #[derive(Clone)]
