@@ -67,6 +67,9 @@ impl ToolRegistry {
         registry.register(Box::new(ListFilesTool));
         registry.register(Box::new(WebSearchTool));
         registry.register(Box::new(GitContextTool));
+        registry.register(Box::new(ManageTasksTool {
+            event_tx: event_tx.clone(),
+        }));
         registry.register(Box::new(SearchKnowledgeBaseTool::new(kb)));
         registry
     }
@@ -689,5 +692,63 @@ impl Tool for GitContextTool {
         context_report.push('\n');
 
         Ok(context_report)
+    }
+}
+
+pub struct ManageTasksTool {
+    pub event_tx: Option<async_channel::Sender<aemacs_core::bus::SystemEvent>>,
+}
+
+#[async_trait]
+impl Tool for ManageTasksTool {
+    fn name(&self) -> &str {
+        "manage_tasks"
+    }
+    fn description(&self) -> &str {
+        "Creates a project plan or updates task statuses. \
+         Use action='set_plan' with tasks=['step 1', ...] to initialize a roadmap. \
+         Use action='update_task' with index=N and status='InProgress'|'Completed'|'Failed' to track progress."
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "action": { "type": "string", "enum": ["set_plan", "update_task"] },
+                "tasks": { "type": "array", "items": { "type": "string" }, "description": "Used only for set_plan." },
+                "index": { "type": "integer", "description": "Used only for update_task." },
+                "status": { "type": "string", "enum": ["Pending", "InProgress", "Completed", "Failed"], "description": "Used only for update_task." }
+            },
+            "required": ["action"]
+        })
+    }
+    async fn execute(&self, args: Value, _host: &dyn ToolHost) -> Result<String> {
+        let action = args["action"].as_str().ok_or(anyhow!("Missing action"))?;
+        let tx = self.event_tx.as_ref().ok_or(anyhow!("Event bus not connected"))?;
+
+        match action {
+            "set_plan" => {
+                let tasks_val = args["tasks"].as_array().ok_or(anyhow!("Missing tasks array"))?;
+                let mut tasks = Vec::new();
+                for t in tasks_val {
+                    tasks.push(t.as_str().unwrap_or_default().to_string());
+                }
+                tx.send(aemacs_core::bus::SystemEvent::PlanCreated(tasks)).await?;
+                Ok("Plan initialized.".to_string())
+            }
+            "update_task" => {
+                let index = args["index"].as_u64().ok_or(anyhow!("Missing index"))? as usize;
+                let status_str = args["status"].as_str().ok_or(anyhow!("Missing status"))?;
+                let status = match status_str {
+                    "Pending" => aemacs_core::task::TaskStatus::Pending,
+                    "InProgress" => aemacs_core::task::TaskStatus::InProgress,
+                    "Completed" => aemacs_core::task::TaskStatus::Completed,
+                    "Failed" => aemacs_core::task::TaskStatus::Failed,
+                    _ => return Err(anyhow!("Invalid status: {}", status_str)),
+                };
+                tx.send(aemacs_core::bus::SystemEvent::TaskUpdated { index, status }).await?;
+                Ok(format!("Task {} updated to {:?}.", index, status))
+            }
+            _ => Err(anyhow!("Invalid action: {}", action)),
+        }
     }
 }

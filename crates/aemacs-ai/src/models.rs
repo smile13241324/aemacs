@@ -168,3 +168,47 @@ impl Default for AIRequest {
         }
     }
 }
+
+// --- Model Registry (ACO-035) ---
+
+pub struct ModelDefinition {
+    pub name: &'static str,
+    pub label: &'static str,
+    pub base_vram_gb: f32,
+    pub kv_rate_gb_per_1k: f32,
+    pub max_context: u32,
+}
+
+pub const MODELS: &[ModelDefinition] = &[
+    ModelDefinition {
+        name: "cognitivecomputations/dolphin-llama3.1",
+        label: "Dolphin 8B",
+        base_vram_gb: 5.0,
+        kv_rate_gb_per_1k: 0.015,
+        max_context: 131072,
+    },
+    ModelDefinition {
+        name: "command-r",
+        label: "Command R 35B",
+        base_vram_gb: 20.0,
+        kv_rate_gb_per_1k: 0.030,
+        max_context: 131072,
+    },
+    ModelDefinition {
+        name: "dolphin-llama3.1:70b",
+        label: "Dolphin 70B",
+        base_vram_gb: 40.0,
+        kv_rate_gb_per_1k: 0.050,
+        max_context: 131072,
+    },
+    ModelDefinition {
+        name: "vanilj/midnight-miqu-70b-v1.5",
+        label: "Midnight Miqu 70B",
+        base_vram_gb: 40.0,
+        kv_rate_gb_per_1k: 0.050,
+        max_context: 32768,
+    },
+];
+
+pub const CONTEXT_OPTIONS: &[u32] = &[4096, 8192, 16384, 32768, 65536, 131072];
+
