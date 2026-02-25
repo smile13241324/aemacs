@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum Role {
     #[serde(rename = "system")]
     System,
@@ -115,6 +115,10 @@ impl Message {
 
     pub fn user(content: impl Into<Content>) -> Self {
         Self::new(Role::User, content)
+    }
+
+    pub fn assistant(content: impl Into<Content>) -> Self {
+        Self::new(Role::Assistant, content)
     }
 
     pub fn user_with_image(text: impl Into<String>, image_url: impl Into<String>) -> Self {

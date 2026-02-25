@@ -1,4 +1,5 @@
 use crate::loader::load_file;
+use crate::persona::Persona;
 use crate::{AIRequest, Content, ContentPart, Message, Role, models::OllamaOptions};
 use anyhow::Result;
 use std::path::Path;
@@ -11,6 +12,7 @@ pub struct Conversation {
     stream: bool,
     options: OllamaOptions,
     tools: Option<Vec<serde_json::Value>>,
+    active_persona: Option<Persona>,
 }
 
 impl Conversation {
@@ -23,7 +25,28 @@ impl Conversation {
             stream: true,     // Default to streaming
             options: OllamaOptions::default(),
             tools: None,
+            active_persona: None,
         }
+    }
+
+    /// Sets the active persona and clears history.
+    pub fn set_persona(&mut self, persona: Persona) {
+        self.active_persona = Some(persona);
+    }
+
+    /// Clears the active persona.
+    pub fn clear_persona(&mut self) {
+        self.active_persona = None;
+    }
+
+    /// Sets the model for subsequent requests.
+    pub fn set_model(&mut self, model: impl Into<String>) {
+        self.model = model.into();
+    }
+
+    /// Sets the context window size.
+    pub fn set_context_window(&mut self, size: u32) {
+        self.options.num_ctx = Some(size);
     }
 
     /// Adds a system prompt to the beginning of the conversation.
@@ -159,23 +182,22 @@ impl Conversation {
         session_id: &str,
     ) -> Result<()> {
         for (i, msg) in self.messages.iter().enumerate() {
+            let timestamp = msg.timestamp.to_rfc3339();
             let mut metadata = std::collections::HashMap::new();
             metadata.insert("type".to_string(), "episodic_memory".to_string());
+            metadata.insert("category".to_string(), "ARCHIVE".to_string());
             metadata.insert("session_id".to_string(), session_id.to_string());
             metadata.insert("role".to_string(), format!("{:?}", msg.role));
-            metadata.insert("timestamp".to_string(), msg.timestamp.to_rfc3339());
+            metadata.insert("timestamp".to_string(), timestamp.clone());
             metadata.insert("turn_index".to_string(), i.to_string());
 
-            // Contextualize the chunk for the embedder
+            // Contextualize the chunk for the embedder with tiered prefix
             let chunk = format!(
-                "Session: {}\nTime: {}\nRole: {:?}\nContent: {}",
-                session_id,
-                msg.timestamp.to_rfc3339(),
-                msg.role,
-                msg.content
+                "[ARCHIVE] [{}] | Session: {} | Turn: {} | Role: {:?} | Content: {}",
+                timestamp, session_id, i, msg.role, msg.content
             );
 
-            kb.add_document("aemacs_codebase", &chunk, Some(metadata))
+            kb.add_document("aemacs_docs", &chunk, Some(metadata))
                 .await?;
         }
         Ok(())
@@ -183,7 +205,7 @@ impl Conversation {
 
     /// Consumes the builder and returns the AIRequest.
     pub fn build(self) -> AIRequest {
-        let messages = self
+        let mut messages: Vec<Message> = self
             .messages
             .into_iter()
             .map(|mut msg| {
@@ -214,6 +236,11 @@ impl Conversation {
             })
             .collect();
 
+        // Inject active persona's system prompt at the very beginning if set
+        if let Some(persona) = self.active_persona {
+            messages.insert(0, Message::system(persona.system_prompt));
+        }
+
         AIRequest {
             model: self.model,
             messages,
@@ -228,5 +255,43 @@ impl Conversation {
 impl Default for Conversation {
     fn default() -> Self {
         Self::new("mistral")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::persona::Persona;
+
+    #[test]
+    fn test_persona_switch_clears_history() {
+        let mut conv = Conversation::new("mistral");
+        conv = conv.with_user("Hello");
+        assert_eq!(conv.messages.len(), 1);
+
+        let persona = Persona::new("bob", "Architect", "You are Bob.");
+        conv.set_persona(persona);
+        
+        assert_eq!(conv.messages.len(), 0);
+        assert!(conv.active_persona.is_some());
+    }
+
+    #[test]
+    fn test_persona_injection_in_build() {
+        let mut conv = Conversation::new("mistral");
+        let persona = Persona::new("bob", "Architect", "You are Bob.");
+        conv.set_persona(persona);
+        conv = conv.with_user("Build a forge.");
+        
+        let request = conv.build();
+        assert_eq!(request.messages.len(), 2);
+        assert_eq!(request.messages[0].role, Role::System);
+        
+        // Verify system prompt content
+        if let Content::Text(text) = &request.messages[0].content {
+            assert_eq!(text, "You are Bob.");
+        } else {
+            panic!("System message content should be text");
+        }
     }
 }
