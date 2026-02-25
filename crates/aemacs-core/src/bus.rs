@@ -11,6 +11,10 @@ pub enum SystemEvent {
         index: usize,
         status: crate::task::TaskStatus,
     },
+    PersonaChanged {
+        name: String,
+        message: Option<String>,
+    },
 }
 
 #[derive(Clone)]

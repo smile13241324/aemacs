@@ -3,6 +3,7 @@ use futures::StreamExt;
 use reqwest::{Client, header};
 use serde::Deserialize;
 use serde_json::json;
+use std::time::Duration;
 use tokio_util::codec::{FramedRead, LinesCodec};
 use tokio_util::io::StreamReader; // Wichtig für den Fix von vorhin
 use tracing::{info, instrument};
@@ -29,6 +30,8 @@ impl OpenAICompatibleBackend {
 
         let client = Client::builder()
             .default_headers(headers)
+            .timeout(Duration::from_secs(300)) // ACO-007: 5-minute timeout
+            .connect_timeout(Duration::from_secs(10)) // Snappy connection check
             .build()
             .expect("Failed to build HTTP client");
 
