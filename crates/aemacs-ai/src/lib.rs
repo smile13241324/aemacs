@@ -5,11 +5,15 @@ pub mod error;
 pub mod loader;
 pub mod mcp;
 pub mod models;
+pub mod persona;
+pub mod registry;
 pub mod rag;
 
 pub use conversation::Conversation;
 pub use error::{AIError, AIResult};
 pub use models::{AIRequest, Content, ContentPart, ImageUrl, Message, Role};
+pub use persona::Persona;
+pub use registry::PersonaRegistry;
 
 use async_trait::async_trait;
 use futures::stream::BoxStream;

@@ -16,6 +16,9 @@ pub enum AIError {
     #[error("Parsing failed: {0}")]
     ParseError(String),
 
+    #[error("Persona error: {0}")]
+    Persona(String),
+
     #[error("IO Error: {0}")]
     IoError(#[from] std::io::Error),
 
