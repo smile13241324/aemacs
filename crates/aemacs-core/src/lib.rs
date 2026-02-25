@@ -6,6 +6,7 @@ pub mod keymap;
 pub mod mode;
 pub mod runtime;
 pub mod selection;
+pub mod syntax;
 pub mod task;
 
 use anyhow::Result;

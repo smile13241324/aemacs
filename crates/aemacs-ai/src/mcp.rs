@@ -1,5 +1,5 @@
 use crate::rag::KnowledgeBase;
-use crate::{AIBackend, Content, Conversation, Message, Role};
+use crate::{AIBackend, Content, Conversation, Message, PersonaRegistry, Role};
 use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use regex::Regex;
@@ -7,8 +7,14 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Component, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tokio::process::Command;
+
+static SESSION_START: OnceLock<std::time::Instant> = OnceLock::new();
+
+fn get_session_start() -> std::time::Instant {
+    *SESSION_START.get_or_init(std::time::Instant::now)
+}
 
 // --- Interfaces ---
 
@@ -52,6 +58,7 @@ impl ToolRegistry {
 
     pub fn with_core_tools(
         kb: Arc<KnowledgeBase>,
+        persona_registry: Arc<PersonaRegistry>,
         event_tx: Option<async_channel::Sender<aemacs_core::bus::SystemEvent>>,
     ) -> Self {
         let mut registry = Self::new();
@@ -70,7 +77,16 @@ impl ToolRegistry {
         registry.register(Box::new(ManageTasksTool {
             event_tx: event_tx.clone(),
         }));
-        registry.register(Box::new(SearchKnowledgeBaseTool::new(kb)));
+        registry.register(Box::new(HandoffAgentTool {
+            persona_registry,
+            event_tx: event_tx.clone(),
+        }));
+        registry.register(Box::new(SearchKnowledgeBaseTool::new(kb.clone())));
+        registry.register(Box::new(WriteKnowledgeBaseTool::new(kb.clone())));
+        registry.register(Box::new(UpdateMemoryTool::new(kb.clone())));
+        registry.register(Box::new(DeleteMemoryTool::new(kb)));
+        registry.register(Box::new(GetSystemTimeTool));
+        registry.register(Box::new(ParseAstTool));
         registry
     }
 
@@ -570,7 +586,257 @@ impl Tool for SearchKnowledgeBaseTool {
         if results.is_empty() {
             return Ok("No results.".to_string());
         }
-        Ok(results.join("\n\n---\n\n"))
+        
+        let json_output = serde_json::to_string_pretty(&results)
+            .map_err(|e| anyhow::anyhow!("Failed to serialize memory results: {}", e))?;
+            
+        Ok(json_output)
+    }
+}
+
+pub struct WriteKnowledgeBaseTool {
+    kb: Arc<KnowledgeBase>,
+}
+
+impl WriteKnowledgeBaseTool {
+    pub fn new(kb: Arc<KnowledgeBase>) -> Self {
+        Self { kb }
+    }
+}
+
+#[async_trait]
+impl Tool for WriteKnowledgeBaseTool {
+    fn name(&self) -> &str {
+        "write_knowledge_base"
+    }
+    fn description(&self) -> &str {
+        "Records a memory, insight, or core architectural truth into the knowledge base."
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "content": { "type": "string", "description": "The information to be remembered." },
+                "category": { "type": "string", "enum": ["ARCHIVE", "INSIGHT", "CORE"], "description": "The tier of memory." },
+                "collection": { "type": "string", "description": "Defaults to aemacs_docs." }
+            },
+            "required": ["content", "category"]
+        })
+    }
+    async fn execute(&self, args: Value, _host: &dyn ToolHost) -> Result<String> {
+        let content = args["content"]
+            .as_str()
+            .ok_or(anyhow::anyhow!("Missing content"))?;
+        let category = args["category"]
+            .as_str()
+            .ok_or(anyhow::anyhow!("Missing category"))?;
+        let collection = args["collection"].as_str().unwrap_or("aemacs_docs");
+
+        let timestamp = chrono::Utc::now().to_rfc3339();
+        let formatted_content = format!("[{}] [{}] | {}", category, timestamp, content);
+
+        let mut metadata = HashMap::new();
+        metadata.insert("category".to_string(), category.to_string());
+        metadata.insert("timestamp".to_string(), timestamp);
+        metadata.insert("type".to_string(), "active_memory".to_string());
+
+        self.kb.add_document(collection, &formatted_content, Some(metadata)).await?;
+
+        Ok(format!("Successfully chronicled {} memory.", category))
+    }
+}
+
+pub struct DeleteMemoryTool {
+    kb: Arc<KnowledgeBase>,
+}
+
+impl DeleteMemoryTool {
+    pub fn new(kb: Arc<KnowledgeBase>) -> Self {
+        Self { kb }
+    }
+}
+
+#[async_trait]
+impl Tool for DeleteMemoryTool {
+    fn name(&self) -> &str {
+        "delete_memory"
+    }
+    fn description(&self) -> &str {
+        "Permanently erases a specific memory from the knowledge base by its UUID. Use this to prune obsolete or contradictory beliefs."
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "id": { "type": "string", "description": "The UUID of the memory to delete." },
+                "collection": { "type": "string", "description": "Defaults to aemacs_docs." }
+            },
+            "required": ["id"]
+        })
+    }
+    async fn execute(&self, args: Value, host: &dyn ToolHost) -> Result<String> {
+        let id = args["id"].as_str().ok_or(anyhow!("Missing memory ID"))?;
+        let collection = args["collection"].as_str().unwrap_or("aemacs_docs");
+
+        let approval_msg = format!("Permanently delete memory [ID: {}] from the vault?", id);
+        if !host.ask_approval(&approval_msg).await {
+            return Err(anyhow!("User denied memory pruning."));
+        }
+
+        self.kb.delete_point(collection, id).await?;
+
+        Ok(format!("Memory {} has been pruned from the collective.", id))
+    }
+}
+
+pub struct UpdateMemoryTool {
+    kb: Arc<KnowledgeBase>,
+}
+
+impl UpdateMemoryTool {
+    pub fn new(kb: Arc<KnowledgeBase>) -> Self {
+        Self { kb }
+    }
+}
+
+#[async_trait]
+impl Tool for UpdateMemoryTool {
+    fn name(&self) -> &str {
+        "update_memory"
+    }
+    fn description(&self) -> &str {
+        "Semantically overwrites an existing memory by its UUID. Use this to update evolving beliefs or correct misunderstandings."
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "id": { "type": "string", "description": "The UUID of the memory to update." },
+                "content": { "type": "string", "description": "The new information to be remembered." },
+                "category": { "type": "string", "enum": ["ARCHIVE", "INSIGHT", "CORE"], "description": "The tier of memory." },
+                "collection": { "type": "string", "description": "Defaults to aemacs_docs." }
+            },
+            "required": ["id", "content", "category"]
+        })
+    }
+    async fn execute(&self, args: Value, _host: &dyn ToolHost) -> Result<String> {
+        let id = args["id"].as_str().ok_or(anyhow!("Missing memory ID"))?;
+        let content = args["content"].as_str().ok_or(anyhow!("Missing content"))?;
+        let category = args["category"].as_str().ok_or(anyhow!("Missing category"))?;
+        let collection = args["collection"].as_str().unwrap_or("aemacs_docs");
+
+        let timestamp = chrono::Utc::now().to_rfc3339();
+        let formatted_content = format!("[{}] [{}] | {}", category, timestamp, content);
+
+        let mut metadata = HashMap::new();
+        metadata.insert("category".to_string(), category.to_string());
+        metadata.insert("timestamp".to_string(), timestamp);
+        metadata.insert("type".to_string(), "active_memory".to_string());
+
+        self.kb.update_point(collection, id, &formatted_content, Some(metadata)).await?;
+
+        Ok(format!("Memory {} has been woven into a new truth.", id))
+    }
+}
+
+pub struct GetSystemTimeTool;
+#[async_trait]
+impl Tool for GetSystemTimeTool {
+    fn name(&self) -> &str {
+        "get_system_time"
+    }
+    fn description(&self) -> &str {
+        "Returns the current UTC time, local time, and session uptime."
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {},
+        })
+    }
+    async fn execute(&self, _args: Value, _host: &dyn ToolHost) -> Result<String> {
+        let now = chrono::Utc::now();
+        let uptime = get_session_start().elapsed().as_secs();
+
+        let result = serde_json::json!({
+            "utc_now": now.to_rfc3339(),
+            "local_now": chrono::Local::now().to_rfc3339(),
+            "uptime_secs": uptime,
+        });
+
+        Ok(result.to_string())
+    }
+}
+
+pub struct ParseAstTool;
+#[async_trait]
+impl Tool for ParseAstTool {
+    fn name(&self) -> &str {
+        "parse_ast"
+    }
+    fn description(&self) -> &str {
+        "Parses a Rust file using Tree-sitter and extracts the source code of a specific symbol (struct, enum, impl, or function) by name."
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": { "type": "string", "description": "Relative path to the Rust file." },
+                "symbol": { "type": "string", "description": "The name of the symbol to extract." }
+            },
+            "required": ["path", "symbol"]
+        })
+    }
+    async fn execute(&self, args: Value, _host: &dyn ToolHost) -> Result<String> {
+        let path_str = args["path"].as_str().ok_or(anyhow!("Missing path"))?;
+        let symbol_name = args["symbol"].as_str().ok_or(anyhow!("Missing symbol"))?;
+        let path = validate_path(path_str)?;
+
+        let code = aemacs_core::syntax::extract_symbol(&path, symbol_name)?;
+        Ok(code)
+    }
+}
+
+pub struct HandoffAgentTool {
+    pub persona_registry: Arc<PersonaRegistry>,
+    pub event_tx: Option<async_channel::Sender<aemacs_core::bus::SystemEvent>>,
+}
+
+#[async_trait]
+impl Tool for HandoffAgentTool {
+    fn name(&self) -> &str {
+        "handoff_agent"
+    }
+    fn description(&self) -> &str {
+        "Transfers control to another specialist agent in the mesh."
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "agent_name": { "type": "string", "description": "The name of the agent to summon (e.g., 'kairon')." },
+                "message": { "type": "string", "description": "Optional instructions for the next agent." }
+            },
+            "required": ["agent_name"]
+        })
+    }
+    async fn execute(&self, args: Value, _host: &dyn ToolHost) -> Result<String> {
+        let agent_name = args["agent_name"].as_str().ok_or(anyhow!("Missing agent_name"))?;
+        let message = args["message"].as_str().map(|s| s.to_string());
+
+        // Validate agent
+        if self.persona_registry.get_persona(agent_name).await.is_none() {
+            return Err(anyhow!("Specialist agent '{}' not found in registry.", agent_name));
+        }
+
+        let tx = self.event_tx.as_ref().ok_or(anyhow!("Event bus not connected"))?;
+
+        tx.send(aemacs_core::bus::SystemEvent::PersonaChanged {
+            name: agent_name.to_string(),
+            message,
+        }).await.context("Failed to send PersonaChanged event")?;
+
+        Ok(format!("Handing off control to {}.", agent_name.to_uppercase()))
     }
 }
 

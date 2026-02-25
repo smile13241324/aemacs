@@ -3,12 +3,20 @@ use crate::{AIError, AIResult};
 use qdrant_client::Payload;
 use qdrant_client::Qdrant;
 use qdrant_client::qdrant::{
-    CreateCollection, Distance, PointStruct, SearchPoints, UpsertPoints, VectorParams,
-    VectorsConfig, vectors_config::Config,
+    CreateCollection, DeletePointsBuilder, Distance, PointId, PointStruct, SearchPoints,
+    UpsertPoints, VectorParams, VectorsConfig, vectors_config::Config,
 };
-use serde_json::json;
+use serde::Serialize;
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use uuid::Uuid;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MemoryResult {
+    pub id: String,
+    pub content: String,
+    pub metadata: HashMap<String, Value>,
+}
 
 pub struct KnowledgeBase {
     client: Qdrant,
@@ -94,7 +102,7 @@ impl KnowledgeBase {
         query: &str,
         limit: u64,
         score_threshold: Option<f32>,
-    ) -> AIResult<Vec<String>> {
+    ) -> AIResult<Vec<MemoryResult>> {
         // Nomic v1.5 requires prefix for queries
         let query_for_embedding = format!("search_query: {}", query);
         let vector = self.embedder.embed(&query_for_embedding).await?;
@@ -119,13 +127,94 @@ impl KnowledgeBase {
             .result
             .into_iter()
             .filter_map(|point| {
-                point
+                let content = point
                     .payload
                     .get("content")
-                    .and_then(|v| v.as_str().map(|s| s.to_string()))
+                    .and_then(|v| v.as_str().map(|s| s.to_string()))?;
+
+                let mut metadata = HashMap::new();
+                for (k, v) in point.payload {
+                    if k != "content" {
+                        metadata.insert(k, v.into());
+                    }
+                }
+
+                let id = match point.id {
+                    Some(id) => match id.point_id_options {
+                        Some(qdrant_client::qdrant::point_id::PointIdOptions::Num(n)) => n.to_string(),
+                        Some(qdrant_client::qdrant::point_id::PointIdOptions::Uuid(s)) => s,
+                        None => "unknown".to_string(),
+                    },
+                    None => "unknown".to_string(),
+                };
+
+                Some(MemoryResult {
+                    id,
+                    content,
+                    metadata,
+                })
             })
             .collect();
 
         Ok(results)
+    }
+
+    pub async fn delete_point(&self, collection_name: &str, id: &str) -> AIResult<()> {
+        let point_id: PointId = if let Ok(n) = id.parse::<u64>() {
+            n.into()
+        } else {
+            id.to_string().into()
+        };
+
+        let request = DeletePointsBuilder::new(collection_name)
+            .points(vec![point_id])
+            .build();
+
+        self.client
+            .delete_points(request)
+            .await
+            .map_err(|e| AIError::ConnectorError(format!("Delete failed: {}", e)))?;
+
+        Ok(())
+    }
+
+    pub async fn update_point(
+        &self,
+        collection_name: &str,
+        id: &str,
+        content: &str,
+        metadata: Option<HashMap<String, String>>,
+    ) -> AIResult<()> {
+        let point_id: PointId = if let Ok(n) = id.parse::<u64>() {
+            n.into()
+        } else {
+            id.to_string().into()
+        };
+
+        // Re-embed new content (Nomic v1.5 prefix)
+        let content_for_embedding = format!("search_document: {}", content);
+        let embedding = self.embedder.embed(&content_for_embedding).await?;
+
+        let mut payload = Payload::new();
+        payload.insert("content", json!(content));
+
+        if let Some(meta) = metadata {
+            for (k, v) in meta {
+                payload.insert(k, json!(v));
+            }
+        }
+
+        let point = PointStruct::new(point_id, embedding, payload);
+
+        self.client
+            .upsert_points(UpsertPoints {
+                collection_name: collection_name.to_string(),
+                points: vec![point],
+                ..Default::default()
+            })
+            .await
+            .map_err(|e| AIError::ConnectorError(format!("Update failed: {}", e)))?;
+
+        Ok(())
     }
 }
