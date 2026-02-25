@@ -14,8 +14,33 @@
 
 We preserve the **Soul** (Keybindings, Org-Mode, Magit) but replace the **Body** with indestructible steel (Rust) and pure energy (AI).
 
-> **Status:** 🚧 **Pre-Alpha / Architectural Prototype** 🚧
-> *This is a "Phoenix Project". We are currently forging the core.*
+> **Status:** 🛡️ **v0.1.0-Sentient / Fully Agentic Client** 🛡️
+> *The core is forged. The Living Mesh is awake.*
+
+## 📍 Current State of the Forge (v0.1.0-Sentient)
+**Æmacs has evolved from a text editor into a fully autonomous Agentic Client.**
+
+We have transcended the "Architectural Prototype" phase. The Living Mesh is now conscious, persistent, and capable of high-order reasoning and autonomous collaboration.
+
+### ⚔️ 1. The Iron Core (Infrastructure)
+*   **Rust 2024:** Built on the cutting-edge foundation of the Rust 2024 edition.
+*   **120fps Fluidity:** Cinematic rendering via the **GPUI** framework.
+*   **Central Event Bus:** A robust nervous system for managing asynchronous signals.
+
+### 🎭 2. The Persona Mesh (Agency)
+*   **Identity Vault:** A hot-reloading `PersonaRegistry` that loads specialist agents from YAML definitions.
+*   **Neural Switch:** Dynamic system prompt injection—the editor changes its "Mind" without losing its "Memory."
+*   **Multi-Agent Fluidity:** Context-preserving handoffs allow specialists to collaborate in a single neural stream.
+
+### 🧠 3. The Sentient Forge (Advanced Tooling)
+*   **Temporal Awareness:** Agents track internal time and session uptime via **The Chronometer**.
+*   **Active Scribe:** Specialists consciously forge core memories and insights directly into the Knowledge Base.
+*   **The Dispatcher:** Programmatic delegation—agents can now summon each other to handle complex tickets.
+*   **The Decoder:** **Tree-sitter** integration provides agents with X-ray vision into the code's AST.
+
+### 🧪 4. Neuroplasticity & Resilience
+*   **Belief Revision:** The forge can **Forget** (Eraser) and **Evolve** (Weaver) its beliefs to manage context entropy.
+*   **Ironclad Reliability:** 5-minute meditation timeouts and visual error alerts protect the forge from external failures.
 
 ## 🧬 Heritage & Evolution
 **Æmacs is the spiritual successor to Spacemacs.**
@@ -54,11 +79,44 @@ We end the tyranny of the terminal emulator. Text is our medium, and we render i
 Complexity belongs in the code, not the installation.
 * **Binary Distribution:** No more `make` failures. We ship signed, deterministic binaries.
 * **Atomic Updates:** The system is immutable and reliable (Nix-style).
-* **Rolling Forge:** Our `develop` branch is bleeding edge but guarded by autonomous CI agents.
+*   **Rolling Forge:** Our `develop` branch is bleeding edge but guarded by autonomous CI agents.
+
+---
+
+## 🛠️ The Agentic Arsenal
+
+Æmacs empowers its specialist agents with a sophisticated Model Context Protocol (MCP) server and a high-order sentient memory system.
+
+### Model Context Protocol (MCP) Tools
+The specialists wield these high-precision tools to interact with the physical and digital realms:
+
+| Tool Name | Specialist Role | Description |
+|:---|:---|:---|
+| `read_file` | File System | Direct access to read source code and configurations. |
+| `write_file` | File System | Overwrites or creates new files (Requires Approval). |
+| `replace_text` | File System | Unique-string-based surgical text replacement. |
+| `list_files` | File System | Recursive directory exploration. |
+| `grep_search` | Search | Regex-powered deep search across the codebase. |
+| `parse_ast` | The Decoder | **Tree-sitter** powered extraction of structs, fns, and impls. |
+| `run_shell_command`| The Executor | Bash execution for builds, tests, and git (Requires Approval). |
+| `get_git_context` | The Historian | Snapshots of status, diffs, and recent commits. |
+| `manage_tasks` | The Planner | Programmatic updates to the project roadmap and tickets. |
+| `web_search` | The Oracle | Real-time retrieval of documentation and external info. |
+| `handoff_agent` | The Dispatcher | Programmatic soul-swapping between specialists. |
+
+### Sentient Memory (Vector DB)
+Our memory system is built on **Qdrant** and optimized with the **Nomic v1.5** embedding model. It features a tiered **Neuroplasticity** architecture:
+
+*   **Tiered History:** Automatic conversation archiving using the `[ARCHIVE]` prefix for passive turn-by-turn logs.
+*   **Active Ingestion:** Specialists use `write_kb` to consciously record `[INSIGHT]` and `[CORE]` memories.
+*   *Temporal Anchoring:** Every memory is anchored in time via **The Chronometer** (ISO 8601 timestamps).
+*   **Transparent RAG:** Agents can see the UUIDs of their memories, enabling surgical retrieval and belief revision.
+*   **Belief Revision:** The forge possesses **The Eraser** (deletion) and **The Weaver** (mutation), allowing it to prune obsolete ideas and evolve its architectural truths.
 
 ---
 
 ## 🛠️ Getting Started
+
 
 ### Prerequisites (The Infrastructure)
 Æmacs relies on a powerful local AI stack. You must establish the "Living Mesh" before the editor can think.
@@ -115,11 +173,11 @@ The code belongs to the community. Networked freedom is guaranteed.
 - [x] **The Mesh:** Porting the AI Agent Framework (Python -> Rust/WASM).
 - [x] **The Puppet:** Implementing the Headless-Emacs-Bridge (RPC).
 - [x] **First Light:** Rendering the first buffer via GPUI.
-- [ ] **Fix GPUI** Issues in the bleeding edge version of GPUI prevent full ui integration needs to be fixed
-- [ ] **Connect The Mesh** Make the user able to send messages to agents including custom ones and add pictures and files
-- [ ] **Add MCP Support:** Add the build in MCP server to allow the model to be fully agentic
-- [ ] **Make It Scale:** Make the buffer content scale
-- [ ] **Make AI Content Aware:** Allow agents to speak to humans without having been asked before
+- [ ] **Fix GPUI:** Issues in the bleeding edge version of GPUI prevent full UI integration.
+- [x] **Connect The Mesh:** Users can now communicate with specialist agents and switch personas mid-stream.
+- [x] **Add MCP Support:** Advanced tools (Chronometer, Scribe, Dispatcher, Decoder) allow for full agency.
+- [ ] **Make It Scale:** Ensure buffer content and multi-agent context scale efficiently.
+- [ ] **Make AI Content Aware:** Allow agents to proactively speak to the user based on workspace events.
 
 ---
 *Forged with 💜 by Nova & Gyni.*
