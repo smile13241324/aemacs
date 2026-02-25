@@ -1,6 +1,7 @@
 use aemacs_ai::Conversation;
 use aemacs_ai::connectors::openai_compatible::OpenAICompatibleBackend;
 use aemacs_ai::mcp::{ToolHost, ToolRegistry};
+use aemacs_ai::PersonaRegistry;
 use aemacs_core::{Editor, command::Command, mode::Mode};
 use async_trait::async_trait;
 use gpui::prelude::*;
@@ -68,6 +69,9 @@ pub struct AiPanel {
     selected_context: u32,
     pub kb: Arc<KnowledgeBase>,
     pub registry: Arc<ToolRegistry>,
+    pub persona_registry: Arc<PersonaRegistry>,
+    pub active_persona_name: Option<String>,
+    pub conversation: Conversation,
 }
 
 struct ChatMessage {
@@ -81,6 +85,7 @@ impl AiPanel {
         host_tx: async_channel::Sender<HostRequest>,
         kb: Arc<KnowledgeBase>,
         registry: Arc<ToolRegistry>,
+        persona_registry: Arc<PersonaRegistry>,
     ) -> Entity<Self> {
         cx.new(|cx| {
             let input_editor = cx.new(|_cx| Editor::new());
@@ -88,6 +93,7 @@ impl AiPanel {
 
             // Default to local Ollama instance for now
             let backend = OpenAICompatibleBackend::new("http://localhost:11434/v1", None);
+            let model_name = aemacs_ai::models::MODELS[0].name;
 
             AiPanel {
                 input_editor,
@@ -103,6 +109,9 @@ impl AiPanel {
                 selected_context: aemacs_ai::models::MODELS[0].max_context,
                 kb,
                 registry,
+                persona_registry,
+                active_persona_name: None,
+                conversation: Conversation::new(model_name),
             }
         })
     }
@@ -111,6 +120,135 @@ impl AiPanel {
     pub fn update_tasks(&mut self, tasks: Vec<aemacs_core::task::Task>, cx: &mut Context<Self>) {
         self.tasks = tasks;
         cx.notify();
+    }
+
+    /// Handles a programmatic persona switch from the dispatcher (ACO-010).
+    pub fn handoff_persona(&mut self, name: String, message: Option<String>, cx: &mut Context<Self>) {
+        let name_lower = name.to_lowercase();
+        if let Some(persona) =
+            futures::executor::block_on(self.persona_registry.get_persona(&name_lower))
+        {
+            self.active_persona_name = Some(name_lower);
+            self.conversation.set_persona(persona);
+
+            self.messages.push(ChatMessage {
+                role: "System".to_string(),
+                content: format!("Programmatic handoff to: {}", name.to_uppercase()),
+            });
+
+            if let Some(msg) = message {
+                self.messages.push(ChatMessage {
+                    role: "User".to_string(),
+                    content: msg.clone(),
+                });
+                self.conversation.add_message(aemacs_ai::Message::user(msg));
+                // Automatically trigger the new agent if a message was provided
+                self.trigger_ai_response(cx);
+            }
+            cx.notify();
+        }
+    }
+
+    fn trigger_ai_response(&mut self, cx: &mut Context<Self>) {
+        // Prepare AI Message Placeholder
+        self.messages.push(ChatMessage {
+            role: "AI".to_string(),
+            content: "".to_string(),
+        });
+
+        let registry = self.registry.clone();
+        let host = GuiHost {
+            request_tx: self.host_tx.clone(),
+        };
+        let backend = self.backend.clone();
+        let conversation = self.conversation.clone();
+
+        // Spawn Agent Task
+        spawn_agent_task(
+            cx,
+            backend,
+            registry,
+            self.kb.clone(),
+            host,
+            conversation,
+            |panel, cx, event| {
+                match event {
+                    AgentEvent::Result(result) => {
+                        if let Some(last_msg) = panel.messages.last_mut() {
+                            if last_msg.role == "AI" {
+                                last_msg.content = result.clone();
+                            }
+                        }
+                        panel
+                            .conversation
+                            .add_message(aemacs_ai::Message::assistant(result));
+                    }
+                    AgentEvent::Error(e) => {
+                        if let Some(last_msg) = panel.messages.last_mut() {
+                            if last_msg.role == "AI" {
+                                last_msg.role = "System".to_string();
+                                last_msg.content = format!("❌ AI Error: {}", e);
+                            }
+                        }
+                        log::error!("AI Task Failed: {}", e);
+                    }
+                }
+                cx.notify();
+            },
+        )
+        .detach();
+    }
+
+    fn render_agent_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let personas = futures::executor::block_on(self.persona_registry.list_personas());
+        let active_persona = self.active_persona_name.clone();
+
+        div()
+            .flex()
+            .flex_col()
+            .gap_y(px(4.0))
+            .child(
+                div()
+                    .text_size(px(10.0))
+                    .text_color(rgb(0x5c6370))
+                    .child("ACTIVE AGENT"),
+            )
+            .child(
+                div().flex().flex_wrap().gap(px(4.0)).children(
+                    personas.into_iter().enumerate().map(|(i, name)| {
+                        let is_selected = active_persona.as_ref() == Some(&name);
+                        let name_clone = name.clone();
+                        div()
+                            .id(i)
+                            .px(px(6.0))
+                            .py(px(2.0))
+                            .rounded_md()
+                            .border_1()
+                            .border_color(if is_selected {
+                                rgb(0xbd93f9)
+                            } else {
+                                rgb(0x3e4451)
+                            })
+                            .bg(if is_selected {
+                                rgb(0x282c34)
+                            } else {
+                                rgb(0x21252b)
+                            })
+                            .text_color(if is_selected {
+                                rgb(0xffffff)
+                            } else {
+                                rgb(0xabb2bf)
+                            })
+                            .text_size(px(11.0))
+                            .cursor_pointer()
+                            .on_click(cx.listener(move |this, _, _window, cx| {
+                                this.active_persona_name = Some(name_clone.clone());
+                                cx.notify();
+                            }))
+                            .child(name.to_uppercase())
+                    }),
+                ),
+            )
     }
 
     fn render_model_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -157,9 +295,12 @@ impl AiPanel {
                                 .cursor_pointer()
                                 .on_click(cx.listener(move |this, _, _window, cx| {
                                     this.selected_model_index = i;
+                                    let model_name = aemacs_ai::models::MODELS[i].name;
+                                    this.conversation.set_model(model_name);
                                     // Reset context to max for new model
                                     this.selected_context =
                                         aemacs_ai::models::MODELS[i].max_context;
+                                    this.conversation.set_context_window(this.selected_context);
                                     cx.notify();
                                 }))
                                 .child(model.label)
@@ -214,6 +355,7 @@ impl AiPanel {
                                 .cursor_pointer()
                                 .on_click(cx.listener(move |this, _, _window, cx| {
                                     this.selected_context = opt;
+                                    this.conversation.set_context_window(opt);
                                     cx.notify();
                                 }))
                                 .child(if opt >= 1024 {
@@ -269,16 +411,55 @@ impl AiPanel {
     }
 
     fn send_message(&mut self, cx: &mut Context<Self>) {
-        let text = self.input_editor.read(cx).buffer.text();
-        if text.trim().is_empty() {
+        let raw_text = self.input_editor.read(cx).buffer.text();
+        if raw_text.trim().is_empty() {
             return;
         }
 
-        // 1. Add User Message
-        self.messages.push(ChatMessage {
-            role: "User".to_string(),
-            content: text.clone(),
-        });
+        let mut text = raw_text.clone();
+        let mut switched = false;
+
+        // --- Slash Command Interceptor (ACO-005/006) ---
+        if text.starts_with('/') {
+            let (cmd, remainder) = text.split_once(' ').unwrap_or((text.as_str(), ""));
+            let agent_name = cmd.trim_start_matches('/').to_lowercase();
+
+            if let Some(_) =
+                futures::executor::block_on(self.persona_registry.get_persona(&agent_name))
+            {
+                self.active_persona_name = Some(agent_name);
+                text = remainder.to_string();
+                switched = true;
+            } else {
+                // ACO-006: Lexical Guard
+                self.messages.push(ChatMessage {
+                    role: "System".to_string(),
+                    content: format!("⚠️ Unknown agent: /{}. Type a valid specialist name.", agent_name),
+                });
+                self.input_editor.update(cx, |editor, _| {
+                    editor.buffer.content = ropey::Rope::new();
+                    editor.mode = Mode::Normal;
+                });
+                cx.notify();
+                return;
+            }
+        }
+
+        // 1. Add User/System Message
+        if !text.trim().is_empty() {
+            self.messages.push(ChatMessage {
+                role: "User".to_string(),
+                content: text.clone(),
+            });
+        } else if switched {
+            let persona_display = self.active_persona_name.as_deref().unwrap_or("UNKNOWN").to_uppercase();
+            self.messages.push(ChatMessage {
+                role: "System".to_string(),
+                content: format!("Agent switched to: {}", persona_display),
+            });
+        } else {
+            return;
+        }
 
         // 2. Clear Input
         self.input_editor.update(cx, |editor, _| {
@@ -286,56 +467,32 @@ impl AiPanel {
             editor.mode = Mode::Normal;
         });
 
+        if text.trim().is_empty() {
+            cx.notify();
+            return;
+        }
+
         // 3. Prepare AI Message Placeholder
         self.messages.push(ChatMessage {
             role: "AI".to_string(),
             content: "".to_string(),
         });
 
+        // 4. Update persistent conversation
+        if let Some(persona_name) = &self.active_persona_name {
+            if let Some(persona) =
+                futures::executor::block_on(self.persona_registry.get_persona(persona_name))
+            {
+                self.conversation.set_persona(persona);
+            }
+        } else {
+            self.conversation.clear_persona();
+        }
+        self.conversation.add_message(aemacs_ai::Message::user(text));
+
         cx.notify();
 
-        // 4. Setup Agent Loop
-        let model_name = aemacs_ai::models::MODELS[self.selected_model_index].name;
-        let conversation = Conversation::new(model_name)
-            .with_system("You are a helpful assistant embedded in Æmacs.")
-            .with_context_window(self.selected_context)
-            .with_user(text);
-
-        let registry = self.registry.clone();
-
-        let host = GuiHost {
-            request_tx: self.host_tx.clone(),
-        };
-
-        let backend = self.backend.clone();
-
-        // 5. Spawn Agent Task
-        spawn_agent_task(
-            cx,
-            backend,
-            registry,
-            self.kb.clone(),
-            host,
-            conversation,
-            |panel, cx, event| {
-                match event {
-                    AgentEvent::Result(result) => {
-                        if let Some(last_msg) = panel.messages.last_mut() {
-                            if last_msg.role == "AI" {
-                                last_msg.content = result;
-                            }
-                        }
-                    }
-                    AgentEvent::Error(e) => {
-                        if let Some(last_msg) = panel.messages.last_mut() {
-                            last_msg.content.push_str(&format!("\n[Error: {}]", e));
-                        }
-                    }
-                }
-                cx.notify();
-            },
-        )
-        .detach();
+        self.trigger_ai_response(cx);
     }
 }
 
@@ -360,6 +517,7 @@ impl Render for AiPanel {
                     .flex()
                     .flex_col()
                     .gap_y(px(8.0))
+                    .child(self.render_agent_selector(cx))
                     .child(self.render_model_selector(cx))
                     .child(self.render_context_selector(cx))
                     .child(self.render_vram_estimate()),
@@ -410,6 +568,8 @@ impl Render for AiPanel {
                     .overflow_y_scroll()
                     .children(self.messages.iter().map(|msg| {
                         let is_user = msg.role == "User";
+                        let is_error = msg.content.starts_with("❌");
+                        
                         div()
                             .flex()
                             .flex_col()
@@ -428,7 +588,11 @@ impl Render for AiPanel {
                                     } else {
                                         rgb(0x282c34)
                                     })
-                                    .text_color(text_color)
+                                    .text_color(if is_error {
+                                        rgb(0xe06c75)
+                                    } else {
+                                        text_color
+                                    })
                                     .child(msg.content.clone()),
                             )
                     })),

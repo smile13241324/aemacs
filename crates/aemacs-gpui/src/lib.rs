@@ -27,6 +27,7 @@ pub fn init() -> Result<()> {
 
 use aemacs_ai::mcp::ToolRegistry;
 use aemacs_ai::rag::KnowledgeBase;
+use aemacs_ai::PersonaRegistry;
 use std::sync::Arc;
 
 pub struct Workspace {
@@ -40,6 +41,7 @@ pub struct Workspace {
     window_handle: gpui::AnyWindowHandle,
     pub kb: Arc<KnowledgeBase>,
     pub registry: Arc<ToolRegistry>,
+    pub persona_registry: Arc<PersonaRegistry>,
 }
 
 impl Workspace {
@@ -55,11 +57,16 @@ impl Workspace {
                     .expect("Failed to initialize KnowledgeBase"),
             );
 
+            let persona_registry = futures::executor::block_on(PersonaRegistry::new())
+                .expect("Failed to initialize PersonaRegistry");
+            persona_registry.clone().start_watching().ok();
+
             // Get the Event Bus for tool signaling
             let bus = cx.global::<aemacs_core::bus::EventBus>().clone();
 
             let registry = Arc::new(ToolRegistry::with_core_tools(
                 kb.clone(),
+                persona_registry.clone(),
                 Some(bus.tx.clone()),
             ));
 
@@ -81,7 +88,7 @@ impl Workspace {
             });
 
             let (host_tx, host_rx) = async_channel::unbounded::<ai_panel::HostRequest>();
-            let ai_panel = AiPanel::new(cx, host_tx, kb.clone(), registry.clone());
+            let ai_panel = AiPanel::new(cx, host_tx, kb.clone(), registry.clone(), persona_registry.clone());
             let focus_handle = cx.focus_handle();
 
             // --- Event Bus Wiring (ACO-032) ---
@@ -227,6 +234,14 @@ impl Workspace {
                                     }
                                 });
                             }
+                            aemacs_core::bus::SystemEvent::PersonaChanged { name, message } => {
+                                let _ = workspace.update(&mut cx, |this, cx| {
+                                    log::info!("🔄 [Workspace] Programmatic persona switch: {}", name);
+                                    this.ai_panel.update(cx, |panel, cx| {
+                                        panel.handoff_persona(name, message, cx);
+                                    });
+                                });
+                            }
                         }
                     }
                 }
@@ -244,6 +259,7 @@ impl Workspace {
                 window_handle,
                 kb,
                 registry,
+                persona_registry,
             }
         })
     }
