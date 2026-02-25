@@ -54,7 +54,7 @@ NAME_MAPPING = {
     "griznak": "griznak",
     "orb": "orb",
     "magos": "magos",
-    "scribe": "scribe",
+    "scribe": "veridian",
     "reginald": "reginald",
     "kallista": "kallista",
     "mopfl": "mopfl",
