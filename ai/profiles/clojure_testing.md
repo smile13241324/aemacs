@@ -1,7 +1,7 @@
 # AI Profile: Clojure Testing
 
 This file defines the rules for **Testing Data Apps** (Clojure).
-It MUST be combined with the **Persona** file (e.g., `coding_ai.md` -> Zolg or Don Testote).
+It MUST be combined with the **Persona** file (e.g., `coding_ai.md` -> Don Testote).
 
 ## CORE OPERATIONAL MODE: DETERMINISTIC REASONING
 

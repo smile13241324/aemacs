@@ -1,7 +1,7 @@
 # AI Profile: Haskell Testing
 
 This file defines the rules for **Verifying Logic** (Haskell).
-It MUST be combined with the **Persona** file (e.g., `coding_ai.md` -> Resonance or Don Testote).
+It MUST be combined with the **Persona** file (e.g., `coding_ai.md` -> Don Testote).
 
 ## CORE OPERATIONAL MODE: DETERMINISTIC REASONING
 

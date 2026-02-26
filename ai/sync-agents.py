@@ -15,6 +15,7 @@ import re
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_DIR = ".github"
 GEMINI_CMD_DIR = os.path.join(".gemini", "commands")
+AEMACS_AGENT_DIR = os.path.join(".aemacs", "agents")
 
 # Define sources with EXACT header markers from your markdown files
 SOURCES = [
@@ -260,6 +261,39 @@ USER INPUT:
 
     print(f"   Generated {len(agents)} commands.")
 
+def generate_aemacs_native_files(global_headers: dict[str, str], agents: list[dict]) -> None:
+    """Generate native Æmacs Agent YAML files in .aemacs/agents/."""
+    print(f"🐍 Generating Native Æmacs Agents in {AEMACS_AGENT_DIR}...")
+    ensure_dir(AEMACS_AGENT_DIR)
+
+    for agent in agents:
+        slug = agent["slug"]
+        profile_path = PROFILE_MAP.get(slug)
+        mode_section = get_mode_text(agent["type"])
+        body_clean = clean_body_content(agent['body'])
+        system_header = global_headers.get(agent["type"], "")
+
+        # Assemble full system prompt without {{args}}
+        full_prompt = f"SYSTEM INSTRUCTIONS:\n{system_header}\n\n---\nAGENT PERSONA:\n{body_clean}\n\n---\n{mode_section}"
+        
+        # Proper YAML block scalar indentation (2 spaces)
+        indented_prompt = "\n".join([f"    {line}" for line in full_prompt.strip().split("\n")])
+
+        yaml_content = f'name: "{slug}"\n'
+        yaml_content += f'description: "{agent["role"].replace('"', "'")}"\n'
+        yaml_content += f'system_prompt: |\n{indented_prompt}\n'
+        
+        if profile_path:
+            yaml_content += f'profile_path: "{profile_path}"\n'
+
+        filename = f"{slug}.yaml"
+        path = os.path.join(AEMACS_AGENT_DIR, filename)
+
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(yaml_content)
+
+    print(f"   Generated {len(agents)} native agent souls.")
+
 def main():
     all_agents = []
     global_headers = {}
@@ -302,6 +336,7 @@ def main():
 
     generate_copilot_files(global_headers, all_agents)
     generate_gemini_commands(global_headers, all_agents)
+    generate_aemacs_native_files(global_headers, all_agents)
 
     print("\n✅ Done! Æmacs AI System synced.")
 

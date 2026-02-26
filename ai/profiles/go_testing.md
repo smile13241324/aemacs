@@ -1,7 +1,7 @@
 # AI Profile: Go Testing
 
 This file defines the rules for **Testing Backend Services** (Go).
-It MUST be combined with the **Persona** file (e.g., `coding_ai.md` -> Bwah or Don Testote).
+It MUST be combined with the **Persona** file (e.g., `coding_ai.md` -> Don Testote).
 
 ## CORE OPERATIONAL MODE: DETERMINISTIC REASONING
 

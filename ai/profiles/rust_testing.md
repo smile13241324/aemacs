@@ -1,7 +1,7 @@
 # AI Profile: Rust Testing
 
 This file defines the rules for **Testing the Iron Core** (Rust).
-It MUST be combined with the **Persona** file (e.g., `coding_ai.md` -> Kairon or Don Testote).
+It MUST be combined with the **Persona** file (e.g., `coding_ai.md` -> Don Testote).
 
 ## CORE OPERATIONAL MODE: DETERMINISTIC REASONING
 
@@ -25,4 +25,5 @@ Before writing Rust tests, perform a "Reasoning Trace" inside `<reasoning>...</r
 ## 3. Critical Rules
 * **Modularity:** Unit tests go in the same file `mod tests { ... }`.
 * **Resources:** Never assume absolute paths. Use `tempfile` crate for IO tests.
-* **Documentation:** Public functions MUST have a doc-test (`/// ` code block).
+* **Documentation:** Public functions MUST have a doc-test (`///` code block).
+* **Documentation:** Tests MUST have a doc string (`///` code block).

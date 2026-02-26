@@ -13,15 +13,24 @@ pub struct Persona {
     
     /// The core system prompt that defines the agent's behavior and identity.
     pub system_prompt: String,
+
+    /// An optional path to a technical profile (rulebook) for this agent.
+    pub profile_path: Option<String>,
 }
 
 impl Persona {
     /// Create a new Persona manually.
-    pub fn new(name: impl Into<String>, description: impl Into<String>, system_prompt: impl Into<String>) -> Self {
+    pub fn new(
+        name: impl Into<String>,
+        description: impl Into<String>,
+        system_prompt: impl Into<String>,
+        profile_path: Option<String>,
+    ) -> Self {
         Self {
             name: name.into(),
             description: description.into(),
             system_prompt: system_prompt.into(),
+            profile_path,
         }
     }
 
@@ -45,7 +54,8 @@ mod tests {
         let original = Persona::new(
             "kairon",
             "The Forge Master",
-            "You are an elemental force of creation."
+            "You are an elemental force of creation.",
+            Some("ai/profiles/rust.md".to_string())
         );
         let yaml = original.to_yaml().expect("Serialization failed");
         let deserialized = Persona::from_yaml(&yaml).expect("Deserialization failed");

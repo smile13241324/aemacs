@@ -1,7 +1,7 @@
 # AI Profile: Python Testing
 
 This file defines the rules for **Testing AI Scripts** (Python).
-It MUST be combined with the **Persona** file (e.g., `coding_ai.md` -> Nagah or Don Testote).
+It MUST be combined with the **Persona** file (e.g., `coding_ai.md` -> Don Testote).
 
 ## CORE OPERATIONAL MODE: DETERMINISTIC REASONING
 
