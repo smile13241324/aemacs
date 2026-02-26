@@ -25,9 +25,9 @@ pub fn init() -> Result<()> {
     Ok(())
 }
 
+use aemacs_ai::PersonaRegistry;
 use aemacs_ai::mcp::ToolRegistry;
 use aemacs_ai::rag::KnowledgeBase;
-use aemacs_ai::PersonaRegistry;
 use std::sync::Arc;
 
 pub struct Workspace {
@@ -88,7 +88,14 @@ impl Workspace {
             });
 
             let (host_tx, host_rx) = async_channel::unbounded::<ai_panel::HostRequest>();
-            let ai_panel = AiPanel::new(cx, host_tx, kb.clone(), registry.clone(), persona_registry.clone());
+            let ai_panel = AiPanel::new(
+                cx,
+                host_tx,
+                kb.clone(),
+                registry.clone(),
+                persona_registry.clone(),
+                bus.clone(),
+            );
             let focus_handle = cx.focus_handle();
 
             // --- Event Bus Wiring (ACO-032) ---
@@ -182,12 +189,18 @@ impl Workspace {
                                 let _ = workspace.update(&mut cx, |this, cx| {
                                     match aemacs_core::Editor::from_file(path.clone()) {
                                         Ok(new_editor) => {
-                                            log::info!("📂 [Workspace] Switching to file: {:?}", path);
+                                            log::info!(
+                                                "📂 [Workspace] Switching to file: {:?}",
+                                                path
+                                            );
                                             this.editor.update(cx, |ed, _| *ed = new_editor);
                                             this.notification = Some(format!("Opened: {:?}", path));
                                         }
                                         Err(e) => {
-                                            log::error!("⚠️ [Workspace] Failed to open file: {}", e);
+                                            log::error!(
+                                                "⚠️ [Workspace] Failed to open file: {}",
+                                                e
+                                            );
                                             this.notification =
                                                 Some(format!("Error opening file: {}", e));
                                         }
@@ -236,7 +249,10 @@ impl Workspace {
                             }
                             aemacs_core::bus::SystemEvent::PersonaChanged { name, message } => {
                                 let _ = workspace.update(&mut cx, |this, cx| {
-                                    log::info!("🔄 [Workspace] Programmatic persona switch: {}", name);
+                                    log::info!(
+                                        "🔄 [Workspace] Programmatic persona switch: {}",
+                                        name
+                                    );
                                     this.ai_panel.update(cx, |panel, cx| {
                                         panel.handoff_persona(name, message, cx);
                                     });

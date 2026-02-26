@@ -17,5 +17,7 @@ log = { workspace = true }
 gpui = { workspace = true }
 async-channel = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
 tree-sitter = { workspace = true }
 tree-sitter-rust = { workspace = true }
+notify = { version = "6.1.1", features = ["macos_fsevent"] }

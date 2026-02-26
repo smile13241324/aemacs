@@ -6,8 +6,10 @@ pub mod keymap;
 pub mod mode;
 pub mod runtime;
 pub mod selection;
+pub mod signals;
 pub mod syntax;
 pub mod task;
+pub mod watcher;
 
 use anyhow::Result;
 use log::info;

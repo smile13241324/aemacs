@@ -15,6 +15,11 @@ pub enum SystemEvent {
         name: String,
         message: Option<String>,
     },
+    Signal {
+        source: String,
+        event_type: String,
+        payload: String,
+    },
 }
 
 #[derive(Clone)]
