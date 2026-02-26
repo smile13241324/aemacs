@@ -22,6 +22,7 @@ fn get_session_start() -> std::time::Instant {
 pub trait ToolHost: Send + Sync {
     async fn ask_approval(&self, description: &str) -> bool;
     async fn ask_user(&self, question: &str) -> String;
+    fn get_agent_id(&self) -> String;
 }
 
 #[async_trait]
@@ -40,6 +41,9 @@ impl ToolHost for DenyAllHost {
     }
     async fn ask_user(&self, _question: &str) -> String {
         String::new()
+    }
+    fn get_agent_id(&self) -> String {
+        "anonymous".to_string()
     }
 }
 
@@ -175,7 +179,8 @@ pub async fn run_agent_loop(
 
 // --- Utils ---
 
-fn validate_path(path_str: &str) -> Result<PathBuf> {
+/// Validates that a path is safe to access (no escaping the project root).
+pub fn validate_path(path_str: &str) -> Result<PathBuf> {
     let path = PathBuf::from(path_str);
     if path.is_absolute() {
         return Err(anyhow!("Absolute paths are not allowed."));
@@ -565,24 +570,33 @@ impl Tool for SearchKnowledgeBaseTool {
         "search_knowledge_base"
     }
     fn description(&self) -> &str {
-        "Searches internal documentation/memory."
+        "Searches internal documentation/memory. Defaults to 'internal' scope (only your own memories). Use scope='global' to search everyone's memories."
     }
     fn parameters(&self) -> Value {
         serde_json::json!({
             "type": "object",
             "properties": {
                 "query": { "type": "string" },
-                "collection": { "type": "string" }
+                "collection": { "type": "string" },
+                "scope": { "type": "string", "enum": ["internal", "global"], "description": "Defaults to 'internal'." }
             },
             "required": ["query"]
         })
     }
-    async fn execute(&self, args: Value, _host: &dyn ToolHost) -> Result<String> {
+    async fn execute(&self, args: Value, host: &dyn ToolHost) -> Result<String> {
         let query = args["query"]
             .as_str()
             .ok_or(anyhow::anyhow!("Missing query"))?;
         let collection = args["collection"].as_str().unwrap_or("aemacs_docs");
-        let results = self.kb.search(collection, query, 3, None).await?;
+        let scope = args["scope"].as_str().unwrap_or("internal");
+
+        let agent_id = if scope == "internal" {
+            Some(host.get_agent_id())
+        } else {
+            None
+        };
+
+        let results = self.kb.search(collection, query, 3, None, agent_id.as_deref()).await?;
         if results.is_empty() {
             return Ok("No results.".to_string());
         }
@@ -623,7 +637,7 @@ impl Tool for WriteKnowledgeBaseTool {
             "required": ["content", "category"]
         })
     }
-    async fn execute(&self, args: Value, _host: &dyn ToolHost) -> Result<String> {
+    async fn execute(&self, args: Value, host: &dyn ToolHost) -> Result<String> {
         let content = args["content"]
             .as_str()
             .ok_or(anyhow::anyhow!("Missing content"))?;
@@ -631,12 +645,14 @@ impl Tool for WriteKnowledgeBaseTool {
             .as_str()
             .ok_or(anyhow::anyhow!("Missing category"))?;
         let collection = args["collection"].as_str().unwrap_or("aemacs_docs");
+        let agent_id = host.get_agent_id();
 
         let timestamp = chrono::Utc::now().to_rfc3339();
-        let formatted_content = format!("[{}] [{}] | {}", category, timestamp, content);
+        let formatted_content = format!("[{}] [Agent: {}] [{}] | {}", category, agent_id.to_uppercase(), timestamp, content);
 
         let mut metadata = HashMap::new();
         metadata.insert("category".to_string(), category.to_string());
+        metadata.insert("agent_id".to_string(), agent_id);
         metadata.insert("timestamp".to_string(), timestamp);
         metadata.insert("type".to_string(), "active_memory".to_string());
 
@@ -719,17 +735,19 @@ impl Tool for UpdateMemoryTool {
             "required": ["id", "content", "category"]
         })
     }
-    async fn execute(&self, args: Value, _host: &dyn ToolHost) -> Result<String> {
+    async fn execute(&self, args: Value, host: &dyn ToolHost) -> Result<String> {
         let id = args["id"].as_str().ok_or(anyhow!("Missing memory ID"))?;
         let content = args["content"].as_str().ok_or(anyhow!("Missing content"))?;
         let category = args["category"].as_str().ok_or(anyhow!("Missing category"))?;
         let collection = args["collection"].as_str().unwrap_or("aemacs_docs");
+        let agent_id = host.get_agent_id();
 
         let timestamp = chrono::Utc::now().to_rfc3339();
-        let formatted_content = format!("[{}] [{}] | {}", category, timestamp, content);
+        let formatted_content = format!("[{}] [Agent: {}] [{}] | {}", category, agent_id.to_uppercase(), timestamp, content);
 
         let mut metadata = HashMap::new();
         metadata.insert("category".to_string(), category.to_string());
+        metadata.insert("agent_id".to_string(), agent_id);
         metadata.insert("timestamp".to_string(), timestamp);
         metadata.insert("type".to_string(), "active_memory".to_string());
 

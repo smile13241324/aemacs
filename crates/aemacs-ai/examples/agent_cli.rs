@@ -2,6 +2,7 @@ use aemacs_ai::connectors::openai_compatible::OpenAICompatibleBackend;
 use aemacs_ai::conversation::Conversation;
 use aemacs_ai::mcp::{ToolHost, ToolRegistry, run_agent_loop};
 use aemacs_ai::rag::KnowledgeBase;
+use aemacs_ai::PersonaRegistry;
 use async_trait::async_trait;
 use std::io::{self, Write};
 use std::sync::Arc;
@@ -48,12 +49,16 @@ impl ToolHost for ConsoleHost {
         io::stdin().read_line(&mut input).unwrap();
         input.trim().to_string()
     }
+
+    fn get_agent_id(&self) -> String {
+        "cli-agent".to_string()
+    }
 }
 
 // --- Main ---
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> anyhow::Result<()> {
     println!("{}", color("🤖 Æmacs Agent CLI (MCP Proving Ground)", BOLD));
     println!("---------------------------------------");
 
@@ -75,12 +80,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 color("⚠️  Warning:", YELLOW),
                 e
             );
-            return Err(Box::new(e));
+            return Err(anyhow::anyhow!("Qdrant not available: {}", e));
         }
     };
 
     println!("🛠️  Registering Core Tools...");
-    let registry = ToolRegistry::with_core_tools(kb);
+    let persona_registry = PersonaRegistry::new().await.map_err(|e| anyhow::anyhow!("Failed to load persona registry: {}", e))?;
+    let registry = ToolRegistry::with_core_tools(kb, persona_registry, None);
 
     // List tools
     let defs = registry.list_definitions();

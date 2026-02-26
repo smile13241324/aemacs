@@ -45,11 +45,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("\n🔍 Searching for: '{}'", query);
 
     // Search for a good answer with a similarity threshold of 0.7
-    let results = kb.search(collection_name, query, 3, Some(0.7)).await?;
+    let results = kb.search(collection_name, query, 3, Some(0.7), None).await?;
 
     println!("--- Results ---");
     for (i, result) in results.iter().enumerate() {
-        println!("{}. {}", i + 1, result);
+        println!("{}. [ID: {}] {}", i + 1, result.id, result.content);
     }
     println!("---------------");
 

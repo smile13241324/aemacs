@@ -19,13 +19,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
         messages: vec![Message::new(Role::User, "Hallo Æmacs! Thats a test.")],
         temperature: 0.7,
         stream: false,
+        options: None,
+        tools: None,
     };
 
     println!("🚀 Sending Request...");
     let response = backend.complete(request).await?;
 
     println!("--- RESPONSE ---");
-    println!("{}", response);
+    println!("{:?}", response);
     println!("----------------");
 
     Ok(())

@@ -2,9 +2,11 @@ use crate::embeddings::OllamaEmbedder;
 use crate::{AIError, AIResult};
 use qdrant_client::Payload;
 use qdrant_client::Qdrant;
+use qdrant_client::qdrant::r#match::MatchValue;
 use qdrant_client::qdrant::{
-    CreateCollection, DeletePointsBuilder, Distance, PointId, PointStruct, SearchPoints,
-    UpsertPoints, VectorParams, VectorsConfig, vectors_config::Config,
+    Condition, CreateCollection, DeletePointsBuilder, Distance, FieldCondition, Filter, PointId,
+    PointStruct, SearchPoints, UpsertPoints, VectorParams, VectorsConfig,
+    condition::ConditionOneOf, vectors_config::Config,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -102,6 +104,7 @@ impl KnowledgeBase {
         query: &str,
         limit: u64,
         score_threshold: Option<f32>,
+        agent_id: Option<&str>,
     ) -> AIResult<Vec<MemoryResult>> {
         // Nomic v1.5 requires prefix for queries
         let query_for_embedding = format!("search_query: {}", query);
@@ -109,6 +112,22 @@ impl KnowledgeBase {
 
         // Apply default threshold of 0.75 (High Relevance) if not specified.
         let threshold = score_threshold.unwrap_or(0.75);
+
+        let mut filter = None;
+        if let Some(id) = agent_id {
+            filter = Some(Filter {
+                must: vec![Condition {
+                    condition_one_of: Some(ConditionOneOf::Field(FieldCondition {
+                        key: "agent_id".to_string(),
+                        r#match: Some(qdrant_client::qdrant::Match {
+                            match_value: Some(MatchValue::Keyword(id.to_string())),
+                        }),
+                        ..Default::default()
+                    })),
+                }],
+                ..Default::default()
+            });
+        }
 
         let search_result = self
             .client
@@ -118,6 +137,7 @@ impl KnowledgeBase {
                 limit,
                 score_threshold: Some(threshold),
                 with_payload: Some(true.into()),
+                filter,
                 ..Default::default()
             })
             .await

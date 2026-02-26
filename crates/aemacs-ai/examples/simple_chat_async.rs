@@ -18,6 +18,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         messages: vec![Message::new(Role::User, "Hallo Æmacs! I am streaming now.")],
         temperature: 0.7,
         stream: true,
+        options: None,
+        tools: None,
     };
 
     println!("🚀 Sending Request & Opening Stream...");

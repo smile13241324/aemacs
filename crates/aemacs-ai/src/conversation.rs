@@ -3,6 +3,7 @@ use crate::persona::Persona;
 use crate::{AIRequest, Content, ContentPart, Message, Role, models::OllamaOptions};
 use anyhow::Result;
 use std::path::Path;
+use tracing::warn;
 
 #[derive(Debug, Clone)]
 pub struct Conversation {
@@ -13,6 +14,7 @@ pub struct Conversation {
     options: OllamaOptions,
     tools: Option<Vec<serde_json::Value>>,
     active_persona: Option<Persona>,
+    active_profile_content: Option<String>,
 }
 
 impl Conversation {
@@ -26,17 +28,42 @@ impl Conversation {
             options: OllamaOptions::default(),
             tools: None,
             active_persona: None,
+            active_profile_content: None,
         }
     }
 
-    /// Sets the active persona and clears history.
+    /// Sets the active persona and auto-loads its associated profile if present.
     pub fn set_persona(&mut self, persona: Persona) {
+        if let Some(path) = &persona.profile_path {
+            match load_file(path) {
+                Ok(part) => {
+                    if let ContentPart::Text { text } = part {
+                        self.active_profile_content = Some(text);
+                    } else {
+                        warn!("Profile at '{}' is not a text file.", path);
+                        self.active_profile_content = None;
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to auto-load profile '{}': {}", path, e);
+                    self.active_profile_content = None;
+                }
+            }
+        } else {
+            self.active_profile_content = None;
+        }
         self.active_persona = Some(persona);
     }
 
-    /// Clears the active persona.
+    /// Explicitly sets a technical profile.
+    pub fn set_profile(&mut self, content: String) {
+        self.active_profile_content = Some(content);
+    }
+
+    /// Clears the active persona and profile.
     pub fn clear_persona(&mut self) {
         self.active_persona = None;
+        self.active_profile_content = None;
     }
 
     /// Sets the model for subsequent requests.
@@ -117,10 +144,9 @@ impl Conversation {
     /// Adds a file content as a standalone User message.
     pub fn with_file(mut self, path: impl AsRef<Path>) -> Result<Self> {
         let part = load_file(path)?;
-        let content = Content::Parts(vec![part]);
         self.messages.push(Message {
             role: Role::User,
-            content,
+            content: Content::Parts(vec![part]),
             tool_calls: None,
             tool_call_id: None,
             timestamp: chrono::Utc::now(),
@@ -181,20 +207,32 @@ impl Conversation {
         kb: &crate::rag::KnowledgeBase,
         session_id: &str,
     ) -> Result<()> {
+        let agent_name = self
+            .active_persona
+            .as_ref()
+            .map(|p| p.name.as_str())
+            .unwrap_or("assistant");
+
         for (i, msg) in self.messages.iter().enumerate() {
             let timestamp = msg.timestamp.to_rfc3339();
             let mut metadata = std::collections::HashMap::new();
             metadata.insert("type".to_string(), "episodic_memory".to_string());
             metadata.insert("category".to_string(), "ARCHIVE".to_string());
+            metadata.insert("agent_id".to_string(), agent_name.to_string());
             metadata.insert("session_id".to_string(), session_id.to_string());
             metadata.insert("role".to_string(), format!("{:?}", msg.role));
             metadata.insert("timestamp".to_string(), timestamp.clone());
             metadata.insert("turn_index".to_string(), i.to_string());
 
-            // Contextualize the chunk for the embedder with tiered prefix
+            // Contextualize the chunk for the embedder with tiered prefix and agent identity
             let chunk = format!(
-                "[ARCHIVE] [{}] | Session: {} | Turn: {} | Role: {:?} | Content: {}",
-                timestamp, session_id, i, msg.role, msg.content
+                "[ARCHIVE] [Agent: {}] [{}] | Session: {} | Turn: {} | Role: {:?} | Content: {}",
+                agent_name.to_uppercase(),
+                timestamp,
+                session_id,
+                i,
+                msg.role,
+                msg.content
             );
 
             kb.add_document("aemacs_docs", &chunk, Some(metadata))
@@ -236,9 +274,16 @@ impl Conversation {
             })
             .collect();
 
-        // Inject active persona's system prompt at the very beginning if set
+        // Inject active persona and profile at the very beginning if set
         if let Some(persona) = self.active_persona {
-            messages.insert(0, Message::system(persona.system_prompt));
+            let mut full_system_prompt = persona.system_prompt;
+            
+            if let Some(profile) = self.active_profile_content {
+                full_system_prompt.push_str("\n\n---\nTOOLBOX (AUTO-LOADED):\n");
+                full_system_prompt.push_str(&profile);
+            }
+            
+            messages.insert(0, Message::system(full_system_prompt));
         }
 
         AIRequest {
@@ -264,32 +309,36 @@ mod tests {
     use crate::persona::Persona;
 
     #[test]
-    fn test_persona_switch_clears_history() {
+    fn test_persona_switch_preserves_history() {
         let mut conv = Conversation::new("mistral");
         conv = conv.with_user("Hello");
         assert_eq!(conv.messages.len(), 1);
 
-        let persona = Persona::new("bob", "Architect", "You are Bob.");
+        let persona = Persona::new("bob", "Architect", "You are Bob.", None);
         conv.set_persona(persona);
         
-        assert_eq!(conv.messages.len(), 0);
+        // History must be preserved!
+        assert_eq!(conv.messages.len(), 1);
         assert!(conv.active_persona.is_some());
     }
 
     #[test]
-    fn test_persona_injection_in_build() {
+    fn test_persona_injection_with_profile() {
         let mut conv = Conversation::new("mistral");
-        let persona = Persona::new("bob", "Architect", "You are Bob.");
+        let persona = Persona::new("bob", "Architect", "You are Bob.", None);
         conv.set_persona(persona);
+        conv.set_profile("Rule 1: Be solid.".to_string());
         conv = conv.with_user("Build a forge.");
         
         let request = conv.build();
         assert_eq!(request.messages.len(), 2);
         assert_eq!(request.messages[0].role, Role::System);
         
-        // Verify system prompt content
+        // Verify combined system prompt content
         if let Content::Text(text) = &request.messages[0].content {
-            assert_eq!(text, "You are Bob.");
+            assert!(text.contains("You are Bob."));
+            assert!(text.contains("TOOLBOX (AUTO-LOADED):"));
+            assert!(text.contains("Rule 1: Be solid."));
         } else {
             panic!("System message content should be text");
         }
