@@ -80,11 +80,117 @@ pub struct AiPanel {
     pub active_persona_name: Option<String>,
     pub conversation: Conversation,
     pub proactive_mode: bool,
+    pub width: f32,
+    pub is_maximized: bool,
 }
 
 struct ChatMessage {
     role: String,
     content: String,
+    parsed_blocks: Vec<MarkdownBlock>,
+}
+
+#[derive(Clone, Debug)]
+enum MarkdownBlock {
+    Paragraph(String),
+    Code { language: String, content: String },
+    Header { level: usize, content: String },
+}
+
+impl ChatMessage {
+    fn new(role: impl Into<String>, content: impl Into<String>) -> Self {
+        let content = content.into();
+        let parsed_blocks = parse_markdown_blocks(&content);
+        Self {
+            role: role.into(),
+            content,
+            parsed_blocks,
+        }
+    }
+
+    fn update_content(&mut self, new_content: String) {
+        self.content = new_content;
+        self.parsed_blocks = parse_markdown_blocks(&self.content);
+    }
+}
+
+fn parse_markdown_blocks(text: &str) -> Vec<MarkdownBlock> {
+    use pulldown_cmark::{Event, Parser, Tag, TagEnd};
+    let parser = Parser::new(text);
+    let mut blocks = Vec::new();
+    let mut current_text = String::new();
+    let mut in_code_block = false;
+    let mut current_language = String::new();
+    let mut current_header_level = 0;
+
+    for event in parser {
+        match event {
+            Event::Start(Tag::CodeBlock(pulldown_cmark::CodeBlockKind::Fenced(lang))) => {
+                if !current_text.is_empty() {
+                    blocks.push(MarkdownBlock::Paragraph(current_text.trim().to_string()));
+                    current_text.clear();
+                }
+                in_code_block = true;
+                current_language = lang.to_string();
+            }
+            Event::Start(Tag::CodeBlock(pulldown_cmark::CodeBlockKind::Indented)) => {
+                if !current_text.is_empty() {
+                    blocks.push(MarkdownBlock::Paragraph(current_text.trim().to_string()));
+                    current_text.clear();
+                }
+                in_code_block = true;
+                current_language = String::new();
+            }
+            Event::End(TagEnd::CodeBlock) => {
+                blocks.push(MarkdownBlock::Code {
+                    language: current_language.clone(),
+                    content: current_text.trim_end().to_string(),
+                });
+                current_text.clear();
+                in_code_block = false;
+            }
+            Event::Start(Tag::Heading { level, .. }) => {
+                if !current_text.is_empty() {
+                    blocks.push(MarkdownBlock::Paragraph(current_text.trim().to_string()));
+                    current_text.clear();
+                }
+                current_header_level = level as usize;
+            }
+            Event::End(TagEnd::Heading(_)) => {
+                blocks.push(MarkdownBlock::Header {
+                    level: current_header_level,
+                    content: current_text.trim().to_string(),
+                });
+                current_text.clear();
+                current_header_level = 0;
+            }
+            Event::Text(t) => {
+                current_text.push_str(&t);
+            }
+            Event::Code(t) => {
+                current_text.push('`');
+                current_text.push_str(&t);
+                current_text.push('`');
+            }
+            Event::SoftBreak | Event::HardBreak => {
+                current_text.push('\n');
+            }
+            _ => {}
+        }
+    }
+
+    if !current_text.is_empty() {
+        if in_code_block {
+            blocks.push(MarkdownBlock::Code {
+                language: current_language,
+                content: current_text.trim_end().to_string(),
+            });
+        } else {
+            blocks.push(MarkdownBlock::Paragraph(current_text.trim().to_string()));
+        }
+    }
+
+    blocks
 }
 
 impl AiPanel {
@@ -107,10 +213,10 @@ impl AiPanel {
             AiPanel {
                 input_editor,
                 focus_handle,
-                messages: vec![ChatMessage {
-                    role: "System".to_string(),
-                    content: "AI System Online. Waiting for input...".to_string(),
-                }],
+                messages: vec![ChatMessage::new(
+                    "System",
+                    "AI System Online. Waiting for input..."
+                )],
                 backend,
                 host_tx,
                 tasks: Vec::new(),
@@ -122,6 +228,8 @@ impl AiPanel {
                 active_persona_name: None,
                 conversation: Conversation::new(model_name),
                 proactive_mode: true,
+                width: 400.0,
+                is_maximized: false,
             }
         });
 
@@ -155,10 +263,10 @@ impl AiPanel {
                                                 source, payload
                                             );
 
-                                            this.messages.push(ChatMessage {
-                                                role: "System".to_string(),
-                                                content: "👀 I noticed you changed a file. Let me look...".to_string(),
-                                            });
+                                            this.messages.push(ChatMessage::new(
+                                                "System",
+                                                "👀 I noticed you changed a file. Let me look..."
+                                            ));
 
                                             this.conversation.add_message(aemacs_ai::Message::user(observation));
                                             
@@ -206,16 +314,16 @@ impl AiPanel {
             self.active_persona_name = Some(name_lower);
             self.conversation.set_persona(persona);
 
-            self.messages.push(ChatMessage {
-                role: "System".to_string(),
-                content: format!("Programmatic handoff to: {}", name.to_uppercase()),
-            });
+            self.messages.push(ChatMessage::new(
+                "System",
+                format!("Programmatic handoff to: {}", name.to_uppercase())
+            ));
 
             if let Some(msg) = message {
-                self.messages.push(ChatMessage {
-                    role: "User".to_string(),
-                    content: msg.clone(),
-                });
+                self.messages.push(ChatMessage::new(
+                    "User",
+                    msg.clone()
+                ));
                 self.conversation.add_message(aemacs_ai::Message::user(msg));
                 // Automatically trigger the new agent if a message was provided
                 self.trigger_ai_response(cx);
@@ -226,10 +334,10 @@ impl AiPanel {
 
     fn trigger_ai_response(&mut self, cx: &mut Context<Self>) {
         // Prepare AI Message Placeholder
-        self.messages.push(ChatMessage {
-            role: "AI".to_string(),
-            content: "".to_string(),
-        });
+        self.messages.push(ChatMessage::new(
+            "AI",
+            ""
+        ));
 
         let registry = self.registry.clone();
         let host = GuiHost {
@@ -255,7 +363,7 @@ impl AiPanel {
                     AgentEvent::Result(result) => {
                         if let Some(last_msg) = panel.messages.last_mut() {
                             if last_msg.role == "AI" {
-                                last_msg.content = result.clone();
+                                last_msg.update_content(result.clone());
                             }
                         }
                         panel
@@ -266,7 +374,7 @@ impl AiPanel {
                         if let Some(last_msg) = panel.messages.last_mut() {
                             if last_msg.role == "AI" {
                                 last_msg.role = "System".to_string();
-                                last_msg.content = format!("❌ AI Error: {}", e);
+                                last_msg.update_content(format!("❌ AI Error: {}", e));
                             }
                         }
                         log::error!("AI Task Failed: {}", e);
@@ -513,10 +621,10 @@ impl AiPanel {
             .collect();
 
         if statute_matches.len() > 1 {
-            self.messages.push(ChatMessage {
-                role: "System".to_string(),
-                content: "❌ Multiple statutes detected! You can only load one profile (@) at a time. Use @@ for attaching multiple source files.".to_string(),
-            });
+            self.messages.push(ChatMessage::new(
+                "System",
+                "❌ Multiple statutes detected! You can only load one profile (@) at a time. Use @@ for attaching multiple source files."
+            ));
             cx.notify();
             return;
         }
@@ -532,38 +640,35 @@ impl AiPanel {
                             } = part
                             {
                                 self.conversation.set_profile(profile_content);
-                                self.messages.push(ChatMessage {
-                                    role: "System".to_string(),
-                                    content: format!("📖 Profile loaded: {}", path_str),
-                                });
+                                self.messages.push(ChatMessage::new(
+                                    "System",
+                                    format!("📖 Profile loaded: {}", path_str)
+                                ));
                                 // Strip the tag from the final message text
                                 let start = mat.start();
                                 let end = mat.end();
                                 text.replace_range(start..end, "");
                                 text = text.trim().to_string();
                             } else {
-                                self.messages.push(ChatMessage {
-                                    role: "System".to_string(),
-                                    content: format!(
-                                        "⚠️ Profile at '{}' is not a text file.",
-                                        path_str
-                                    ),
-                                });
+                                self.messages.push(ChatMessage::new(
+                                    "System",
+                                    format!("⚠️ Profile at '{}' is not a text file.", path_str)
+                                ));
                             }
                         }
                         Err(e) => {
-                            self.messages.push(ChatMessage {
-                                role: "System".to_string(),
-                                content: format!("⚠️ Failed to load profile: {} ({})", path_str, e),
-                            });
+                            self.messages.push(ChatMessage::new(
+                                "System",
+                                format!("⚠️ Failed to load profile: {} ({})", path_str, e)
+                            ));
                         }
                     }
                 }
                 Err(e) => {
-                    self.messages.push(ChatMessage {
-                        role: "System".to_string(),
-                        content: format!("⚠️ Invalid profile path: {} ({})", path_str, e),
-                    });
+                    self.messages.push(ChatMessage::new(
+                        "System",
+                        format!("⚠️ Invalid profile path: {} ({})", path_str, e)
+                    ));
                 }
             }
         }
@@ -587,31 +692,25 @@ impl AiPanel {
                                 // Strip the tag
                                 text.replace_range(*start..*end, "");
                             } else {
-                                self.messages.push(ChatMessage {
-                                    role: "System".to_string(),
-                                    content: format!(
-                                        "⚠️ Material at '{}' is not a text file.",
-                                        path_str
-                                    ),
-                                });
+                                self.messages.push(ChatMessage::new(
+                                    "System",
+                                    format!("⚠️ Material at '{}' is not a text file.", path_str)
+                                ));
                             }
                         }
                         Err(e) => {
-                            self.messages.push(ChatMessage {
-                                role: "System".to_string(),
-                                content: format!(
-                                    "⚠️ Failed to load material: {} ({})",
-                                    path_str, e
-                                ),
-                            });
+                            self.messages.push(ChatMessage::new(
+                                "System",
+                                format!("⚠️ Failed to load material: {} ({})", path_str, e)
+                            ));
                         }
                     }
                 }
                 Err(e) => {
-                    self.messages.push(ChatMessage {
-                        role: "System".to_string(),
-                        content: format!("⚠️ Invalid material path: {} ({})", path_str, e),
-                    });
+                    self.messages.push(ChatMessage::new(
+                        "System",
+                        format!("⚠️ Invalid material path: {} ({})", path_str, e)
+                    ));
                 }
             }
         }
@@ -644,13 +743,10 @@ impl AiPanel {
                 switched = true;
             } else {
                 // ACO-006: Lexical Guard
-                self.messages.push(ChatMessage {
-                    role: "System".to_string(),
-                    content: format!(
-                        "⚠️ Unknown agent: /{}. Type a valid specialist name.",
-                        agent_name
-                    ),
-                });
+                self.messages.push(ChatMessage::new(
+                    "System",
+                    format!("⚠️ Unknown agent: /{}. Type a valid specialist name.", agent_name)
+                ));
                 self.input_editor.update(cx, |editor, _| {
                     editor.buffer.content = ropey::Rope::new();
                     editor.mode = Mode::Normal;
@@ -662,20 +758,20 @@ impl AiPanel {
 
         // 1. Add User/System Message
         if !text.trim().is_empty() {
-            self.messages.push(ChatMessage {
-                role: "User".to_string(),
-                content: text.clone(),
-            });
+            self.messages.push(ChatMessage::new(
+                "User",
+                text.clone()
+            ));
         } else if switched {
             let persona_display = self
                 .active_persona_name
                 .as_deref()
                 .unwrap_or("UNKNOWN")
                 .to_uppercase();
-            self.messages.push(ChatMessage {
-                role: "System".to_string(),
-                content: format!("Agent switched to: {}", persona_display),
-            });
+            self.messages.push(ChatMessage::new(
+                "System",
+                format!("Agent switched to: {}", persona_display)
+            ));
         } else {
             return;
         }
@@ -692,10 +788,10 @@ impl AiPanel {
         }
 
         // 3. Prepare AI Message Placeholder
-        self.messages.push(ChatMessage {
-            role: "AI".to_string(),
-            content: "".to_string(),
-        });
+        self.messages.push(ChatMessage::new(
+            "AI",
+            ""
+        ));
 
         // 4. Update persistent conversation
         if let Some(persona_name) = &self.active_persona_name {
@@ -720,11 +816,18 @@ impl Render for AiPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let bg = rgb(0x21252b);
         let input_bg = rgb(0x282c34);
-        let text_color = rgb(0xabb2bf);
 
-        div()
+        let root_div = div()
             .flex()
-            .flex_col()
+            .flex_col();
+            
+        let root_div = if self.is_maximized {
+            root_div.w_full()
+        } else {
+            root_div.w(px(self.width))
+        };
+
+        root_div
             .size_full()
             .bg(bg)
             .border_l_1()
@@ -737,6 +840,30 @@ impl Render for AiPanel {
                     .flex()
                     .flex_col()
                     .gap_y(px(8.0))
+                    .child(
+                        div()
+                            .flex()
+                            .justify_between()
+                            .items_center()
+                            .child(
+                                div()
+                                    .text_size(px(12.0))
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .text_color(rgb(0xffffff))
+                                    .child("Æmacs Mesh"),
+                            )
+                            .child(
+                                div()
+                                    .id("maximize_btn")
+                                    .cursor_pointer()
+                                    .text_color(rgb(0xabb2bf))
+                                    .on_click(cx.listener(|this, _, _window, cx| {
+                                        this.is_maximized = !this.is_maximized;
+                                        cx.notify();
+                                    }))
+                                    .child(if self.is_maximized { "[ _ ]" } else { "[ + ]" }),
+                            ),
+                    )
                     .child(self.render_agent_selector(cx))
                     .child(self.render_model_selector(cx))
                     .child(self.render_context_selector(cx))
@@ -808,8 +935,40 @@ impl Render for AiPanel {
                                     } else {
                                         rgb(0x282c34)
                                     })
-                                    .text_color(if is_error { rgb(0xe06c75) } else { text_color })
-                                    .child(msg.content.clone()),
+                                    .text_color(if is_error { rgb(0xe06c75) } else { rgb(0xabb2bf) })
+                                    .flex()
+                                    .flex_col()
+                                    .gap_y(px(4.0))
+                                    .children(msg.parsed_blocks.iter().map(|block| {
+                                        match block {
+                                            MarkdownBlock::Paragraph(text) => {
+                                                div().child(text.clone()).into_any_element()
+                                            }
+                                            MarkdownBlock::Code { language, content } => {
+                                                div()
+                                                    .bg(rgb(0x1e1e1e))
+                                                    .p(px(6.0))
+                                                    .rounded_sm()
+                                                    .border_1()
+                                                    .border_color(rgb(0x3e4451))
+                                                    .child(
+                                                        div().text_color(rgb(0x61afef)).text_size(px(10.0)).child(language.clone())
+                                                    )
+                                                    .child(
+                                                        div().text_color(rgb(0xabb2bf)).font_family("monospace").child(content.clone())
+                                                    ).into_any_element()
+                                            }
+                                            MarkdownBlock::Header { level, content } => {
+                                                let size = match level {
+                                                    1 => 18.0,
+                                                    2 => 16.0,
+                                                    3 => 14.0,
+                                                    _ => 12.0,
+                                                };
+                                                div().text_size(px(size)).font_weight(gpui::FontWeight::BOLD).child(content.clone()).into_any_element()
+                                            }
+                                        }
+                                    }))
                             )
                     })),
             )

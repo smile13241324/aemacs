@@ -283,6 +283,9 @@ impl Conversation {
                 full_system_prompt.push_str(&profile);
             }
             
+            // ACO-027: Explicitly request Markdown
+            full_system_prompt.push_str("\n\nFormat your responses using Markdown. Use code blocks with language tags for all code snippets.");
+            
             messages.insert(0, Message::system(full_system_prompt));
         }
 
