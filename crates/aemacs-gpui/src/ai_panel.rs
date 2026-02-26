@@ -1,11 +1,13 @@
-use aemacs_ai::Conversation;
 use aemacs_ai::connectors::openai_compatible::OpenAICompatibleBackend;
-use aemacs_ai::mcp::{ToolHost, ToolRegistry};
-use aemacs_ai::PersonaRegistry;
+use aemacs_ai::loader::load_file;
+use aemacs_ai::mcp::{ToolHost, ToolRegistry, validate_path};
+use aemacs_ai::{Conversation, PersonaRegistry};
 use aemacs_core::{Editor, command::Command, mode::Mode};
 use async_trait::async_trait;
 use gpui::prelude::*;
 use gpui::{App, Context, Entity, FocusHandle, IntoElement, KeyDownEvent, Window, div, px, rgb};
+use regex::Regex;
+use std::path::Path;
 use std::sync::Arc;
 
 use crate::ai_utils::{AgentEvent, spawn_agent_task};
@@ -29,6 +31,7 @@ pub enum HostRequest {
 
 pub struct GuiHost {
     pub request_tx: async_channel::Sender<HostRequest>,
+    pub agent_id: String,
 }
 
 #[async_trait]
@@ -56,6 +59,10 @@ impl ToolHost for GuiHost {
             .await;
         rx.await.unwrap_or_default()
     }
+
+    fn get_agent_id(&self) -> String {
+        self.agent_id.clone()
+    }
 }
 
 pub struct AiPanel {
@@ -72,6 +79,7 @@ pub struct AiPanel {
     pub persona_registry: Arc<PersonaRegistry>,
     pub active_persona_name: Option<String>,
     pub conversation: Conversation,
+    pub proactive_mode: bool,
 }
 
 struct ChatMessage {
@@ -86,8 +94,9 @@ impl AiPanel {
         kb: Arc<KnowledgeBase>,
         registry: Arc<ToolRegistry>,
         persona_registry: Arc<PersonaRegistry>,
+        bus: aemacs_core::bus::EventBus,
     ) -> Entity<Self> {
-        cx.new(|cx| {
+        let panel = cx.new(|cx| {
             let input_editor = cx.new(|_cx| Editor::new());
             let focus_handle = cx.focus_handle();
 
@@ -112,8 +121,69 @@ impl AiPanel {
                 persona_registry,
                 active_persona_name: None,
                 conversation: Conversation::new(model_name),
+                proactive_mode: true,
             }
-        })
+        });
+
+        // ACO-026: Spawn the Triage Router Listener
+        let panel_weak = panel.downgrade();
+        let rx = bus.rx.clone();
+
+        cx.spawn(|cx: &mut gpui::AsyncApp| {
+            let cx = cx.clone();
+            async move {
+                while let Ok(event) = rx.recv().await {
+                    match event {
+                        aemacs_core::bus::SystemEvent::Signal { source, event_type, payload } => {
+                            let _ = cx.update(|app: &mut gpui::App| {
+                                if let Some(panel) = panel_weak.upgrade() {
+                                    panel.update(app, |this, cx| {
+                                        if !this.proactive_mode {
+                                            return;
+                                        }
+
+                                        // Check if AI is currently generating
+                                        if let Some(last_msg) = this.messages.last() {
+                                            if last_msg.role == "AI" && last_msg.content.is_empty() {
+                                                return; // Drop signal if busy
+                                            }
+                                        }
+
+                                        if event_type == "BufferModified" {
+                                            let observation = format!(
+                                                "Observation (from {}): The following file was just modified:\n{}",
+                                                source, payload
+                                            );
+
+                                            this.messages.push(ChatMessage {
+                                                role: "System".to_string(),
+                                                content: "👀 I noticed you changed a file. Let me look...".to_string(),
+                                            });
+
+                                            this.conversation.add_message(aemacs_ai::Message::user(observation));
+                                            
+                                            // Ensure we have an active persona, default to marjin for refactoring
+                                            if this.active_persona_name.is_none() {
+                                                this.active_persona_name = Some("marjin".to_string());
+                                                if let Some(persona) = futures::executor::block_on(this.persona_registry.get_persona("marjin")) {
+                                                    this.conversation.set_persona(persona);
+                                                }
+                                            }
+
+                                            cx.notify();
+                                            this.trigger_ai_response(cx);
+                                        }
+                                    });
+                                }
+                            });
+                        }
+                        _ => {} // Ignore other events for now
+                    }
+                }
+            }
+        }).detach();
+
+        panel
     }
 
     /// Updates the local task list (ACO-034)
@@ -123,7 +193,12 @@ impl AiPanel {
     }
 
     /// Handles a programmatic persona switch from the dispatcher (ACO-010).
-    pub fn handoff_persona(&mut self, name: String, message: Option<String>, cx: &mut Context<Self>) {
+    pub fn handoff_persona(
+        &mut self,
+        name: String,
+        message: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
         let name_lower = name.to_lowercase();
         if let Some(persona) =
             futures::executor::block_on(self.persona_registry.get_persona(&name_lower))
@@ -159,6 +234,10 @@ impl AiPanel {
         let registry = self.registry.clone();
         let host = GuiHost {
             request_tx: self.host_tx.clone(),
+            agent_id: self
+                .active_persona_name
+                .clone()
+                .unwrap_or_else(|| "global".to_string()),
         };
         let backend = self.backend.clone();
         let conversation = self.conversation.clone();
@@ -213,42 +292,40 @@ impl AiPanel {
                     .text_color(rgb(0x5c6370))
                     .child("ACTIVE AGENT"),
             )
-            .child(
-                div().flex().flex_wrap().gap(px(4.0)).children(
-                    personas.into_iter().enumerate().map(|(i, name)| {
-                        let is_selected = active_persona.as_ref() == Some(&name);
-                        let name_clone = name.clone();
-                        div()
-                            .id(i)
-                            .px(px(6.0))
-                            .py(px(2.0))
-                            .rounded_md()
-                            .border_1()
-                            .border_color(if is_selected {
-                                rgb(0xbd93f9)
-                            } else {
-                                rgb(0x3e4451)
-                            })
-                            .bg(if is_selected {
-                                rgb(0x282c34)
-                            } else {
-                                rgb(0x21252b)
-                            })
-                            .text_color(if is_selected {
-                                rgb(0xffffff)
-                            } else {
-                                rgb(0xabb2bf)
-                            })
-                            .text_size(px(11.0))
-                            .cursor_pointer()
-                            .on_click(cx.listener(move |this, _, _window, cx| {
-                                this.active_persona_name = Some(name_clone.clone());
-                                cx.notify();
-                            }))
-                            .child(name.to_uppercase())
-                    }),
-                ),
-            )
+            .child(div().flex().flex_wrap().gap(px(4.0)).children(
+                personas.into_iter().enumerate().map(|(i, name)| {
+                    let is_selected = active_persona.as_ref() == Some(&name);
+                    let name_clone = name.clone();
+                    div()
+                        .id(i)
+                        .px(px(6.0))
+                        .py(px(2.0))
+                        .rounded_md()
+                        .border_1()
+                        .border_color(if is_selected {
+                            rgb(0xbd93f9)
+                        } else {
+                            rgb(0x3e4451)
+                        })
+                        .bg(if is_selected {
+                            rgb(0x282c34)
+                        } else {
+                            rgb(0x21252b)
+                        })
+                        .text_color(if is_selected {
+                            rgb(0xffffff)
+                        } else {
+                            rgb(0xabb2bf)
+                        })
+                        .text_size(px(11.0))
+                        .cursor_pointer()
+                        .on_click(cx.listener(move |this, _, _window, cx| {
+                            this.active_persona_name = Some(name_clone.clone());
+                            cx.notify();
+                        }))
+                        .child(name.to_uppercase())
+                }),
+            ))
     }
 
     fn render_model_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -419,6 +496,141 @@ impl AiPanel {
         let mut text = raw_text.clone();
         let mut switched = false;
 
+        // --- Statute Lexer (@) (ACO-018) ---
+        // Catch single '@' but not '@@'
+        // Rust's regex doesn't support lookbehind, so we match '@' and check manually or use a specific pattern
+        let statute_regex = Regex::new(r"@([^@\s]+)").unwrap();
+        let statute_matches: Vec<_> = statute_regex
+            .find_iter(&text)
+            .filter(|m| {
+                let start = m.start();
+                // Ensure it's not preceded by another '@'
+                if start > 0 && text.as_bytes()[start - 1] == b'@' {
+                    return false;
+                }
+                true
+            })
+            .collect();
+
+        if statute_matches.len() > 1 {
+            self.messages.push(ChatMessage {
+                role: "System".to_string(),
+                content: "❌ Multiple statutes detected! You can only load one profile (@) at a time. Use @@ for attaching multiple source files.".to_string(),
+            });
+            cx.notify();
+            return;
+        }
+
+        if let Some(mat) = statute_matches.first() {
+            let path_str = mat.as_str().trim_start_matches('@');
+            match validate_path(path_str) {
+                Ok(path) => {
+                    match load_file(&path) {
+                        Ok(part) => {
+                            if let aemacs_ai::ContentPart::Text {
+                                text: profile_content,
+                            } = part
+                            {
+                                self.conversation.set_profile(profile_content);
+                                self.messages.push(ChatMessage {
+                                    role: "System".to_string(),
+                                    content: format!("📖 Profile loaded: {}", path_str),
+                                });
+                                // Strip the tag from the final message text
+                                let start = mat.start();
+                                let end = mat.end();
+                                text.replace_range(start..end, "");
+                                text = text.trim().to_string();
+                            } else {
+                                self.messages.push(ChatMessage {
+                                    role: "System".to_string(),
+                                    content: format!(
+                                        "⚠️ Profile at '{}' is not a text file.",
+                                        path_str
+                                    ),
+                                });
+                            }
+                        }
+                        Err(e) => {
+                            self.messages.push(ChatMessage {
+                                role: "System".to_string(),
+                                content: format!("⚠️ Failed to load profile: {} ({})", path_str, e),
+                            });
+                        }
+                    }
+                }
+                Err(e) => {
+                    self.messages.push(ChatMessage {
+                        role: "System".to_string(),
+                        content: format!("⚠️ Invalid profile path: {} ({})", path_str, e),
+                    });
+                }
+            }
+        }
+
+        // --- Material Lexer (@@) (ACO-019) ---
+        let material_regex = Regex::new(r"@@([^@\s]+)").unwrap();
+        let material_matches: Vec<(usize, usize, String)> = material_regex
+            .find_iter(&text)
+            .map(|m| (m.start(), m.end(), m.as_str().to_string()))
+            .collect();
+        let mut attachments = Vec::new();
+
+        for (start, end, mat_str) in material_matches.iter().rev() {
+            let path_str = mat_str.trim_start_matches("@@");
+            match validate_path(path_str) {
+                Ok(path) => {
+                    match load_file(&path) {
+                        Ok(part) => {
+                            if let aemacs_ai::ContentPart::Text { text: file_content } = part {
+                                attachments.push((path_str.to_string(), file_content));
+                                // Strip the tag
+                                text.replace_range(*start..*end, "");
+                            } else {
+                                self.messages.push(ChatMessage {
+                                    role: "System".to_string(),
+                                    content: format!(
+                                        "⚠️ Material at '{}' is not a text file.",
+                                        path_str
+                                    ),
+                                });
+                            }
+                        }
+                        Err(e) => {
+                            self.messages.push(ChatMessage {
+                                role: "System".to_string(),
+                                content: format!(
+                                    "⚠️ Failed to load material: {} ({})",
+                                    path_str, e
+                                ),
+                            });
+                        }
+                    }
+                }
+                Err(e) => {
+                    self.messages.push(ChatMessage {
+                        role: "System".to_string(),
+                        content: format!("⚠️ Invalid material path: {} ({})", path_str, e),
+                    });
+                }
+            }
+        }
+
+        if !attachments.is_empty() {
+            text = text.trim().to_string();
+            text.push_str("\n\n---\n### ATTACHED CONTEXT\n");
+            for (path, content) in attachments {
+                let ext = Path::new(&path)
+                    .extension()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("");
+                text.push_str(&format!(
+                    "#### File: {}\n```{}\n{}\n```\n",
+                    path, ext, content
+                ));
+            }
+        }
+
         // --- Slash Command Interceptor (ACO-005/006) ---
         if text.starts_with('/') {
             let (cmd, remainder) = text.split_once(' ').unwrap_or((text.as_str(), ""));
@@ -434,7 +646,10 @@ impl AiPanel {
                 // ACO-006: Lexical Guard
                 self.messages.push(ChatMessage {
                     role: "System".to_string(),
-                    content: format!("⚠️ Unknown agent: /{}. Type a valid specialist name.", agent_name),
+                    content: format!(
+                        "⚠️ Unknown agent: /{}. Type a valid specialist name.",
+                        agent_name
+                    ),
                 });
                 self.input_editor.update(cx, |editor, _| {
                     editor.buffer.content = ropey::Rope::new();
@@ -452,7 +667,11 @@ impl AiPanel {
                 content: text.clone(),
             });
         } else if switched {
-            let persona_display = self.active_persona_name.as_deref().unwrap_or("UNKNOWN").to_uppercase();
+            let persona_display = self
+                .active_persona_name
+                .as_deref()
+                .unwrap_or("UNKNOWN")
+                .to_uppercase();
             self.messages.push(ChatMessage {
                 role: "System".to_string(),
                 content: format!("Agent switched to: {}", persona_display),
@@ -488,7 +707,8 @@ impl AiPanel {
         } else {
             self.conversation.clear_persona();
         }
-        self.conversation.add_message(aemacs_ai::Message::user(text));
+        self.conversation
+            .add_message(aemacs_ai::Message::user(text));
 
         cx.notify();
 
@@ -569,7 +789,7 @@ impl Render for AiPanel {
                     .children(self.messages.iter().map(|msg| {
                         let is_user = msg.role == "User";
                         let is_error = msg.content.starts_with("❌");
-                        
+
                         div()
                             .flex()
                             .flex_col()
@@ -588,11 +808,7 @@ impl Render for AiPanel {
                                     } else {
                                         rgb(0x282c34)
                                     })
-                                    .text_color(if is_error {
-                                        rgb(0xe06c75)
-                                    } else {
-                                        text_color
-                                    })
+                                    .text_color(if is_error { rgb(0xe06c75) } else { text_color })
                                     .child(msg.content.clone()),
                             )
                     })),
@@ -612,5 +828,104 @@ impl Render for AiPanel {
                         render_editor_view(editor)
                     }),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use regex::Regex;
+
+    /// This quest verifies that our regex can distinguish between the Holy Statute (@)
+    /// and the Raw Materials (@@). It ensures that '@@' is never accidentally
+    /// identified as a single-@ statute.
+    #[test]
+    fn test_statute_differentiation_logic() {
+        let statute_regex = Regex::new(r"@([^@\s]+)").unwrap();
+        let find_statute_indices = |text: &str| {
+            statute_regex
+                .find_iter(text)
+                .filter(|m| {
+                    let start = m.start();
+                    if start > 0 && text.as_bytes()[start - 1] == b'@' {
+                        return false;
+                    }
+                    true
+                })
+                .map(|m| (m.start(), m.end()))
+                .collect::<Vec<(usize, usize)>>()
+        };
+
+        // Case 1: Multiple statutes (The Law-Confusion Dragon)
+        let text1 = "@file1.md @file2.md build the forge";
+        assert_eq!(find_statute_indices(text1).len(), 2);
+
+        // Case 2: Mixed materials and statutes
+        let text2 = "@@src/main.rs @profile.md";
+        let matches2 = find_statute_indices(text2);
+        assert_eq!(matches2.len(), 1);
+        assert_eq!(&text2[matches2[0].0..matches2[0].1], "@profile.md");
+
+        // Case 3: Pure materials (Should be ignored by this lexer)
+        let text3 = "@@src/main.rs @@src/lib.rs";
+        assert_eq!(find_statute_indices(text3).len(), 0);
+    }
+
+    /// This quest verifies that the Material Lexer (@@) can find multiple
+    /// attachments within a single string of intent.
+    #[test]
+    fn test_material_collection_logic() {
+        let material_regex = Regex::new(r"@@([^@\s]+)").unwrap();
+        let text = "Analyze @@src/main.rs and @@crates/core/lib.rs please.";
+        let matches: Vec<_> = material_regex.find_iter(text).collect();
+        assert_eq!(matches.len(), 2);
+        assert_eq!(matches[0].as_str(), "@@src/main.rs");
+        assert_eq!(matches[1].as_str(), "@@crates/core/lib.rs");
+    }
+
+    /// The Ultimate Quest! This test verifies the full transformation of a complex
+    /// mixed input. It ensures that statutes and materials are correctly extracted
+    /// and that ALL tags are stripped from the final payload sent to the specialists.
+    #[test]
+    fn test_mixed_lexer_transformation() {
+        let statute_regex = Regex::new(r"@([^@\s]+)").unwrap();
+        let material_regex = Regex::new(r"@@([^@\s]+)").unwrap();
+
+        let mut text = "@ai/profiles/rust.md @@src/rag.rs @@src/mcp.rs please analyze.".to_string();
+
+        // 1. Extract Statute
+        let statute_matches: Vec<_> = statute_regex
+            .find_iter(&text)
+            .filter(|m| {
+                let start = m.start();
+                if start > 0 && text.as_bytes()[start - 1] == b'@' {
+                    return false;
+                }
+                true
+            })
+            .collect();
+
+        assert_eq!(statute_matches.len(), 1);
+
+        // 2. Extract Materials
+        let material_matches: Vec<_> = material_regex.find_iter(&text).collect();
+        assert_eq!(material_matches.len(), 2);
+
+        // 3. Execute Stripping (Simulating the reverse-iteration logic used in send_message)
+        let mut all_tags: Vec<_> = statute_matches
+            .iter()
+            .map(|m| (m.start(), m.end()))
+            .collect();
+        all_tags.extend(material_matches.iter().map(|m| (m.start(), m.end())));
+        all_tags.sort_by_key(|k| k.0);
+
+        for (start, end) in all_tags.iter().rev() {
+            text.replace_range(start..end, "");
+        }
+
+        let cleaned_text = text.trim();
+        assert_eq!(
+            cleaned_text, "please analyze.",
+            "The final intent must be pure and free of metadata tags!"
+        );
     }
 }
