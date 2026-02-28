@@ -37,7 +37,10 @@ pub async fn spawn_file_watcher(watch_path: PathBuf, bus: EventBus) -> Result<()
 
         while let Ok(event) = rx.recv().await {
             // We only care about explicit data modifications
-            if !matches!(event.kind, EventKind::Modify(notify::event::ModifyKind::Data(_))) {
+            if !matches!(
+                event.kind,
+                EventKind::Modify(notify::event::ModifyKind::Data(_))
+            ) {
                 continue;
             }
 

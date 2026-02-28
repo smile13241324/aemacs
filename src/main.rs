@@ -4,9 +4,8 @@ use log::info;
 use aemacs_gpui;
 
 fn main() -> Result<()> {
-    // 1. Initialize the logger
-    // RUST_LOG environment variable controls the verbosity (info, debug, trace).
-    env_logger::init();
+    // 1. Initialize the logger with a default 'info' level
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     info!("🚀 [APP] Æmacs Boot Sequence initiated.");
 

@@ -48,6 +48,13 @@ impl GlobalTokio {
 pub struct Tokio {}
 
 impl Tokio {
+    /// Acquires the unified Tokio runtime handle.
+    pub fn handle<C: AppContext<Result<tokio::runtime::Handle> = tokio::runtime::Handle>>(
+        cx: &C,
+    ) -> tokio::runtime::Handle {
+        cx.read_global(|tokio: &GlobalTokio, _| tokio.runtime.handle().clone())
+    }
+
     pub fn spawn<C, Fut, R>(cx: &C, f: Fut) -> C::Result<Task<Result<R, JoinError>>>
     where
         C: AppContext,

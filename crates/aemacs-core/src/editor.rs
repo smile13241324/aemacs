@@ -332,13 +332,23 @@ impl Editor {
 
     /// Returns the current cursor position as (1-based Line, 1-based Column).
     pub fn cursor_position(&self) -> (usize, usize) {
-        let head = self.primary_cursor().head;
+        let max_chars = self.buffer.len_chars();
+        let head = std::cmp::min(self.primary_cursor().head, max_chars);
+        
         let line_idx = self.buffer.content.char_to_line(head);
         let line_start = self.buffer.content.line_to_char(line_idx);
         let col_idx = head - line_start;
 
         // Return 1-based for UI
         (line_idx + 1, col_idx + 1)
+    }
+
+    /// Safely clears the editor buffer and resets all selections to the start.
+    pub fn clear(&mut self) {
+        self.save_snapshot();
+        self.buffer.content = Rope::new();
+        self.selections = vec![Selection::point(0)];
+        self.buffer.dirty = true;
     }
 
     /// Returns the total number of lines

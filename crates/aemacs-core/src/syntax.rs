@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use std::fs;
 use std::path::Path;
 use tree_sitter::{Parser, Query, QueryCursor, StreamingIterator};
@@ -45,9 +45,5 @@ pub fn extract_symbol(path: &Path, symbol_name: &str) -> Result<String> {
         }
     }
 
-    Err(anyhow!(
-        "Symbol '{}' not found in {:?}",
-        symbol_name,
-        path
-    ))
+    Err(anyhow!("Symbol '{}' not found in {:?}", symbol_name, path))
 }
