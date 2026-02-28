@@ -53,6 +53,12 @@ impl ToolHost for ConsoleHost {
     fn get_agent_id(&self) -> String {
         "cli-agent".to_string()
     }
+
+    fn report_progress(&self, tool_name: String, is_running: bool) {
+        if is_running {
+            println!("   {} Executing {}...", color("⚒", CYAN), tool_name);
+        }
+    }
 }
 
 // --- Main ---

@@ -1,7 +1,7 @@
 use aemacs_ai::connectors::openai_compatible::OpenAICompatibleBackend;
 use aemacs_ai::loader::load_file;
 use aemacs_ai::mcp::{ToolHost, ToolRegistry, validate_path};
-use aemacs_ai::{Conversation, PersonaRegistry};
+use aemacs_ai::{AIBackend, Conversation, PersonaRegistry};
 use aemacs_core::{Editor, command::Command, mode::Mode};
 use async_trait::async_trait;
 use gpui::prelude::*;
@@ -31,6 +31,7 @@ pub enum HostRequest {
 
 pub struct GuiHost {
     pub request_tx: async_channel::Sender<HostRequest>,
+    pub event_tx: async_channel::Sender<aemacs_core::bus::SystemEvent>,
     pub agent_id: String,
 }
 
@@ -63,6 +64,20 @@ impl ToolHost for GuiHost {
     fn get_agent_id(&self) -> String {
         self.agent_id.clone()
     }
+
+    fn report_progress(&self, tool_name: String, is_running: bool) {
+        let signal = aemacs_core::signals::ToolProgressSignal {
+            tool_name,
+            is_running,
+        };
+        if let Ok(payload) = serde_json::to_string(&signal) {
+            let _ = self.event_tx.try_send(aemacs_core::bus::SystemEvent::Signal {
+                source: "Specialist".to_string(),
+                event_type: "ToolProgress".to_string(),
+                payload,
+            });
+        }
+    }
 }
 
 pub struct AiPanel {
@@ -71,6 +86,7 @@ pub struct AiPanel {
     messages: Vec<ChatMessage>,
     backend: OpenAICompatibleBackend,
     host_tx: async_channel::Sender<HostRequest>, // Store TX for later ToolRegistry integration
+    event_tx: async_channel::Sender<aemacs_core::bus::SystemEvent>,
     tasks: Vec<aemacs_core::task::Task>,         // Store current plan (ACO-034)
     selected_model_index: usize,
     selected_context: u32,
@@ -82,6 +98,7 @@ pub struct AiPanel {
     pub proactive_mode: bool,
     pub width: f32,
     pub is_maximized: bool,
+    pub current_action: Option<String>,
 }
 
 struct ChatMessage {
@@ -202,13 +219,12 @@ impl AiPanel {
         persona_registry: Arc<PersonaRegistry>,
         bus: aemacs_core::bus::EventBus,
     ) -> Entity<Self> {
+        let backend = OpenAICompatibleBackend::new("http://localhost:11434/v1", None);
+        let model_name = aemacs_ai::models::MODELS[0].name;
+
         let panel = cx.new(|cx| {
             let input_editor = cx.new(|_cx| Editor::new());
             let focus_handle = cx.focus_handle();
-
-            // Default to local Ollama instance for now
-            let backend = OpenAICompatibleBackend::new("http://localhost:11434/v1", None);
-            let model_name = aemacs_ai::models::MODELS[0].name;
 
             AiPanel {
                 input_editor,
@@ -217,8 +233,9 @@ impl AiPanel {
                     "System",
                     "AI System Online. Waiting for input..."
                 )],
-                backend,
+                backend: backend.clone(),
                 host_tx,
+                event_tx: bus.tx.clone(),
                 tasks: Vec::new(),
                 selected_model_index: 0,
                 selected_context: aemacs_ai::models::MODELS[0].max_context,
@@ -230,10 +247,11 @@ impl AiPanel {
                 proactive_mode: true,
                 width: 400.0,
                 is_maximized: false,
+                current_action: None,
             }
         });
 
-        // ACO-026: Spawn the Triage Router Listener
+        // ACO-026 & ACO-030: Spawn the Triage Router Listener
         let panel_weak = panel.downgrade();
         let rx = bus.rx.clone();
 
@@ -243,9 +261,23 @@ impl AiPanel {
                 while let Ok(event) = rx.recv().await {
                     match event {
                         aemacs_core::bus::SystemEvent::Signal { source, event_type, payload } => {
-                            let _ = cx.update(|app: &mut gpui::App| {
-                                if let Some(panel) = panel_weak.upgrade() {
+                                                    let _ = cx.update(|app: &mut App| {
+                                                        if let Some(panel) = panel_weak.upgrade() {
+                            
                                     panel.update(app, |this, cx| {
+                                        // ACO-030: Handle Tool Progress
+                                        if event_type == "ToolProgress" {
+                                            if let Ok(progress) = serde_json::from_str::<aemacs_core::signals::ToolProgressSignal>(&payload) {
+                                                if progress.is_running {
+                                                    this.current_action = Some(format!("Executing {}...", progress.tool_name));
+                                                } else {
+                                                    this.current_action = None;
+                                                }
+                                                cx.notify();
+                                            }
+                                            return;
+                                        }
+
                                         if !this.proactive_mode {
                                             return;
                                         }
@@ -287,6 +319,28 @@ impl AiPanel {
                         }
                         _ => {} // Ignore other events for now
                     }
+                }
+            }
+        }).detach();
+
+        // ACO-033: Backend Health Check
+        let backend_check = backend.clone();
+        let panel_weak_check = panel.downgrade();
+        cx.spawn(|cx: &mut gpui::AsyncApp| {
+            let cx = cx.clone();
+            async move {
+                if backend_check.health_check().await.is_err() {
+                    let _ = cx.update(|app: &mut App| {
+                        if let Some(panel) = panel_weak_check.upgrade() {
+                            let _ = panel.update(app, |this, cx| {
+                                this.messages.push(ChatMessage::new(
+                                    "System",
+                                    "❌ [BACKEND OFFLINE] Ollama is not responding at http://localhost:11434. Specialists are currently disabled."
+                                ));
+                                cx.notify();
+                            });
+                        }
+                    });
                 }
             }
         }).detach();
@@ -342,6 +396,7 @@ impl AiPanel {
         let registry = self.registry.clone();
         let host = GuiHost {
             request_tx: self.host_tx.clone(),
+            event_tx: self.event_tx.clone(),
             agent_id: self
                 .active_persona_name
                 .clone()
@@ -873,7 +928,7 @@ impl Render for AiPanel {
                 this.child(
                     div()
                         .flex_grow()
-                        .max_h(px(300.0))
+                        .max_h(px(400.0))
                         .border_b_1()
                         .border_color(rgb(0x181a1f))
                         .p(px(10.0))
@@ -971,6 +1026,25 @@ impl Render for AiPanel {
                                     }))
                             )
                     })),
+            )
+            .child(
+                // ACO-030: Progress Signal line
+                div()
+                    .px(px(10.0))
+                    .h(px(16.0))
+                    .flex()
+                    .items_center()
+                    .child(
+                        if let Some(action) = &self.current_action {
+                            div()
+                                .text_size(px(10.0))
+                                .text_color(rgb(0x61afef))
+                                .italic()
+                                .child(action.clone())
+                        } else {
+                            div()
+                        }
+                    )
             )
             .child(
                 // Input Area

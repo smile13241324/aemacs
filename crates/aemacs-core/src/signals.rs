@@ -21,3 +21,10 @@ pub struct BufferModifiedSignal {
 pub struct GenericSignal {
     pub details: String,
 }
+
+/// Represents a signal that a tool is currently executing or has finished.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolProgressSignal {
+    pub tool_name: String,
+    pub is_running: bool,
+}

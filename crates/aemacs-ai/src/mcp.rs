@@ -23,6 +23,7 @@ pub trait ToolHost: Send + Sync {
     async fn ask_approval(&self, description: &str) -> bool;
     async fn ask_user(&self, question: &str) -> String;
     fn get_agent_id(&self) -> String;
+    fn report_progress(&self, tool_name: String, is_running: bool);
 }
 
 #[async_trait]
@@ -45,6 +46,7 @@ impl ToolHost for DenyAllHost {
     fn get_agent_id(&self) -> String {
         "anonymous".to_string()
     }
+    fn report_progress(&self, _tool_name: String, _is_running: bool) {}
 }
 
 // --- Registry ---
@@ -150,10 +152,15 @@ pub async fn run_agent_loop(
 
                 let result = match registry.get(tool_name) {
                     Some(tool) => match serde_json::from_str::<Value>(args_str) {
-                        Ok(args) => match tool.execute(args, host).await {
-                            Ok(output) => output,
-                            Err(e) => format!("Error executing tool: {}", e),
-                        },
+                        Ok(args) => {
+                            host.report_progress(tool_name.clone(), true);
+                            let exec_result = tool.execute(args, host).await;
+                            host.report_progress(tool_name.clone(), false);
+                            match exec_result {
+                                Ok(output) => output,
+                                Err(e) => format!("Error executing tool: {}", e),
+                            }
+                        }
                         Err(e) => format!("Error parsing arguments: {}", e),
                     },
                     None => format!("Tool '{}' not found.", tool_name),

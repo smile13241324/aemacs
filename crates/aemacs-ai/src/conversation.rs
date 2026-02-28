@@ -15,6 +15,7 @@ pub struct Conversation {
     tools: Option<Vec<serde_json::Value>>,
     active_persona: Option<Persona>,
     active_profile_content: Option<String>,
+    context_limit: u32,
 }
 
 impl Conversation {
@@ -29,6 +30,7 @@ impl Conversation {
             tools: None,
             active_persona: None,
             active_profile_content: None,
+            context_limit: 4096, // Default
         }
     }
 
@@ -73,6 +75,7 @@ impl Conversation {
 
     /// Sets the context window size.
     pub fn set_context_window(&mut self, size: u32) {
+        self.context_limit = size;
         self.options.num_ctx = Some(size);
     }
 
@@ -243,8 +246,49 @@ impl Conversation {
 
     /// Consumes the builder and returns the AIRequest.
     pub fn build(self) -> AIRequest {
-        let mut messages: Vec<Message> = self
-            .messages
+        let mut history = self.messages;
+
+        // ACO-029: Implement dynamic context trimming (sliding window)
+        // We preserve the system prompt (if any) and trim the oldest pairs.
+        let mut system_tokens = 0;
+        if let Some(persona) = &self.active_persona {
+            system_tokens += persona.system_prompt.len() as u32 / 4;
+            if let Some(profile) = &self.active_profile_content {
+                system_tokens += profile.len() as u32 / 4;
+            }
+        }
+
+        let calculate_history_tokens = |messages: &[Message]| -> u32 {
+            messages.iter().map(|m| match &m.content {
+                Content::Text(t) => t.len() as u32 / 4,
+                Content::Parts(p) => p.iter().map(|part| match part {
+                    ContentPart::Text { text } => text.len() as u32 / 4,
+                    _ => 0,
+                }).sum(),
+            }).sum()
+        };
+
+        let mut current_tokens = system_tokens + calculate_history_tokens(&history);
+
+        // Trim history in pairs (User + Assistant) while exceeding limit
+        // We keep at least the last 2 messages if possible.
+        while current_tokens > self.context_limit && history.len() > 2 {
+            // Check if history starts with a manually added system message we should preserve
+            let start_idx = if history.first().map(|m| m.role == Role::System).unwrap_or(false) {
+                1
+            } else {
+                0
+            };
+
+            if history.len() > start_idx + 2 {
+                history.drain(start_idx..start_idx + 2);
+                current_tokens = system_tokens + calculate_history_tokens(&history);
+            } else {
+                break;
+            }
+        }
+
+        let mut messages: Vec<Message> = history
             .into_iter()
             .map(|mut msg| {
                 let timestamp_str = format!("[{}] ", msg.timestamp.to_rfc3339());
@@ -344,6 +388,29 @@ mod tests {
             assert!(text.contains("Rule 1: Be solid."));
         } else {
             panic!("System message content should be text");
+        }
+    }
+
+    #[test]
+    fn test_history_trimming() {
+        // limit ~ 100 tokens (400 chars)
+        let mut conv = Conversation::new("mistral");
+        conv.set_context_window(100); 
+        
+        // Add a long history
+        conv = conv.with_user("Message 1: This is quite long and should be trimmed eventually.".repeat(5)); // ~300 chars
+        conv = conv.with_assistant("Response 1: Okay.");
+        conv = conv.with_user("Message 2: Another long message to push us over the limit.".repeat(5)); // ~300 chars
+        conv = conv.with_assistant("Response 2: Understood.");
+        
+        let request = conv.build();
+        
+        // Should have trimmed Message 1 and Response 1
+        // We expect: System Prompt (Active Persona if any) + Message 2 + Response 2
+        // Since no persona is set, request.messages[0] is Message 2.
+        assert_eq!(request.messages.len(), 2);
+        if let Content::Text(text) = &request.messages[0].content {
+            assert!(text.contains("Message 2"));
         }
     }
 }
