@@ -90,26 +90,31 @@ Complexity belongs in the code, not the installation.
 ### Model Context Protocol (MCP) Tools
 The specialists wield these high-precision tools to interact with the physical and digital realms:
 
-| Tool Name | Specialist Role | Description |
-|:---|:---|:---|
-| `read_file` | File System | Direct access to read source code and configurations. |
-| `write_file` | File System | Overwrites or creates new files (Requires Approval). |
-| `replace_text` | File System | Unique-string-based surgical text replacement. |
-| `list_files` | File System | Recursive directory exploration. |
-| `grep_search` | Search | Regex-powered deep search across the codebase. |
-| `parse_ast` | The Decoder | **Tree-sitter** powered extraction of structs, fns, and impls. |
-| `run_shell_command`| The Executor | Bash execution for builds, tests, and git (Requires Approval). |
-| `get_git_context` | The Historian | Snapshots of status, diffs, and recent commits. |
-| `manage_tasks` | The Planner | Programmatic updates to the project roadmap and tickets. |
-| `web_search` | The Oracle | Real-time retrieval of documentation and external info. |
-| `handoff_agent` | The Dispatcher | Programmatic soul-swapping between specialists. |
+| Tool Name                 | Specialist Role | Description                                                                            |
+|:--------------------------|:----------------|:---------------------------------------------------------------------------------------|
+| `read_file`               | File System     | Direct access to read source code and configurations.                                  |
+| `write_file`              | File System     | Overwrites or creates new files.                                                       |
+| `replace_text`            | File System     | Unique-string-based surgical text replacement.                                         |
+| `list_files`              | File System     | Recursive directory exploration.                                                       |
+| `grep_search`             | Search          | Regex-powered deep search across the codebase.                                         |
+| `parse_ast`               | The Decoder     | **Tree-sitter** powered extraction of structs, fns, and impls.                         |
+| `run_shell_command`       | The Executor    | Bash execution for builds, tests, and git.                                             |
+| `get_git_context`         | The Historian   | Snapshots of status, diffs, and recent commits.                                        |
+| `manage_tasks`            | The Planner     | Programmatic updates to the project roadmap and tickets.                               |
+| `web_search`              | The Oracle      | Real-time retrieval of documentation and external info.                                |
+| `handoff_agent`           | The Dispatcher  | Programmatic soul-swapping between specialists.                                        |
+| `write_kb`                | The Memory      | Allows to save memories as insights or core memories. Memories are separated by agent. |
+| `SearchKnowledgeBaseTool` | The Memory      | Allows to search the memories in the agents scope or globally.                         |
+| `chrono`                  | The Chronometer | Return the current date and time                                                       |
+| `update_kb`               | The Weaver      | Update a memory                                                                        |
+| `delete_kb`               | The Eraser      | Remove a faulty memory                                                                 |
 
 ### Sentient Memory (Vector DB)
 Our memory system is built on **Qdrant** and optimized with the **Nomic v1.5** embedding model. It features a tiered **Neuroplasticity** architecture:
 
 *   **Tiered History:** Automatic conversation archiving using the `[ARCHIVE]` prefix for passive turn-by-turn logs.
 *   **Active Ingestion:** Specialists use `write_kb` to consciously record `[INSIGHT]` and `[CORE]` memories.
-*   *Temporal Anchoring:** Every memory is anchored in time via **The Chronometer** (ISO 8601 timestamps).
+*   **Temporal Anchoring:** Every memory is anchored in time via **The Chronometer** (ISO 8601 timestamps).
 *   **Transparent RAG:** Agents can see the UUIDs of their memories, enabling surgical retrieval and belief revision.
 *   **Belief Revision:** The forge possesses **The Eraser** (deletion) and **The Weaver** (mutation), allowing it to prune obsolete ideas and evolve its architectural truths.
 

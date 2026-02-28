@@ -56,7 +56,6 @@ chrono = { version = "0.4.44", features = ["serde"] }
 regex = "1.10"
 urlencoding = "2.1.3"
 async-channel = "2.3"
-notify = { version = "6.1.1", features = ["macos_fsevent"] }
 
 # --- Data & Networking ---
 serde = { version = "1.0.228", features = ["derive"] }
