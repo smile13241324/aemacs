@@ -1,7 +1,7 @@
+use aemacs_ai::Conversation;
 use aemacs_ai::connectors::openai_compatible::OpenAICompatibleBackend;
 use aemacs_ai::mcp::{ToolHost, ToolRegistry, run_agent_loop};
 use aemacs_ai::rag::KnowledgeBase;
-use aemacs_ai::Conversation;
 use aemacs_core::runtime::Tokio;
 use gpui::{AsyncApp, Context, Task, WeakEntity};
 

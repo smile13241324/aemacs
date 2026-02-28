@@ -71,11 +71,13 @@ impl ToolHost for GuiHost {
             is_running,
         };
         if let Ok(payload) = serde_json::to_string(&signal) {
-            let _ = self.event_tx.try_send(aemacs_core::bus::SystemEvent::Signal {
-                source: "Specialist".to_string(),
-                event_type: "ToolProgress".to_string(),
-                payload,
-            });
+            let _ = self
+                .event_tx
+                .try_send(aemacs_core::bus::SystemEvent::Signal {
+                    source: "Specialist".to_string(),
+                    event_type: "ToolProgress".to_string(),
+                    payload,
+                });
         }
     }
 }
@@ -87,7 +89,7 @@ pub struct AiPanel {
     backend: OpenAICompatibleBackend,
     host_tx: async_channel::Sender<HostRequest>, // Store TX for later ToolRegistry integration
     event_tx: async_channel::Sender<aemacs_core::bus::SystemEvent>,
-    tasks: Vec<aemacs_core::task::Task>,         // Store current plan (ACO-034)
+    tasks: Vec<aemacs_core::task::Task>, // Store current plan (ACO-034)
     selected_model_index: usize,
     selected_context: u32,
     pub kb: Arc<KnowledgeBase>,
@@ -231,7 +233,7 @@ impl AiPanel {
                 focus_handle,
                 messages: vec![ChatMessage::new(
                     "System",
-                    "AI System Online. Waiting for input..."
+                    "AI System Online. Waiting for input...",
                 )],
                 backend: backend.clone(),
                 host_tx,
@@ -263,7 +265,6 @@ impl AiPanel {
                         aemacs_core::bus::SystemEvent::Signal { source, event_type, payload } => {
                                                     let _ = cx.update(|app: &mut App| {
                                                         if let Some(panel) = panel_weak.upgrade() {
-                            
                                     panel.update(app, |this, cx| {
                                         // ACO-030: Handle Tool Progress
                                         if event_type == "ToolProgress" {
@@ -301,7 +302,7 @@ impl AiPanel {
                                             ));
 
                                             this.conversation.add_message(aemacs_ai::Message::user(observation));
-                                            
+
                                             // Ensure we have an active persona, default to marjin for refactoring
                                             if this.active_persona_name.is_none() {
                                                 this.active_persona_name = Some("marjin".to_string());
@@ -326,21 +327,30 @@ impl AiPanel {
         // ACO-033: Backend Health Check
         let backend_check = backend.clone();
         let panel_weak_check = panel.downgrade();
+
         cx.spawn(|cx: &mut gpui::AsyncApp| {
             let cx = cx.clone();
             async move {
-                if backend_check.health_check().await.is_err() {
-                    let _ = cx.update(|app: &mut App| {
-                        if let Some(panel) = panel_weak_check.upgrade() {
-                            let _ = panel.update(app, |this, cx| {
-                                this.messages.push(ChatMessage::new(
-                                    "System",
-                                    "❌ [BACKEND OFFLINE] Ollama is not responding at http://localhost:11434. Specialists are currently disabled."
-                                ));
-                                cx.notify();
-                            });
-                        }
-                    });
+                // Run the health check on the Tokio worker pool
+                let check_result = aemacs_core::runtime::Tokio::spawn(&cx, async move {
+                    backend_check.health_check().await
+                });
+
+                // Wait for the task to finish if it was successfully spawned
+                if let Ok(task) = check_result {
+                    if let Ok(Err(_)) = task.await {
+                        let _ = cx.update(|app: &mut App| {
+                            if let Some(panel) = panel_weak_check.upgrade() {
+                                let _ = panel.update(app, |this, cx| {
+                                    this.messages.push(ChatMessage::new(
+                                        "System",
+                                        "❌ [BACKEND OFFLINE] Ollama is not responding at http://localhost:11434/v1. Specialists are currently disabled."
+                                    ));
+                                    cx.notify();
+                                });
+                            }
+                        });
+                    }
                 }
             }
         }).detach();
@@ -370,14 +380,11 @@ impl AiPanel {
 
             self.messages.push(ChatMessage::new(
                 "System",
-                format!("Programmatic handoff to: {}", name.to_uppercase())
+                format!("Programmatic handoff to: {}", name.to_uppercase()),
             ));
 
             if let Some(msg) = message {
-                self.messages.push(ChatMessage::new(
-                    "User",
-                    msg.clone()
-                ));
+                self.messages.push(ChatMessage::new("User", msg.clone()));
                 self.conversation.add_message(aemacs_ai::Message::user(msg));
                 // Automatically trigger the new agent if a message was provided
                 self.trigger_ai_response(cx);
@@ -388,10 +395,7 @@ impl AiPanel {
 
     fn trigger_ai_response(&mut self, cx: &mut Context<Self>) {
         // Prepare AI Message Placeholder
-        self.messages.push(ChatMessage::new(
-            "AI",
-            ""
-        ));
+        self.messages.push(ChatMessage::new("AI", ""));
 
         let registry = self.registry.clone();
         let host = GuiHost {
@@ -697,7 +701,7 @@ impl AiPanel {
                                 self.conversation.set_profile(profile_content);
                                 self.messages.push(ChatMessage::new(
                                     "System",
-                                    format!("📖 Profile loaded: {}", path_str)
+                                    format!("📖 Profile loaded: {}", path_str),
                                 ));
                                 // Strip the tag from the final message text
                                 let start = mat.start();
@@ -707,14 +711,14 @@ impl AiPanel {
                             } else {
                                 self.messages.push(ChatMessage::new(
                                     "System",
-                                    format!("⚠️ Profile at '{}' is not a text file.", path_str)
+                                    format!("⚠️ Profile at '{}' is not a text file.", path_str),
                                 ));
                             }
                         }
                         Err(e) => {
                             self.messages.push(ChatMessage::new(
                                 "System",
-                                format!("⚠️ Failed to load profile: {} ({})", path_str, e)
+                                format!("⚠️ Failed to load profile: {} ({})", path_str, e),
                             ));
                         }
                     }
@@ -722,7 +726,7 @@ impl AiPanel {
                 Err(e) => {
                     self.messages.push(ChatMessage::new(
                         "System",
-                        format!("⚠️ Invalid profile path: {} ({})", path_str, e)
+                        format!("⚠️ Invalid profile path: {} ({})", path_str, e),
                     ));
                 }
             }
@@ -749,14 +753,14 @@ impl AiPanel {
                             } else {
                                 self.messages.push(ChatMessage::new(
                                     "System",
-                                    format!("⚠️ Material at '{}' is not a text file.", path_str)
+                                    format!("⚠️ Material at '{}' is not a text file.", path_str),
                                 ));
                             }
                         }
                         Err(e) => {
                             self.messages.push(ChatMessage::new(
                                 "System",
-                                format!("⚠️ Failed to load material: {} ({})", path_str, e)
+                                format!("⚠️ Failed to load material: {} ({})", path_str, e),
                             ));
                         }
                     }
@@ -764,7 +768,7 @@ impl AiPanel {
                 Err(e) => {
                     self.messages.push(ChatMessage::new(
                         "System",
-                        format!("⚠️ Invalid material path: {} ({})", path_str, e)
+                        format!("⚠️ Invalid material path: {} ({})", path_str, e),
                     ));
                 }
             }
@@ -800,7 +804,10 @@ impl AiPanel {
                 // ACO-006: Lexical Guard
                 self.messages.push(ChatMessage::new(
                     "System",
-                    format!("⚠️ Unknown agent: /{}. Type a valid specialist name.", agent_name)
+                    format!(
+                        "⚠️ Unknown agent: /{}. Type a valid specialist name.",
+                        agent_name
+                    ),
                 ));
                 self.input_editor.update(cx, |editor, _| {
                     editor.buffer.content = ropey::Rope::new();
@@ -813,10 +820,7 @@ impl AiPanel {
 
         // 1. Add User/System Message
         if !text.trim().is_empty() {
-            self.messages.push(ChatMessage::new(
-                "User",
-                text.clone()
-            ));
+            self.messages.push(ChatMessage::new("User", text.clone()));
         } else if switched {
             let persona_display = self
                 .active_persona_name
@@ -825,7 +829,7 @@ impl AiPanel {
                 .to_uppercase();
             self.messages.push(ChatMessage::new(
                 "System",
-                format!("Agent switched to: {}", persona_display)
+                format!("Agent switched to: {}", persona_display),
             ));
         } else {
             return;
@@ -833,7 +837,7 @@ impl AiPanel {
 
         // 2. Clear Input
         self.input_editor.update(cx, |editor, _| {
-            editor.buffer.content = ropey::Rope::new();
+            editor.clear();
             editor.mode = Mode::Normal;
         });
 
@@ -843,10 +847,7 @@ impl AiPanel {
         }
 
         // 3. Prepare AI Message Placeholder
-        self.messages.push(ChatMessage::new(
-            "AI",
-            ""
-        ));
+        self.messages.push(ChatMessage::new("AI", ""));
 
         // 4. Update persistent conversation
         if let Some(persona_name) = &self.active_persona_name {
@@ -872,10 +873,8 @@ impl Render for AiPanel {
         let bg = rgb(0x21252b);
         let input_bg = rgb(0x282c34);
 
-        let root_div = div()
-            .flex()
-            .flex_col();
-            
+        let root_div = div().flex().flex_col();
+
         let root_div = if self.is_maximized {
             root_div.w_full()
         } else {
@@ -990,7 +989,11 @@ impl Render for AiPanel {
                                     } else {
                                         rgb(0x282c34)
                                     })
-                                    .text_color(if is_error { rgb(0xe06c75) } else { rgb(0xabb2bf) })
+                                    .text_color(if is_error {
+                                        rgb(0xe06c75)
+                                    } else {
+                                        rgb(0xabb2bf)
+                                    })
                                     .flex()
                                     .flex_col()
                                     .gap_y(px(4.0))
@@ -999,20 +1002,25 @@ impl Render for AiPanel {
                                             MarkdownBlock::Paragraph(text) => {
                                                 div().child(text.clone()).into_any_element()
                                             }
-                                            MarkdownBlock::Code { language, content } => {
-                                                div()
-                                                    .bg(rgb(0x1e1e1e))
-                                                    .p(px(6.0))
-                                                    .rounded_sm()
-                                                    .border_1()
-                                                    .border_color(rgb(0x3e4451))
-                                                    .child(
-                                                        div().text_color(rgb(0x61afef)).text_size(px(10.0)).child(language.clone())
-                                                    )
-                                                    .child(
-                                                        div().text_color(rgb(0xabb2bf)).font_family("monospace").child(content.clone())
-                                                    ).into_any_element()
-                                            }
+                                            MarkdownBlock::Code { language, content } => div()
+                                                .bg(rgb(0x1e1e1e))
+                                                .p(px(6.0))
+                                                .rounded_sm()
+                                                .border_1()
+                                                .border_color(rgb(0x3e4451))
+                                                .child(
+                                                    div()
+                                                        .text_color(rgb(0x61afef))
+                                                        .text_size(px(10.0))
+                                                        .child(language.clone()),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .text_color(rgb(0xabb2bf))
+                                                        .font_family("monospace")
+                                                        .child(content.clone()),
+                                                )
+                                                .into_any_element(),
                                             MarkdownBlock::Header { level, content } => {
                                                 let size = match level {
                                                     1 => 18.0,
@@ -1020,31 +1028,30 @@ impl Render for AiPanel {
                                                     3 => 14.0,
                                                     _ => 12.0,
                                                 };
-                                                div().text_size(px(size)).font_weight(gpui::FontWeight::BOLD).child(content.clone()).into_any_element()
+                                                div()
+                                                    .text_size(px(size))
+                                                    .font_weight(gpui::FontWeight::BOLD)
+                                                    .child(content.clone())
+                                                    .into_any_element()
                                             }
                                         }
-                                    }))
+                                    })),
                             )
                     })),
             )
             .child(
                 // ACO-030: Progress Signal line
-                div()
-                    .px(px(10.0))
-                    .h(px(16.0))
-                    .flex()
-                    .items_center()
-                    .child(
-                        if let Some(action) = &self.current_action {
-                            div()
-                                .text_size(px(10.0))
-                                .text_color(rgb(0x61afef))
-                                .italic()
-                                .child(action.clone())
-                        } else {
-                            div()
-                        }
-                    )
+                div().px(px(10.0)).h(px(16.0)).flex().items_center().child(
+                    if let Some(action) = &self.current_action {
+                        div()
+                            .text_size(px(10.0))
+                            .text_color(rgb(0x61afef))
+                            .italic()
+                            .child(action.clone())
+                    } else {
+                        div()
+                    },
+                ),
             )
             .child(
                 // Input Area
