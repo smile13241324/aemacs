@@ -41,8 +41,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .build()
     } else {
         println!("📝 Text mode.");
-        println!("   Model: cognitivecomputations/dolphin-llama3.1");
-        Conversation::new("cognitivecomputations/dolphin-llama3.1")
+        println!("   Model: hermes3:8b-llama3.1-q4_K_M");
+        Conversation::new("hermes3:8b-llama3.1-q4_K_M")
             .with_system(
                 "You are Æmacs, a helpful coding assistant embedded in a Rust IDE. Be concise.",
             )

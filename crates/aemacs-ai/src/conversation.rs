@@ -259,13 +259,19 @@ impl Conversation {
         }
 
         let calculate_history_tokens = |messages: &[Message]| -> u32 {
-            messages.iter().map(|m| match &m.content {
-                Content::Text(t) => t.len() as u32 / 4,
-                Content::Parts(p) => p.iter().map(|part| match part {
-                    ContentPart::Text { text } => text.len() as u32 / 4,
-                    _ => 0,
-                }).sum(),
-            }).sum()
+            messages
+                .iter()
+                .map(|m| match &m.content {
+                    Content::Text(t) => t.len() as u32 / 4,
+                    Content::Parts(p) => p
+                        .iter()
+                        .map(|part| match part {
+                            ContentPart::Text { text } => text.len() as u32 / 4,
+                            _ => 0,
+                        })
+                        .sum(),
+                })
+                .sum()
         };
 
         let mut current_tokens = system_tokens + calculate_history_tokens(&history);
@@ -274,7 +280,11 @@ impl Conversation {
         // We keep at least the last 2 messages if possible.
         while current_tokens > self.context_limit && history.len() > 2 {
             // Check if history starts with a manually added system message we should preserve
-            let start_idx = if history.first().map(|m| m.role == Role::System).unwrap_or(false) {
+            let start_idx = if history
+                .first()
+                .map(|m| m.role == Role::System)
+                .unwrap_or(false)
+            {
                 1
             } else {
                 0
@@ -321,15 +331,15 @@ impl Conversation {
         // Inject active persona and profile at the very beginning if set
         if let Some(persona) = self.active_persona {
             let mut full_system_prompt = persona.system_prompt;
-            
+
             if let Some(profile) = self.active_profile_content {
                 full_system_prompt.push_str("\n\n---\nTOOLBOX (AUTO-LOADED):\n");
                 full_system_prompt.push_str(&profile);
             }
-            
+
             // ACO-027: Explicitly request Markdown
             full_system_prompt.push_str("\n\nFormat your responses using Markdown. Use code blocks with language tags for all code snippets.");
-            
+
             messages.insert(0, Message::system(full_system_prompt));
         }
 
@@ -363,7 +373,7 @@ mod tests {
 
         let persona = Persona::new("bob", "Architect", "You are Bob.", None);
         conv.set_persona(persona);
-        
+
         // History must be preserved!
         assert_eq!(conv.messages.len(), 1);
         assert!(conv.active_persona.is_some());
@@ -376,11 +386,11 @@ mod tests {
         conv.set_persona(persona);
         conv.set_profile("Rule 1: Be solid.".to_string());
         conv = conv.with_user("Build a forge.");
-        
+
         let request = conv.build();
         assert_eq!(request.messages.len(), 2);
         assert_eq!(request.messages[0].role, Role::System);
-        
+
         // Verify combined system prompt content
         if let Content::Text(text) = &request.messages[0].content {
             assert!(text.contains("You are Bob."));
@@ -395,16 +405,18 @@ mod tests {
     fn test_history_trimming() {
         // limit ~ 100 tokens (400 chars)
         let mut conv = Conversation::new("mistral");
-        conv.set_context_window(100); 
-        
+        conv.set_context_window(100);
+
         // Add a long history
-        conv = conv.with_user("Message 1: This is quite long and should be trimmed eventually.".repeat(5)); // ~300 chars
+        conv = conv
+            .with_user("Message 1: This is quite long and should be trimmed eventually.".repeat(5)); // ~300 chars
         conv = conv.with_assistant("Response 1: Okay.");
-        conv = conv.with_user("Message 2: Another long message to push us over the limit.".repeat(5)); // ~300 chars
+        conv =
+            conv.with_user("Message 2: Another long message to push us over the limit.".repeat(5)); // ~300 chars
         conv = conv.with_assistant("Response 2: Understood.");
-        
+
         let request = conv.build();
-        
+
         // Should have trimmed Message 1 and Response 1
         // We expect: System Prompt (Active Persona if any) + Message 2 + Response 2
         // Since no persona is set, request.messages[0] is Message 2.

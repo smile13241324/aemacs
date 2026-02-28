@@ -21,7 +21,7 @@ async fn main() -> Result<()> {
     println!("Indexing workspace: {:?}", workspace_root);
 
     let qdrant_url = "http://localhost:6334";
-    let ollama_url = "http://localhost:11434";
+    let ollama_url = "http://localhost:11434/v1";
 
     println!("Initializing KnowledgeBase...");
     let kb = KnowledgeBase::new(qdrant_url, ollama_url)?;

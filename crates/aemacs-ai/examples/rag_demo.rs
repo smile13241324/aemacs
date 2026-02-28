@@ -7,7 +7,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // 1. Connect to Infrastructure
     let qdrant_url = "http://localhost:6334";
-    let ollama_url = "http://localhost:11434";
+    let ollama_url = "http://localhost:11434/v1";
 
     let kb = match KnowledgeBase::new(qdrant_url, ollama_url) {
         Ok(kb) => kb,
@@ -45,7 +45,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("\n🔍 Searching for: '{}'", query);
 
     // Search for a good answer with a similarity threshold of 0.7
-    let results = kb.search(collection_name, query, 3, Some(0.7), None).await?;
+    let results = kb
+        .search(collection_name, query, 3, Some(0.7), None)
+        .await?;
 
     println!("--- Results ---");
     for (i, result) in results.iter().enumerate() {

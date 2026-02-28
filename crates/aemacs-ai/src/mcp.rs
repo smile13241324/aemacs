@@ -603,14 +603,17 @@ impl Tool for SearchKnowledgeBaseTool {
             None
         };
 
-        let results = self.kb.search(collection, query, 3, None, agent_id.as_deref()).await?;
+        let results = self
+            .kb
+            .search(collection, query, 3, None, agent_id.as_deref())
+            .await?;
         if results.is_empty() {
             return Ok("No results.".to_string());
         }
-        
+
         let json_output = serde_json::to_string_pretty(&results)
             .map_err(|e| anyhow::anyhow!("Failed to serialize memory results: {}", e))?;
-            
+
         Ok(json_output)
     }
 }
@@ -655,7 +658,13 @@ impl Tool for WriteKnowledgeBaseTool {
         let agent_id = host.get_agent_id();
 
         let timestamp = chrono::Utc::now().to_rfc3339();
-        let formatted_content = format!("[{}] [Agent: {}] [{}] | {}", category, agent_id.to_uppercase(), timestamp, content);
+        let formatted_content = format!(
+            "[{}] [Agent: {}] [{}] | {}",
+            category,
+            agent_id.to_uppercase(),
+            timestamp,
+            content
+        );
 
         let mut metadata = HashMap::new();
         metadata.insert("category".to_string(), category.to_string());
@@ -663,7 +672,9 @@ impl Tool for WriteKnowledgeBaseTool {
         metadata.insert("timestamp".to_string(), timestamp);
         metadata.insert("type".to_string(), "active_memory".to_string());
 
-        self.kb.add_document(collection, &formatted_content, Some(metadata)).await?;
+        self.kb
+            .add_document(collection, &formatted_content, Some(metadata))
+            .await?;
 
         Ok(format!("Successfully chronicled {} memory.", category))
     }
@@ -708,7 +719,10 @@ impl Tool for DeleteMemoryTool {
 
         self.kb.delete_point(collection, id).await?;
 
-        Ok(format!("Memory {} has been pruned from the collective.", id))
+        Ok(format!(
+            "Memory {} has been pruned from the collective.",
+            id
+        ))
     }
 }
 
@@ -745,12 +759,20 @@ impl Tool for UpdateMemoryTool {
     async fn execute(&self, args: Value, host: &dyn ToolHost) -> Result<String> {
         let id = args["id"].as_str().ok_or(anyhow!("Missing memory ID"))?;
         let content = args["content"].as_str().ok_or(anyhow!("Missing content"))?;
-        let category = args["category"].as_str().ok_or(anyhow!("Missing category"))?;
+        let category = args["category"]
+            .as_str()
+            .ok_or(anyhow!("Missing category"))?;
         let collection = args["collection"].as_str().unwrap_or("aemacs_docs");
         let agent_id = host.get_agent_id();
 
         let timestamp = chrono::Utc::now().to_rfc3339();
-        let formatted_content = format!("[{}] [Agent: {}] [{}] | {}", category, agent_id.to_uppercase(), timestamp, content);
+        let formatted_content = format!(
+            "[{}] [Agent: {}] [{}] | {}",
+            category,
+            agent_id.to_uppercase(),
+            timestamp,
+            content
+        );
 
         let mut metadata = HashMap::new();
         metadata.insert("category".to_string(), category.to_string());
@@ -758,7 +780,9 @@ impl Tool for UpdateMemoryTool {
         metadata.insert("timestamp".to_string(), timestamp);
         metadata.insert("type".to_string(), "active_memory".to_string());
 
-        self.kb.update_point(collection, id, &formatted_content, Some(metadata)).await?;
+        self.kb
+            .update_point(collection, id, &formatted_content, Some(metadata))
+            .await?;
 
         Ok(format!("Memory {} has been woven into a new truth.", id))
     }
@@ -800,13 +824,13 @@ impl Tool for ParseAstTool {
         "parse_ast"
     }
     fn description(&self) -> &str {
-        "Parses a Rust file using Tree-sitter and extracts the source code of a specific symbol (struct, enum, impl, or function) by name."
+        "Parses a code file using Tree-sitter and extracts the source code of a specific symbol (struct, enum, impl, or function) by name."
     }
     fn parameters(&self) -> Value {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "path": { "type": "string", "description": "Relative path to the Rust file." },
+                "path": { "type": "string", "description": "Relative path to the code file." },
                 "symbol": { "type": "string", "description": "The name of the symbol to extract." }
             },
             "required": ["path", "symbol"]
@@ -846,22 +870,40 @@ impl Tool for HandoffAgentTool {
         })
     }
     async fn execute(&self, args: Value, _host: &dyn ToolHost) -> Result<String> {
-        let agent_name = args["agent_name"].as_str().ok_or(anyhow!("Missing agent_name"))?;
+        let agent_name = args["agent_name"]
+            .as_str()
+            .ok_or(anyhow!("Missing agent_name"))?;
         let message = args["message"].as_str().map(|s| s.to_string());
 
         // Validate agent
-        if self.persona_registry.get_persona(agent_name).await.is_none() {
-            return Err(anyhow!("Specialist agent '{}' not found in registry.", agent_name));
+        if self
+            .persona_registry
+            .get_persona(agent_name)
+            .await
+            .is_none()
+        {
+            return Err(anyhow!(
+                "Specialist agent '{}' not found in registry.",
+                agent_name
+            ));
         }
 
-        let tx = self.event_tx.as_ref().ok_or(anyhow!("Event bus not connected"))?;
+        let tx = self
+            .event_tx
+            .as_ref()
+            .ok_or(anyhow!("Event bus not connected"))?;
 
         tx.send(aemacs_core::bus::SystemEvent::PersonaChanged {
             name: agent_name.to_string(),
             message,
-        }).await.context("Failed to send PersonaChanged event")?;
+        })
+        .await
+        .context("Failed to send PersonaChanged event")?;
 
-        Ok(format!("Handing off control to {}.", agent_name.to_uppercase()))
+        Ok(format!(
+            "Handing off control to {}.",
+            agent_name.to_uppercase()
+        ))
     }
 }
 
@@ -1014,16 +1056,22 @@ impl Tool for ManageTasksTool {
     }
     async fn execute(&self, args: Value, _host: &dyn ToolHost) -> Result<String> {
         let action = args["action"].as_str().ok_or(anyhow!("Missing action"))?;
-        let tx = self.event_tx.as_ref().ok_or(anyhow!("Event bus not connected"))?;
+        let tx = self
+            .event_tx
+            .as_ref()
+            .ok_or(anyhow!("Event bus not connected"))?;
 
         match action {
             "set_plan" => {
-                let tasks_val = args["tasks"].as_array().ok_or(anyhow!("Missing tasks array"))?;
+                let tasks_val = args["tasks"]
+                    .as_array()
+                    .ok_or(anyhow!("Missing tasks array"))?;
                 let mut tasks = Vec::new();
                 for t in tasks_val {
                     tasks.push(t.as_str().unwrap_or_default().to_string());
                 }
-                tx.send(aemacs_core::bus::SystemEvent::PlanCreated(tasks)).await?;
+                tx.send(aemacs_core::bus::SystemEvent::PlanCreated(tasks))
+                    .await?;
                 Ok("Plan initialized.".to_string())
             }
             "update_task" => {
@@ -1036,7 +1084,8 @@ impl Tool for ManageTasksTool {
                     "Failed" => aemacs_core::task::TaskStatus::Failed,
                     _ => return Err(anyhow!("Invalid status: {}", status_str)),
                 };
-                tx.send(aemacs_core::bus::SystemEvent::TaskUpdated { index, status }).await?;
+                tx.send(aemacs_core::bus::SystemEvent::TaskUpdated { index, status })
+                    .await?;
                 Ok(format!("Task {} updated to {:?}.", index, status))
             }
             _ => Err(anyhow!("Invalid action: {}", action)),

@@ -6,8 +6,8 @@ pub mod loader;
 pub mod mcp;
 pub mod models;
 pub mod persona;
-pub mod registry;
 pub mod rag;
+pub mod registry;
 
 pub use conversation::Conversation;
 pub use error::{AIError, AIResult};

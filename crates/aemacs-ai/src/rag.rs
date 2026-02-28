@@ -161,7 +161,9 @@ impl KnowledgeBase {
 
                 let id = match point.id {
                     Some(id) => match id.point_id_options {
-                        Some(qdrant_client::qdrant::point_id::PointIdOptions::Num(n)) => n.to_string(),
+                        Some(qdrant_client::qdrant::point_id::PointIdOptions::Num(n)) => {
+                            n.to_string()
+                        }
                         Some(qdrant_client::qdrant::point_id::PointIdOptions::Uuid(s)) => s,
                         None => "unknown".to_string(),
                     },

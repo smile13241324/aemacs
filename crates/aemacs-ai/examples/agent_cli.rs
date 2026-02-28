@@ -1,8 +1,8 @@
+use aemacs_ai::PersonaRegistry;
 use aemacs_ai::connectors::openai_compatible::OpenAICompatibleBackend;
 use aemacs_ai::conversation::Conversation;
 use aemacs_ai::mcp::{ToolHost, ToolRegistry, run_agent_loop};
 use aemacs_ai::rag::KnowledgeBase;
-use aemacs_ai::PersonaRegistry;
 use async_trait::async_trait;
 use std::io::{self, Write};
 use std::sync::Arc;
@@ -68,7 +68,7 @@ async fn main() -> anyhow::Result<()> {
     println!("{}", color("🤖 Æmacs Agent CLI (MCP Proving Ground)", BOLD));
     println!("---------------------------------------");
 
-    let ollama_url = "http://localhost:11434";
+    let ollama_url = "http://localhost:11434/v1";
     let qdrant_url = "http://localhost:6334";
 
     println!("🔌 Connecting to Ollama at {}", color(ollama_url, BLUE));
@@ -91,7 +91,9 @@ async fn main() -> anyhow::Result<()> {
     };
 
     println!("🛠️  Registering Core Tools...");
-    let persona_registry = PersonaRegistry::new().await.map_err(|e| anyhow::anyhow!("Failed to load persona registry: {}", e))?;
+    let persona_registry = PersonaRegistry::new(tokio::runtime::Handle::current())
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to load persona registry: {}", e))?;
     let registry = ToolRegistry::with_core_tools(kb, persona_registry, None);
 
     // List tools
@@ -107,7 +109,7 @@ async fn main() -> anyhow::Result<()> {
 
     let host = ConsoleHost;
 
-    let mut history = Conversation::new("mistral").with_system(
+    let mut history = Conversation::new("hermes3:8b-llama3.1-q4_K_M").with_system(
         "You are an autonomous coding agent. Use tools to inspect and modify the codebase.",
     );
 

@@ -103,6 +103,7 @@ impl AIBackend for OpenAICompatibleBackend {
 
     #[instrument(skip(self, request))]
     async fn complete(&self, request: AIRequest) -> AIResult<Message> {
+        info!("🤖 [Ollama] Requesting completion from model: {}", request.model);
         let body = json!({
             "model": request.model,
             "messages": request.messages,
@@ -142,6 +143,7 @@ impl AIBackend for OpenAICompatibleBackend {
     }
 
     async fn stream(&self, request: AIRequest) -> AIResult<AIResponseStream> {
+        info!("🤖 [Ollama] Requesting stream from model: {}", request.model);
         let body = json!({
             "model": request.model,
             "messages": request.messages,

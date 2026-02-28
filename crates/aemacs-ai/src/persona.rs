@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use crate::error::AIError;
+use serde::{Deserialize, Serialize};
 
 /// A Persona defines the static identity of an AI agent within the Æmacs Unified Agentic System.
 /// Personas are defined in YAML files and loaded into the Agent Registry.
@@ -7,10 +7,10 @@ use crate::error::AIError;
 pub struct Persona {
     /// The name of the agent, typically derived from the filename.
     pub name: String,
-    
+
     /// A short description of the agent's role or purpose for the UI.
     pub description: String,
-    
+
     /// The core system prompt that defines the agent's behavior and identity.
     pub system_prompt: String,
 
@@ -36,12 +36,14 @@ impl Persona {
 
     /// Load a persona from a YAML string.
     pub fn from_yaml(yaml: &str) -> Result<Self, AIError> {
-        serde_yaml::from_str(yaml).map_err(|e| AIError::Persona(format!("Failed to parse Persona YAML: {}", e)))
+        serde_yaml::from_str(yaml)
+            .map_err(|e| AIError::Persona(format!("Failed to parse Persona YAML: {}", e)))
     }
 
     /// Serialize the persona back to a YAML string.
     pub fn to_yaml(&self) -> Result<String, AIError> {
-        serde_yaml::to_string(self).map_err(|e| AIError::Persona(format!("Failed to serialize Persona to YAML: {}", e)))
+        serde_yaml::to_string(self)
+            .map_err(|e| AIError::Persona(format!("Failed to serialize Persona to YAML: {}", e)))
     }
 }
 
@@ -55,7 +57,7 @@ mod tests {
             "kairon",
             "The Forge Master",
             "You are an elemental force of creation.",
-            Some("ai/profiles/rust.md".to_string())
+            Some("ai/profiles/rust.md".to_string()),
         );
         let yaml = original.to_yaml().expect("Serialization failed");
         let deserialized = Persona::from_yaml(&yaml).expect("Deserialization failed");
