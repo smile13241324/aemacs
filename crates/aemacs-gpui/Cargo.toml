@@ -12,6 +12,8 @@ path = "src/lib.rs"
 [dependencies]
 tokio = { workspace = true }
 aemacs-core = { workspace = true }
+aemacs-bridge = { workspace = true }
+aemacs-lsp = { workspace = true }
 aemacs-ai = { workspace = true }
 gpui = { workspace = true }
 anyhow = { workspace = true }
@@ -22,4 +24,5 @@ async-channel = { workspace = true }
 async-trait = { workspace = true }
 uuid = { workspace = true, features = ["v4"] }
 regex = { workspace = true }
-pulldown-cmark = "0.10"
+pulldown-cmark = { workspace = true }
+serde_json = { workspace = true }

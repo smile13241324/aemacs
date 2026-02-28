@@ -87,7 +87,9 @@ name = "aemacs-gpui"
 version = "0.1.0"
 dependencies = [
  "aemacs-ai",
+ "aemacs-bridge",
  "aemacs-core",
+ "aemacs-lsp",
  "anyhow",
  "async-channel 2.5.0",
  "async-trait",
@@ -97,6 +99,7 @@ dependencies = [
  "pulldown-cmark",
  "regex",
  "ropey",
+ "serde_json",
  "tokio",
  "uuid",
 ]

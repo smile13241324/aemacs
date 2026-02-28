@@ -98,12 +98,10 @@ impl Workspace {
             );
             let focus_handle = cx.focus_handle();
 
-            // --- Event Bus Wiring (ACO-032) ---
-            let bus = cx.global::<aemacs_core::bus::EventBus>().clone();
             let rx = bus.rx.clone();
 
-            // --- Tool Approval Listener (ACO-036) ---
-            cx.spawn(|workspace: gpui::WeakEntity<Self>, cx| {
+            // --- Tool Approval Listener (ACO-035) ---
+            cx.spawn(|workspace: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
                 let mut cx = cx.clone();
                 async move {
                     while let Ok(request) = host_rx.recv().await {
@@ -114,7 +112,7 @@ impl Workspace {
                             } => {
                                 let _ = workspace.update(&mut cx, |this, cx| {
                                     let window_handle = this.window_handle;
-                                    let _ = cx.update_window(window_handle, |window, cx| {
+                                    let _ = cx.update_window(window_handle, |_, window, cx| {
                                         let future = window.prompt(
                                             gpui::PromptLevel::Warning,
                                             "AI Permission Request",
@@ -122,7 +120,7 @@ impl Workspace {
                                             &["Approve", "Deny"],
                                             cx,
                                         );
-                                        cx.spawn(|_| async move {
+                                        cx.background_executor().spawn(async move {
                                             let answer = future.await.unwrap_or(1usize);
                                             let _ = responder.send(answer == 0);
                                         })
@@ -136,7 +134,7 @@ impl Workspace {
                             } => {
                                 let _ = workspace.update(&mut cx, |this, cx| {
                                     let window_handle = this.window_handle;
-                                    let _ = cx.update_window(window_handle, |window, cx| {
+                                    let _ = cx.update_window(window_handle, |_, window, cx| {
                                         let future = window.prompt(
                                             gpui::PromptLevel::Info,
                                             "AI Question",
@@ -144,7 +142,7 @@ impl Workspace {
                                             &["Acknowledge"],
                                             cx,
                                         );
-                                        cx.spawn(|_| async move {
+                                        cx.background_executor().spawn(async move {
                                             let _ = future.await;
                                             let _ = responder.send("Acknowledged".to_string());
                                         })
@@ -158,7 +156,7 @@ impl Workspace {
             })
             .detach();
 
-            cx.spawn(|workspace: gpui::WeakEntity<Self>, cx| {
+            cx.spawn(|workspace: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
                 let mut cx = cx.clone();
                 async move {
                     while let Ok(event) = rx.recv().await {
@@ -257,6 +255,9 @@ impl Workspace {
                                         panel.handoff_persona(name, message, cx);
                                     });
                                 });
+                            }
+                            aemacs_core::bus::SystemEvent::Signal { .. } => {
+                                // Handled internally by AiPanel's Triage Router (ACO-026)
                             }
                         }
                     }
@@ -538,9 +539,31 @@ pub fn run_app(file_to_open: Option<PathBuf>) {
         .worker_threads(2)
         .enable_all()
         .build()
-        .unwrap();
+        .expect("Failed to initialize Tokio runtime");
 
     let handle = runtime.handle().clone();
+
+    // Perform System Boot Sequence within the owned runtime
+    if let Err(e) = runtime.block_on(async {
+        // A. Core System (Configs, Global State, Buffer Manager)
+        aemacs_core::init()?;
+
+        // B. Legacy Bridge (Python environment must be ready before loading plugins)
+        aemacs_bridge::init()?;
+
+        // C. LSP Subsystem (Language Servers can start in background)
+        aemacs_lsp::init()?;
+
+        // D. UI Preparation (Load assets, cache fonts, compile shaders)
+        init()?;
+
+        Ok::<(), anyhow::Error>(())
+    }) {
+        log::error!("💥 [APP] Critical System Failure during boot: {}", e);
+        std::process::exit(1);
+    }
+
+    info!("✨ [APP] System fully operational. Handing over main thread to GPU Interface.");
 
     Application::new().run(move |cx: &mut App| {
         runtime::init_from_handle(cx, handle);
@@ -562,7 +585,7 @@ pub fn run_app(file_to_open: Option<PathBuf>) {
         };
 
         cx.open_window(options, |window, cx| {
-            let view = Workspace::build(cx, file_to_open, window.handle());
+            let view = Workspace::build(cx, file_to_open, window.window_handle());
             let focus_handle = view.read(cx).focus_handle.clone();
             window.focus(&focus_handle, cx);
             view
