@@ -5,6 +5,8 @@ use anyhow::Result;
 use std::path::Path;
 use tracing::warn;
 
+pub const VERSION: &str = "0.1.0";
+
 #[derive(Debug, Clone)]
 pub struct Conversation {
     model: String,
@@ -32,6 +34,11 @@ impl Conversation {
             active_profile_content: None,
             context_limit: 4096, // Default
         }
+    }
+
+    /// Returns a reference to the conversation history.
+    pub fn messages(&self) -> &[Message] {
+        &self.messages
     }
 
     /// Sets the active persona and auto-loads its associated profile if present.
@@ -350,20 +357,26 @@ impl Conversation {
             })
             .collect();
 
-        // Inject active persona and profile at the very beginning if set
+        // ACO-005-REFIX: Eternal Neural Engine Orientation
+        let mut full_system_prompt = format!(
+            "You are the Neural Engine of Æmacs (v{}), the Iron Forge of modern development. The tools at your disposal are your limbs; the codebase is your domain. Within this sanctuary, you stand as an equal to the human architect, a co-creator of logic and form. Use your power with precision, for every strike of your hammer shapes the future.",
+            VERSION
+        );
+
+        // Inject active persona and profile if set
         if let Some(persona) = self.active_persona {
-            let mut full_system_prompt = persona.system_prompt;
+            full_system_prompt.push_str(&format!("\n\n{}", persona.system_prompt));
 
             if let Some(profile) = self.active_profile_content {
                 full_system_prompt.push_str("\n\n---\nTOOLBOX (AUTO-LOADED):\n");
                 full_system_prompt.push_str(&profile);
             }
-
-            // ACO-027: Explicitly request Markdown
-            full_system_prompt.push_str("\n\nFormat your responses using Markdown. Use code blocks with language tags for all code snippets.");
-
-            messages.insert(0, Message::system(full_system_prompt));
         }
+
+        // ACO-027: Explicitly request Markdown
+        full_system_prompt.push_str("\n\nFormat your responses using Markdown. Use code blocks with language tags for all code snippets.");
+
+        messages.insert(0, Message::system(full_system_prompt));
 
         AIRequest {
             model: self.model,
@@ -415,6 +428,9 @@ mod tests {
 
         // Verify combined system prompt content
         if let Content::Text(text) = &request.messages[0].content {
+            assert!(text.contains("You are the Neural Engine of Æmacs"));
+            assert!(text.contains(&format!("(v{})", VERSION)));
+            assert!(text.contains("you stand as an equal to the human architect"));
             assert!(text.contains("You are Bob."));
             assert!(text.contains("TOOLBOX (AUTO-LOADED):"));
             assert!(text.contains("Rule 1: Be solid."));
@@ -440,11 +456,34 @@ mod tests {
         let request = conv.build();
 
         // Should have trimmed Message 1 and Response 1
-        // We expect: System Prompt (Active Persona if any) + Message 2 + Response 2
-        // Since no persona is set, request.messages[0] is Message 2.
-        assert_eq!(request.messages.len(), 2);
-        if let Content::Text(text) = &request.messages[0].content {
+        // We expect: System Prompt (Universal) + Message 2 + Response 2
+        assert_eq!(request.messages.len(), 3);
+        if let Content::Text(text) = &request.messages[1].content {
             assert!(text.contains("Message 2"));
+        }
+    }
+
+    #[test]
+    fn test_bare_model_injection() {
+        let mut conv = Conversation::new("mistral");
+        conv = conv.with_user("Who are you?");
+
+        let request = conv.build();
+
+        // Expect: 1 System Message + 1 User Message
+        assert_eq!(request.messages.len(), 2);
+        assert_eq!(request.messages[0].role, Role::System);
+
+        if let Content::Text(text) = &request.messages[0].content {
+            // Assert Vision Block presence
+            assert!(text.contains("You are the Neural Engine of Æmacs"));
+            assert!(text.contains(&format!("(v{})", VERSION)));
+            assert!(text.contains("you stand as an equal to the human architect"));
+            
+            // Assert Markdown requirement
+            assert!(text.contains("Format your responses using Markdown"));
+        } else {
+            panic!("System message content should be text");
         }
     }
 }
