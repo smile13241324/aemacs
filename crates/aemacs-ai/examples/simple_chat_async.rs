@@ -32,9 +32,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // We read the tokens live from the stream as they arrive
     while let Some(result) = stream.next().await {
         match result {
-            Ok(token) => {
-                print!("{}", token);
-                io::stdout().flush()?;
+            Ok(event) => {
+                if let aemacs_ai::StreamEvent::Content(content) = event {
+                    print!("{}", content);
+                    io::stdout().flush()?;
+                }
             }
             Err(e) => {
                 eprintln!("\n❌ Stream Error: {}", e);
