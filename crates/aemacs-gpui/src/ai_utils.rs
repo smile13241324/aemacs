@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 pub enum AgentEvent {
     StreamChunk(String),
-    Result(String),
+    Result(Conversation),
     Error(String),
 }
 
@@ -51,14 +51,14 @@ where
         )
         .await
         {
-            Ok(result) => {
+            Ok(_result) => {
                 // Final Weld: Automatically archive conversation to memory (ACO-025 integration)
                 let session_id = uuid::Uuid::new_v4().to_string();
                 if let Err(e) = conversation.archive_to_memory(&kb, &session_id).await {
                     log::error!("⚠️ [AI] Failed to archive conversation to memory: {}", e);
                 }
 
-                let _ = tx_for_stream.send(AgentEvent::Result(result)).await;
+                let _ = tx_for_stream.send(AgentEvent::Result(conversation)).await;
             }
             Err(e) => {
                 let _ = tx_for_stream.send(AgentEvent::Error(e.to_string())).await;

@@ -456,8 +456,9 @@ impl AiPanel {
                         }
                         panel.message_scroll_handle.set_offset(gpui::point(px(0.0), px(999999.0)));
                     }
-                    AgentEvent::Result(_result) => {
+                    AgentEvent::Result(updated_conv) => {
                         panel.status = CognitiveStatus::Idle;
+                        panel.conversation = updated_conv;
                         // The stream has already populated the UI message and run_agent_loop 
                         // has already appended the message to the conversation history.
                         // We do not overwrite last_msg.content here, otherwise we lose multi-turn tool outputs!
