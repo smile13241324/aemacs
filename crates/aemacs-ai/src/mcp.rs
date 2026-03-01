@@ -959,7 +959,7 @@ impl Tool for WebSearchTool {
         "web_search"
     }
     fn description(&self) -> &str {
-        "Searches the internet for documentation or information. Requires AEMACS_SEARCH_API environment variable."
+        "Searches the internet for documentation or information using Ecosia."
     }
     fn parameters(&self) -> Value {
         serde_json::json!({
@@ -973,26 +973,28 @@ impl Tool for WebSearchTool {
     async fn execute(&self, args: Value, _host: &dyn ToolHost) -> Result<String> {
         let query = args["query"].as_str().ok_or(anyhow!("Missing query"))?;
 
-        let api_url = match std::env::var("AEMACS_SEARCH_API") {
-            Ok(url) => url,
-            Err(_) => {
-                return Err(anyhow!(
-                    "Search API not configured. Set AEMACS_SEARCH_API to use the Oracle."
-                ));
-            }
-        };
-
+        // Base URL for Ecosia search
+        let base_url = "https://www.ecosia.org/search?tt=mzl";
+        
         // Ensure we handle URL encoding
         let encoded_query = urlencoding::encode(query);
-        let request_url = format!("{}?q={}", api_url, encoded_query);
+        let request_url = format!("{}&q={}", base_url, encoded_query);
 
-        let response = reqwest::get(&request_url)
+        // We use a custom client to set a User-Agent, avoiding bot-detection heat.
+        let client = reqwest::Client::builder()
+            .user_agent("AemacsOracle/1.0 (Architecture: Iron Core)")
+            .build()
+            .map_err(|e| anyhow!("Failed to build HTTP client: {}", e))?;
+
+        let response = client
+            .get(&request_url)
+            .send()
             .await
             .map_err(|e| anyhow!("Search request failed: {}", e))?;
 
         if !response.status().is_success() {
             return Err(anyhow!(
-                "Search API returned error status: {}",
+                "Search provider returned error status: {}",
                 response.status()
             ));
         }
@@ -1010,6 +1012,149 @@ impl Tool for WebSearchTool {
         }
 
         Ok(output)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use anyhow::Result;
+    use crate::AIRequest;
+
+    struct TestHost;
+    #[async_trait]
+    impl ToolHost for TestHost {
+        async fn ask_approval(&self, _description: &str) -> bool { true }
+        async fn ask_user(&self, _question: &str) -> String { String::new() }
+        fn get_agent_id(&self) -> String { "test_agent".to_string() }
+        fn report_progress(&self, _tool_name: String, _is_running: bool) {}
+    }
+
+    #[tokio::test]
+    async fn test_web_search_ecosia_impact() -> Result<()> {
+        let tool = WebSearchTool;
+        let args = json!({ "query": "aemacs editor" });
+        let host = TestHost;
+        
+        let result = tool.execute(args, &host).await?;
+        
+        assert!(!result.is_empty(), "The Oracle returned a void response!");
+        assert!(result.to_lowercase().contains("ecosia"), "The response does not appear to be an Ecosia scroll!");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_web_search_utf8_stress() -> Result<()> {
+        let tool = WebSearchTool;
+        let args = json!({ "query": "こんにちは Æmacs" });
+        let host = TestHost;
+        
+        let result = tool.execute(args, &host).await?;
+        
+        assert!(!result.is_empty(), "The Oracle choked on the foreign runes!");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_web_search_truncation_barrier() -> Result<()> {
+        let tool = WebSearchTool;
+        let args = json!({ "query": "Rust programming language documentation exhaustive search" });
+        let host = TestHost;
+        
+        let result = tool.execute(args, &host).await?;
+        
+        if result.len() >= 2000 {
+            assert!(result.ends_with("\n... (results truncated to 2000 chars)"), "The floodgate failed to hold back the tide!");
+            assert!(result.len() <= 2100, "The output exceeded the holy limit!");
+        }
+        Ok(())
+    }
+
+    struct MockBackend {
+        responses: std::sync::Mutex<Vec<crate::StreamEvent>>,
+    }
+
+    #[async_trait]
+    impl AIBackend for MockBackend {
+        fn name(&self) -> &str { "mock" }
+        async fn health_check(&self) -> crate::error::AIResult<()> { Ok(()) }
+        async fn complete(&self, _req: AIRequest) -> crate::error::AIResult<Message> { unimplemented!() }
+        async fn stream(&self, _req: AIRequest) -> crate::error::AIResult<crate::AIResponseStream> {
+            let mut res = self.responses.lock().unwrap();
+            let event = res.remove(0);
+            Ok(Box::pin(futures::stream::iter(vec![Ok(event)])))
+        }
+    }
+
+    #[tokio::test]
+    async fn test_run_agent_loop_continuity_quest() -> Result<()> {
+        let registry = ToolRegistry::new();
+        let host = TestHost;
+        let mut conversation = Conversation::new("mock-model");
+        
+        // Turn 1
+        let backend1 = MockBackend { 
+            responses: std::sync::Mutex::new(vec![crate::StreamEvent::Content("Response 1".to_string())]) 
+        };
+        conversation = conversation.with_user("User 1");
+        run_agent_loop(&backend1, &registry, &host, &mut conversation, 5, None).await?;
+        
+        assert_eq!(conversation.messages().len(), 2);
+        assert_eq!(conversation.messages()[0].role, Role::User);
+        assert_eq!(conversation.messages()[1].role, Role::Assistant);
+
+        // Turn 2 - Use the SAME conversation object
+        let backend2 = MockBackend { 
+            responses: std::sync::Mutex::new(vec![crate::StreamEvent::Content("Response 2".to_string())]) 
+        };
+        conversation = conversation.with_user("User 2");
+        run_agent_loop(&backend2, &registry, &host, &mut conversation, 5, None).await?;
+
+        // Total should be 4: U1, A1, U2, A2
+        assert_eq!(conversation.messages().len(), 4, "The 'Amnesia-Dragon' has consumed the history!");
+        assert!(conversation.messages()[1].content.to_string().contains("Response 1"));
+        assert!(conversation.messages()[3].content.to_string().contains("Response 2"));
+        
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_run_agent_loop_tool_persistence_quest() -> Result<()> {
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(GetSystemTimeTool));
+        let host = TestHost;
+        let mut conversation = Conversation::new("mock-model");
+
+        // Mock a tool call followed by a final response
+        let tool_call = crate::models::ToolCall {
+            id: Some("call_123".to_string()),
+            call_type: "function".to_string(),
+            function: crate::models::ToolCallFunction {
+                name: "get_system_time".to_string(),
+                arguments: "{}".to_string(),
+            },
+        };
+
+        let backend = MockBackend {
+            responses: std::sync::Mutex::new(vec![
+                crate::StreamEvent::ToolCall(tool_call),
+                crate::StreamEvent::Content("The time is now.".to_string()),
+            ]),
+        };
+
+        conversation = conversation.with_user("What time is it?");
+        run_agent_loop(&backend, &registry, &host, &mut conversation, 5, None).await?;
+
+        // History should be: User, Assistant (ToolCall), Tool (Result), Assistant (Final)
+        let history = conversation.messages();
+        assert_eq!(history.len(), 4, "Tool interaction was not chronicled!");
+        assert_eq!(history[1].role, Role::Assistant, "Assistant turn missing");
+        assert!(history[1].tool_calls.is_some(), "Tool call missing from history");
+        assert_eq!(history[2].role, Role::Tool, "Tool result missing from history");
+        assert_eq!(history[3].role, Role::Assistant, "Final assistant response missing");
+
+        Ok(())
     }
 }
 
