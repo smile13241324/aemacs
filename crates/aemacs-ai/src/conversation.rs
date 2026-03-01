@@ -214,7 +214,7 @@ impl Conversation {
             .active_persona
             .as_ref()
             .map(|p| p.name.as_str())
-            .unwrap_or("assistant");
+            .unwrap_or("GLOBAL_MESH");
 
         for (i, msg) in self.messages.iter().enumerate() {
             let timestamp = msg.timestamp.to_rfc3339();
@@ -227,6 +227,26 @@ impl Conversation {
             metadata.insert("timestamp".to_string(), timestamp.clone());
             metadata.insert("turn_index".to_string(), i.to_string());
 
+            let mut display_content = msg.content.to_string();
+
+            if let Some(tool_calls) = &msg.tool_calls {
+                let calls_str: Vec<String> = tool_calls
+                    .iter()
+                    .map(|tc| format!("{}({})", tc.function.name, tc.function.arguments))
+                    .collect();
+                if !display_content.is_empty() {
+                    display_content.push('\n');
+                }
+                display_content.push_str(&format!("[TOOL_CALLS: {}]", calls_str.join(", ")));
+            }
+
+            if let Some(tool_id) = &msg.tool_call_id {
+                if !display_content.is_empty() {
+                    display_content.push('\n');
+                }
+                display_content.push_str(&format!("[TOOL_CALL_ID: {}]", tool_id));
+            }
+
             // Contextualize the chunk for the embedder with tiered prefix and agent identity
             let chunk = format!(
                 "[ARCHIVE] [Agent: {}] [{}] | Session: {} | Turn: {} | Role: {:?} | Content: {}",
@@ -235,8 +255,10 @@ impl Conversation {
                 session_id,
                 i,
                 msg.role,
-                msg.content
+                display_content
             );
+
+            tracing::debug!("🧠 [Memory] Archiving to Qdrant: {:?}", chunk);
 
             kb.add_document("aemacs_docs", &chunk, Some(metadata))
                 .await?;

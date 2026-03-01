@@ -71,6 +71,7 @@ struct OpenAIStreamChoice {
 #[derive(Deserialize, Debug)]
 struct OpenAIDelta {
     content: Option<String>,
+    tool_calls: Option<Vec<crate::models::ToolCall>>,
 }
 // -----------------------
 
@@ -163,55 +164,52 @@ impl AIBackend for OpenAICompatibleBackend {
 
         if !resp.status().is_success() {
             let error_text = resp.text().await.unwrap_or_default();
-            return Err(AIError::ConnectorError(format!(
-                "API Error: {}",
-                error_text
-            )));
+            return Err(AIError::ConnectorError(format!("API Error: {}", error_text)));
         }
 
-        // 1. fetch the byte stream
         let byte_stream = resp.bytes_stream();
-
-        // 2. Error conversion (Reqwest -> IO)
-        let stream_with_io_error = byte_stream.map(|res| res.map_err(std::io::Error::other)); // FIX 2: Modern
-
-        // 3. Tokio Reader
+        let stream_with_io_error = byte_stream.map(|res| res.map_err(std::io::Error::other));
         let reader = StreamReader::new(stream_with_io_error);
 
-        // 4. FramedRead & Parsing Logic
         let line_stream = FramedRead::new(reader, LinesCodec::new()).map(|result| {
             match result {
                 Ok(line) => {
                     let line = line.trim();
-                    // Ignore empty lines or SSE comments
                     if line.is_empty() || line.starts_with(':') || line == "data: [DONE]" {
-                        return Ok("".to_string());
+                        return Ok(Vec::new());
                     }
 
-                    // Functional Chain (Pipeline) instead of Nested Ifs
-                    if let Some(content) = line
-                        .strip_prefix("data: ")
-                        .and_then(|json| serde_json::from_str::<OpenAIStreamChunk>(json).ok())
-                        .and_then(|mut chunk| chunk.choices.pop())
-                        .and_then(|choice| choice.delta.content)
-                    {
-                        return Ok(content);
+                    if let Some(json_str) = line.strip_prefix("data: ") {
+                        if let Ok(chunk) = serde_json::from_str::<OpenAIStreamChunk>(json_str) {
+                            let mut events = Vec::new();
+                            for choice in chunk.choices {
+                                if let Some(content) = choice.delta.content {
+                                    events.push(crate::StreamEvent::Content(content));
+                                }
+                                if let Some(tool_calls) = choice.delta.tool_calls {
+                                    for tc in tool_calls {
+                                        events.push(crate::StreamEvent::ToolCall(tc));
+                                    }
+                                }
+                            }
+                            return Ok(events);
+                        }
                     }
 
-                    Ok("".to_string())
+                    Ok(Vec::new())
                 }
                 Err(e) => Err(AIError::IoError(std::io::Error::other(e))),
             }
         });
 
-        // Filter empty strings
-        let clean_stream = line_stream.filter(|res| {
-            futures::future::ready(match res {
-                Ok(s) => !s.is_empty(),
-                Err(_) => true,
+        // Flatten the events and filter empty ones
+        let event_stream = line_stream
+            .map(|res| match res {
+                Ok(events) => events.into_iter().map(Ok).collect::<Vec<_>>(),
+                Err(e) => vec![Err(e)],
             })
-        });
+            .flat_map(futures::stream::iter);
 
-        Ok(Box::pin(clean_stream))
+        Ok(Box::pin(event_stream))
     }
 }

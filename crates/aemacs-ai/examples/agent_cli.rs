@@ -135,9 +135,22 @@ async fn main() -> anyhow::Result<()> {
 
         println!("{}", color("... Agent is thinking ...", "\x1b[90m")); // Gray
 
-        match run_agent_loop(&backend, &registry, &host, &mut history, 5).await {
-            Ok(response) => {
-                println!("\n{}: {}\n", color("Agent", BLUE), response);
+        let (stream_tx, stream_rx) = async_channel::unbounded();
+
+        // Spawn a task to print the stream
+        let print_task = tokio::spawn(async move {
+            print!("{}: ", color("Agent", BLUE));
+            io::stdout().flush().unwrap();
+            while let Ok(chunk) = stream_rx.recv().await {
+                print!("{}", chunk);
+                io::stdout().flush().unwrap();
+            }
+            println!();
+        });
+
+        match run_agent_loop(&backend, &registry, &host, &mut history, 5, Some(stream_tx)).await {
+            Ok(_) => {
+                let _ = print_task.await;
             }
             Err(e) => {
                 eprintln!("\n{}: {}\n", color("❌ Error", RED), e);

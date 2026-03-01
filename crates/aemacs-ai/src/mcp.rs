@@ -121,14 +121,17 @@ impl ToolRegistry {
     }
 }
 
+use futures::StreamExt;
+
 /// Executes the Agentic Loop: Talk to AI -> Execute Tools -> Talk to AI -> Result.
-/// Modifies the conversation history in-place.
+/// Modifies the conversation history in-place and streams text chunks back via stream_tx.
 pub async fn run_agent_loop(
     backend: &impl AIBackend,
     registry: &ToolRegistry,
     host: &dyn ToolHost,
     conversation: &mut Conversation, // Mutable reference
     max_turns: usize,
+    stream_tx: Option<async_channel::Sender<String>>,
 ) -> Result<String> {
     let tool_defs = registry.list_definitions();
     conversation.set_tools(tool_defs); // Use setter
@@ -136,14 +139,56 @@ pub async fn run_agent_loop(
     for _ in 0..max_turns {
         // Clone conversation for the request (snapshot of current state)
         let request = conversation.clone().build();
-        let response_msg = backend.complete(request).await?;
+        tracing::debug!("🚀 [AI Loop] Sending request to model: {:#?}", request);
+        
+        let mut stream = backend.stream(request).await?;
 
-        // ALWAYS add the assistant's response to history (whether text or tool call)
-        conversation.add_message(response_msg.clone());
+        let mut full_content = String::new();
+        let mut accumulated_tool_calls: HashMap<i32, crate::models::ToolCall> = HashMap::new();
 
-        if let Some(calls) = &response_msg.tool_calls {
+        while let Some(event_res) = stream.next().await {
+            match event_res? {
+                crate::StreamEvent::Content(chunk) => {
+                    tracing::trace!("📥 [AI Loop] Received chunk: {:?}", chunk); // Trace to avoid log spam, debug full_content later
+                    full_content.push_str(&chunk);
+                    if let Some(tx) = &stream_tx {
+                        let _ = tx.send(chunk).await;
+                    }
+                }
+                crate::StreamEvent::ToolCall(tc) => {
+                    tracing::debug!("🛠️ [AI Loop] Received ToolCall delta: {:?}", tc);
+                    // OpenAI streams tool calls with an index. For simplicity, we assume one or handle by ID.
+                    // If no ID is provided, it's usually a delta for the current call.
+                    // For now, let's just collect them.
+                    accumulated_tool_calls.insert(0, tc);
+                }
+            }
+        }
+
+        tracing::debug!("✅ [AI Loop] Stream finished. Total content: {:?}", full_content);
+
+        let tool_calls = if accumulated_tool_calls.is_empty() {
+            None
+        } else {
+            tracing::debug!("✅ [AI Loop] Tools accumulated: {:?}", accumulated_tool_calls);
+            Some(accumulated_tool_calls.into_values().collect::<Vec<_>>())
+        };
+
+        let response_msg = Message {
+            role: Role::Assistant,
+            content: Content::Text(full_content.clone()),
+            tool_calls: tool_calls.clone(),
+            tool_call_id: None,
+            timestamp: chrono::Utc::now(),
+        };
+
+        tracing::debug!("💾 [AI Loop] Saving to conversation history: {:#?}", response_msg);
+        // ALWAYS add the assistant's response to history
+        conversation.add_message(response_msg);
+
+        if let Some(calls) = tool_calls {
             if calls.is_empty() {
-                return Ok(response_msg.content.to_string());
+                return Ok(full_content);
             }
 
             for call in calls {
@@ -177,7 +222,7 @@ pub async fn run_agent_loop(
             }
             // Loop continues (recursion)
         } else {
-            return Ok(response_msg.content.to_string());
+            return Ok(full_content);
         }
     }
 

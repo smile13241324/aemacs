@@ -18,7 +18,13 @@ pub use registry::PersonaRegistry;
 use async_trait::async_trait;
 use futures::stream::BoxStream;
 
-pub type AIResponseStream = BoxStream<'static, AIResult<String>>;
+pub type AIResponseStream = BoxStream<'static, AIResult<StreamEvent>>;
+
+#[derive(Debug, Clone)]
+pub enum StreamEvent {
+    Content(String),
+    ToolCall(models::ToolCall),
+}
 
 #[async_trait]
 pub trait AIBackend: Send + Sync {

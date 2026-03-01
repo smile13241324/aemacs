@@ -97,9 +97,9 @@ impl AIBackend for LocalBackend {
             "Could not capture stdout".to_string(),
         ))?;
 
-        // Translate the raw byte stream into a stream of strings (lines)
+        // Translate the raw byte stream into a stream of events
         let stream = FramedRead::new(stdout, LinesCodec::new()).map(|result| match result {
-            Ok(line) => Ok(line + "\n"),
+            Ok(line) => Ok(crate::StreamEvent::Content(line + "\n")),
             Err(e) => Err(AIError::IoError(std::io::Error::other(e))),
         });
 
