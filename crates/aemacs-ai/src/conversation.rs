@@ -391,7 +391,7 @@ impl Conversation {
 
 impl Default for Conversation {
     fn default() -> Self {
-        Self::new("mistral")
+        Self::new("hermes3:8b-llama3.1-q4_K_M")
     }
 }
 
@@ -402,7 +402,7 @@ mod tests {
 
     #[test]
     fn test_persona_switch_preserves_history() {
-        let mut conv = Conversation::new("mistral");
+        let mut conv = Conversation::new("hermes3:8b-llama3.1-q4_K_M");
         conv = conv.with_user("Hello");
         assert_eq!(conv.messages.len(), 1);
 
@@ -416,7 +416,7 @@ mod tests {
 
     #[test]
     fn test_persona_injection_with_profile() {
-        let mut conv = Conversation::new("mistral");
+        let mut conv = Conversation::new("hermes3:8b-llama3.1-q4_K_M");
         let persona = Persona::new("bob", "Architect", "You are Bob.", None);
         conv.set_persona(persona);
         conv.set_profile("Rule 1: Be solid.".to_string());
@@ -442,7 +442,7 @@ mod tests {
     #[test]
     fn test_history_trimming() {
         // limit ~ 100 tokens (400 chars)
-        let mut conv = Conversation::new("mistral");
+        let mut conv = Conversation::new("hermes3:8b-llama3.1-q4_K_M");
         conv.set_context_window(100);
 
         // Add a long history
@@ -465,7 +465,7 @@ mod tests {
 
     #[test]
     fn test_bare_model_injection() {
-        let mut conv = Conversation::new("mistral");
+        let mut conv = Conversation::new("hermes3:8b-llama3.1-q4_K_M");
         conv = conv.with_user("Who are you?");
 
         let request = conv.build();
@@ -485,5 +485,19 @@ mod tests {
         } else {
             panic!("System message content should be text");
         }
+    }
+
+    #[test]
+    fn test_conversation_sync_and_attribution_quest() {
+        let mut conv = Conversation::new("hermes3:8b-llama3.1-q4_K_M");
+        let persona = Persona::new("bob", "Architect", "You are Bob.", None);
+        
+        // Task 02: Verify set_persona updates the state
+        conv.set_persona(persona.clone());
+        assert_eq!(conv.active_persona.as_ref().unwrap().name, "bob");
+
+        // Verify attribution logic
+        let agent_name = conv.active_persona.as_ref().map(|p| p.name.as_str()).unwrap_or("GLOBAL_MESH");
+        assert_eq!(agent_name, "bob", "Agent ID attribution failed!");
     }
 }

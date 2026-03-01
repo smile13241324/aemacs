@@ -17,9 +17,17 @@ pub struct PersonaRegistry {
 impl PersonaRegistry {
     /// Create a new registry and initialize the agents directory.
     pub async fn new(runtime_handle: tokio::runtime::Handle) -> Result<Arc<Self>, AIError> {
-        let home = dirs::home_dir()
-            .ok_or_else(|| AIError::ConfigError("Could not find home directory".into()))?;
-        let agents_dir = home.join(".aemacs").join("agents");
+        // Priority 1: Current Working Directory
+        let local_agents_dir = std::env::current_dir()?.join(".aemacs").join("agents");
+        
+        let agents_dir = if local_agents_dir.exists() {
+            local_agents_dir
+        } else {
+            // Priority 2: Home Directory
+            let home = dirs::home_dir()
+                .ok_or_else(|| AIError::ConfigError("Could not find home directory".into()))?;
+            home.join(".aemacs").join("agents")
+        };
 
         if !agents_dir.exists() {
             std::fs::create_dir_all(&agents_dir)?;
@@ -114,6 +122,43 @@ impl PersonaRegistry {
             }
         });
 
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use crate::persona::Persona;
+
+    #[tokio::test]
+    async fn test_persona_registry_priority_quest() -> anyhow::Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let local_agents_dir = temp_dir.path().join(".aemacs").join("agents");
+        fs::create_dir_all(&local_agents_dir)?;
+
+        let test_persona = Persona::new(
+            "test-agent",
+            "A test agent",
+            "You are a test agent.",
+            None,
+        );
+        let yaml = serde_yaml::to_string(&test_persona)?;
+        fs::write(local_agents_dir.join("test-agent.yaml"), yaml)?;
+
+        // Force registry to use our temp dir as CWD for testing priority
+        let current_dir = std::env::current_dir()?;
+        std::env::set_current_dir(temp_dir.path())?;
+
+        let registry = PersonaRegistry::new(tokio::runtime::Handle::current()).await
+            .map_err(|e| anyhow::anyhow!("Failed to create registry: {}", e))?;
+        
+        let personas = registry.list_personas().await;
+        assert!(personas.contains(&"test-agent".to_string()), "Local test-agent was not loaded!");
+
+        // Restore CWD
+        std::env::set_current_dir(current_dir)?;
         Ok(())
     }
 }

@@ -549,8 +549,12 @@ impl AiPanel {
                         .text_size(px(11.0))
                         .cursor_pointer()
                         .on_click(cx.listener(move |this, _, _window, cx| {
-                            this.active_persona_name = Some(name_clone.clone());
-                            cx.notify();
+                            let name_lower = name_clone.clone();
+                            if let Some(persona) = futures::executor::block_on(this.persona_registry.get_persona(&name_lower)) {
+                                this.active_persona_name = Some(name_lower);
+                                this.conversation.set_persona(persona);
+                                cx.notify();
+                            }
                         }))
                         .child(name.to_uppercase())
                 }),

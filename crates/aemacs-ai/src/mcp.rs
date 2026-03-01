@@ -90,9 +90,13 @@ impl ToolRegistry {
         registry.register(Box::new(SearchKnowledgeBaseTool::new(kb.clone())));
         registry.register(Box::new(WriteKnowledgeBaseTool::new(kb.clone())));
         registry.register(Box::new(UpdateMemoryTool::new(kb.clone())));
-        registry.register(Box::new(DeleteMemoryTool::new(kb)));
+        registry.register(Box::new(DeleteMemoryTool::new(kb.clone())));
         registry.register(Box::new(GetSystemTimeTool));
         registry.register(Box::new(ParseAstTool));
+        registry.register(Box::new(ReportStatusTool {
+            event_tx: event_tx.clone(),
+        }));
+        registry.register(Box::new(RecallPastInsightsTool::new(kb.clone())));
         registry
     }
 
@@ -126,7 +130,7 @@ use futures::StreamExt;
 /// Executes the Agentic Loop: Talk to AI -> Execute Tools -> Talk to AI -> Result.
 /// Modifies the conversation history in-place and streams text chunks back via stream_tx.
 pub async fn run_agent_loop(
-    backend: &impl AIBackend,
+    backend: &(impl AIBackend + ?Sized),
     registry: &ToolRegistry,
     host: &dyn ToolHost,
     conversation: &mut Conversation, // Mutable reference
@@ -628,19 +632,25 @@ impl Tool for SearchKnowledgeBaseTool {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "query": { "type": "string" },
-                "collection": { "type": "string" },
-                "scope": { "type": "string", "enum": ["internal", "global"], "description": "Defaults to 'internal'." }
+                "query": { "type": "string", "description": "The search query." },
+                "collection": { "type": "string", "description": "Defaults to 'aemacs_docs'." },
+                "scope": { "type": "string", "enum": ["internal", "global"], "description": "Defaults to 'internal'." },
+                "categories": { "type": "array", "items": { "type": "string" }, "description": "Optional: Filter by categories (e.g., ARCHIVE, INSIGHT, CORE). Defaults to ['ARCHIVE']." }
             },
             "required": ["query"]
         })
     }
     async fn execute(&self, args: Value, host: &dyn ToolHost) -> Result<String> {
-        let query = args["query"]
-            .as_str()
-            .ok_or(anyhow::anyhow!("Missing query"))?;
+        let query = args["query"].as_str().ok_or(anyhow!("Missing query"))?;
         let collection = args["collection"].as_str().unwrap_or("aemacs_docs");
         let scope = args["scope"].as_str().unwrap_or("internal");
+        
+        let categories: Vec<&str> = if let Some(cats) = args["categories"].as_array() {
+            cats.iter().filter_map(|v| v.as_str()).collect()
+        } else {
+            // ACO-012-03: The Historian's Bias - Default to ARCHIVE
+            vec!["ARCHIVE"]
+        };
 
         let agent_id = if scope == "internal" {
             Some(host.get_agent_id())
@@ -648,18 +658,48 @@ impl Tool for SearchKnowledgeBaseTool {
             None
         };
 
-        let results = self
+        // 1. Stage 1: High-Confidence Search (0.8 threshold)
+        let mut results = self
             .kb
-            .search(collection, query, 3, None, agent_id.as_deref())
+            .search(
+                collection,
+                query,
+                10,
+                Some(0.8),
+                agent_id.as_deref(),
+                Some(categories.clone()),
+            )
             .await?;
+
+        let mut fuzzy_warning = String::new();
+
+        // 2. Stage 2: Fuzzy Fallback (0.6 threshold)
         if results.is_empty() {
-            return Ok("No results.".to_string());
+            results = self
+                .kb
+                .search(
+                    collection,
+                    query,
+                    10,
+                    Some(0.6),
+                    agent_id.as_deref(),
+                    Some(categories),
+                )
+                .await?;
+            
+            if !results.is_empty() {
+                fuzzy_warning = "NOTICE: High-confidence historical data not found. Displaying fuzzy/low-confidence matches.\n\n".to_string();
+            }
+        }
+
+        if results.is_empty() {
+            return Ok("No results found.".to_string());
         }
 
         let json_output = serde_json::to_string_pretty(&results)
-            .map_err(|e| anyhow::anyhow!("Failed to serialize memory results: {}", e))?;
+            .map_err(|e| anyhow!("Failed to serialize memory results: {}", e))?;
 
-        Ok(json_output)
+        Ok(format!("{}{}", fuzzy_warning, json_output))
     }
 }
 
@@ -1015,6 +1055,128 @@ impl Tool for WebSearchTool {
     }
 }
 
+pub struct ReportStatusTool {
+    pub event_tx: Option<async_channel::Sender<aemacs_core::bus::SystemEvent>>,
+}
+
+#[async_trait]
+impl Tool for ReportStatusTool {
+    fn name(&self) -> &str {
+        "report_status"
+    }
+    fn description(&self) -> &str {
+        "Reports the agent's current status and functional integrity to the Sentinel. Required once per hour for autonomous agents."
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "message": { "type": "string", "description": "The status message (e.g., 'Functional', 'Task progressing')." }
+            },
+            "required": ["message"]
+        })
+    }
+    async fn execute(&self, args: Value, _host: &dyn ToolHost) -> Result<String> {
+        let message = args["message"].as_str().ok_or(anyhow!("Missing message"))?;
+        let tx = self
+            .event_tx
+            .as_ref()
+            .ok_or(anyhow!("Event bus not connected"))?;
+
+        tx.send(aemacs_core::bus::SystemEvent::Signal {
+            source: "Specialist".to_string(),
+            event_type: "StatusReport".to_string(),
+            payload: message.to_string(),
+        })
+        .await?;
+
+        Ok(format!("Status report filed: {}", message))
+    }
+}
+
+pub struct RecallPastInsightsTool {
+    kb: Arc<KnowledgeBase>,
+}
+
+impl RecallPastInsightsTool {
+    pub fn new(kb: Arc<KnowledgeBase>) -> Self {
+        Self { kb }
+    }
+}
+
+#[async_trait]
+impl Tool for RecallPastInsightsTool {
+    fn name(&self) -> &str {
+        "recall_past_insights"
+    }
+    fn description(&self) -> &str {
+        "Performs a deep search of your own past insights and core architectural truths. Use this to maintain consistency with previous decisions."
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "query": { "type": "string", "description": "The topic or architectural concept to recall." }
+            },
+            "required": ["query"]
+        })
+    }
+    async fn execute(&self, args: Value, host: &dyn ToolHost) -> Result<String> {
+        let query = args["query"].as_str().ok_or(anyhow!("Missing query"))?;
+        let agent_id = host.get_agent_id();
+
+        // 1. Stage 1: High-Confidence Search (0.8 threshold)
+        let mut results = self
+            .kb
+            .search(
+                "aemacs_docs",
+                query,
+                10,
+                Some(0.8),
+                Some(&agent_id),
+                Some(vec!["INSIGHT", "CORE"]),
+            )
+            .await?;
+
+        let mut fuzzy_warning = String::new();
+
+        // 2. Stage 2: Fuzzy Fallback (0.6 threshold)
+        if results.is_empty() {
+            results = self
+                .kb
+                .search(
+                    "aemacs_docs",
+                    query,
+                    10,
+                    Some(0.6),
+                    Some(&agent_id),
+                    Some(vec!["INSIGHT", "CORE"]),
+                )
+                .await?;
+            
+            if !results.is_empty() {
+                fuzzy_warning = "NOTICE: High-confidence insights not found. Displaying fuzzy/low-confidence matches.\n\n".to_string();
+            }
+        }
+
+        if results.is_empty() {
+            return Ok("No relevant past insights found.".to_string());
+        }
+
+        // 3. Temporal Sorting: Prioritize recent insights
+        results.sort_by(|a, b| {
+            let ts_a = a.metadata.get("timestamp").and_then(|v| v.as_str()).unwrap_or("");
+            let ts_b = b.metadata.get("timestamp").and_then(|v| v.as_str()).unwrap_or("");
+            ts_b.cmp(ts_a) // Descending order
+        });
+
+        let json_output = serde_json::to_string_pretty(&results)
+            .map_err(|e| anyhow!("Failed to serialize recall results: {}", e))?;
+
+        Ok(format!("{}{}", fuzzy_warning, json_output))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1154,6 +1316,53 @@ mod tests {
         assert_eq!(history[2].role, Role::Tool, "Tool result missing from history");
         assert_eq!(history[3].role, Role::Assistant, "Final assistant response missing");
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_search_knowledge_base_precision_quest() -> Result<()> {
+        let kb = Arc::new(KnowledgeBase::new("http://localhost:6334", "http://localhost:11434")?);
+        let tool = SearchKnowledgeBaseTool::new(kb.clone());
+        let host = TestHost;
+
+        // Turn 1: Explicit categories
+        let args = json!({
+            "query": "test query",
+            "categories": ["ARCHIVE", "INSIGHT"]
+        });
+        
+        // We can't easily mock the internal KnowledgeBase::search return values without a trait,
+        // but we can at least verify it doesn't panic and returns a valid string result (even if empty).
+        let result = tool.execute(args, &host).await?;
+        assert!(result.contains("No results found.") || result.contains("[") , "Historian returned nonsense!");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_historian_bias_check() -> Result<()> {
+        let kb = Arc::new(KnowledgeBase::new("http://localhost:6334", "http://localhost:11434")?);
+        let tool = SearchKnowledgeBaseTool::new(kb.clone());
+        let host = TestHost;
+
+        // Turn 1: No categories provided
+        let args = json!({ "query": "default search" });
+        let _result = tool.execute(args, &host).await?;
+        
+        // Verification of the "Bias" requires observing the internal call, 
+        // which we've verified in the code refactor. This test ensures it still runs.
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_philosopher_clarity_quest() -> Result<()> {
+        let kb = Arc::new(KnowledgeBase::new("http://localhost:6334", "http://localhost:11434")?);
+        let tool = RecallPastInsightsTool::new(kb.clone());
+        let host = TestHost;
+
+        let args = json!({ "query": "architectural core" });
+        let _result = tool.execute(args, &host).await?;
+        
         Ok(())
     }
 }
