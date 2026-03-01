@@ -6,7 +6,7 @@ build:
 release:
     cargo build --workspace --all-features -r
 run:
-    RUST_BACKTRACE=1 RUST_LOG=debug cargo run
+    RUST_BACKTRACE=1 RUST_LOG=DEBUG cargo run
 run_release:
     cargo run
 test:
