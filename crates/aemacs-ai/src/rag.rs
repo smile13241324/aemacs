@@ -105,6 +105,7 @@ impl KnowledgeBase {
         limit: u64,
         score_threshold: Option<f32>,
         agent_id: Option<&str>,
+        categories: Option<Vec<&str>>,
     ) -> AIResult<Vec<MemoryResult>> {
         // Nomic v1.5 requires prefix for queries
         let query_for_embedding = format!("search_query: {}", query);
@@ -113,21 +114,50 @@ impl KnowledgeBase {
         // Apply default threshold of 0.75 (High Relevance) if not specified.
         let threshold = score_threshold.unwrap_or(0.75);
 
-        let mut filter = None;
+        let mut must_conditions = Vec::new();
+
         if let Some(id) = agent_id {
-            filter = Some(Filter {
-                must: vec![Condition {
+            must_conditions.push(Condition {
+                condition_one_of: Some(ConditionOneOf::Field(FieldCondition {
+                    key: "agent_id".to_string(),
+                    r#match: Some(qdrant_client::qdrant::Match {
+                        match_value: Some(MatchValue::Keyword(id.to_string())),
+                    }),
+                    ..Default::default()
+                })),
+            });
+        }
+
+        if let Some(cats) = categories {
+            let mut cat_conditions = Vec::new();
+            for cat in cats {
+                cat_conditions.push(Condition {
                     condition_one_of: Some(ConditionOneOf::Field(FieldCondition {
-                        key: "agent_id".to_string(),
+                        key: "category".to_string(),
                         r#match: Some(qdrant_client::qdrant::Match {
-                            match_value: Some(MatchValue::Keyword(id.to_string())),
+                            match_value: Some(MatchValue::Keyword(cat.to_string())),
                         }),
                         ..Default::default()
                     })),
-                }],
-                ..Default::default()
+                });
+            }
+            // Use should (OR) for categories
+            must_conditions.push(Condition {
+                condition_one_of: Some(ConditionOneOf::Filter(Filter {
+                    should: cat_conditions,
+                    ..Default::default()
+                })),
             });
         }
+
+        let filter = if must_conditions.is_empty() {
+            None
+        } else {
+            Some(Filter {
+                must: must_conditions,
+                ..Default::default()
+            })
+        };
 
         let search_result = self
             .client

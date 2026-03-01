@@ -28,3 +28,10 @@ pub struct ToolProgressSignal {
     pub tool_name: String,
     pub is_running: bool,
 }
+
+/// Represents a periodic heartbeat signal for autonomous triggers.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TimePulseSignal {
+    pub tick_count: u64,
+    pub interval_seconds: u64,
+}

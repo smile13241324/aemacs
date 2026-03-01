@@ -16,6 +16,7 @@ ropey = { workspace = true }
 log = { workspace = true }
 gpui = { workspace = true }
 async-channel = { workspace = true }
+async-trait = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 tree-sitter = { workspace = true }

@@ -46,7 +46,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // Search for a good answer with a similarity threshold of 0.7
     let results = kb
-        .search(collection_name, query, 3, Some(0.7), None)
+        .search(collection_name, query, 3, Some(0.7), None, None)
         .await?;
 
     println!("--- Results ---");

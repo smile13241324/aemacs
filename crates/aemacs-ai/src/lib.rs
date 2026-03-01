@@ -1,4 +1,5 @@
 pub mod connectors;
+pub mod autonomous;
 pub mod conversation;
 pub mod embeddings;
 pub mod error;
