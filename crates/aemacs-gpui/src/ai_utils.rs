@@ -8,6 +8,7 @@ use gpui::{AsyncApp, Context, Task, WeakEntity};
 use std::sync::Arc;
 
 pub enum AgentEvent {
+    StreamChunk(String),
     Result(String),
     Error(String),
 }
@@ -22,14 +23,34 @@ pub fn spawn_agent_task<V, F, H>(
     update_fn: F,
 ) -> Task<()>
 where
-    V: 'static + Send + Sync,
+    V: 'static,
     F: 'static + Send + Sync + Copy + Fn(&mut V, &mut Context<V>, AgentEvent),
     H: 'static + ToolHost + Send + Sync,
 {
-    let (tx, rx) = async_channel::unbounded();
+    let (tx, rx) = async_channel::unbounded::<AgentEvent>();
+    let tx_for_stream = tx.clone();
 
     let tokio_task = Tokio::spawn(cx, async move {
-        match run_agent_loop(&backend, &registry, &host, &mut conversation, 10).await {
+        // Create a proxy channel to map String chunks to AgentEvent::StreamChunk
+        let (chunk_tx, chunk_rx) = async_channel::unbounded::<String>();
+        let tx_proxy = tx_for_stream.clone();
+        
+        tokio::spawn(async move {
+            while let Ok(chunk) = chunk_rx.recv().await {
+                let _ = tx_proxy.send(AgentEvent::StreamChunk(chunk)).await;
+            }
+        });
+
+        match run_agent_loop(
+            &backend,
+            &registry,
+            &host,
+            &mut conversation,
+            10,
+            Some(chunk_tx),
+        )
+        .await
+        {
             Ok(result) => {
                 // Final Weld: Automatically archive conversation to memory (ACO-025 integration)
                 let session_id = uuid::Uuid::new_v4().to_string();
@@ -37,10 +58,10 @@ where
                     log::error!("⚠️ [AI] Failed to archive conversation to memory: {}", e);
                 }
 
-                let _ = tx.send(AgentEvent::Result(result)).await;
+                let _ = tx_for_stream.send(AgentEvent::Result(result)).await;
             }
             Err(e) => {
-                let _ = tx.send(AgentEvent::Error(e.to_string())).await;
+                let _ = tx_for_stream.send(AgentEvent::Error(e.to_string())).await;
             }
         }
     });

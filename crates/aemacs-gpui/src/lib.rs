@@ -92,6 +92,7 @@ impl Workspace {
             let (host_tx, host_rx) = async_channel::unbounded::<ai_panel::HostRequest>();
             let ai_panel = AiPanel::new(
                 cx,
+                window_handle,
                 host_tx,
                 kb.clone(),
                 registry.clone(),
@@ -447,6 +448,8 @@ impl Render for Workspace {
             .flex()
             .flex_1()
             .flex_row()
+            .track_focus(&self.focus_handle)
+            .on_key_down(cx.listener(Self::handle_keydown))
             .child(
                 div()
                     .w(px(50.0))
@@ -470,7 +473,7 @@ impl Render for Workspace {
             .child(if is_empty {
                 self.render_welcome().into_any_element()
             } else {
-                render_editor_view(editor).into_any_element()
+                render_editor_view(editor, false).into_any_element()
             });
 
         div()
@@ -478,18 +481,29 @@ impl Render for Workspace {
             .flex_col()
             .size_full()
             .bg(bg_color)
-            .track_focus(&self.focus_handle)
-            .on_key_down(cx.listener(Self::handle_keydown))
             .child(
                 div()
                     .flex()
                     .flex_1()
+                    .min_h_0()
                     .flex_row()
-                    .child(main_view)
+                    .child(
+                        div()
+                            .flex_1()
+                            .when(self.show_ai && self.ai_panel.read(cx).is_maximized, |this| {
+                                this.hidden()
+                            })
+                            .child(main_view),
+                    )
                     .when(self.show_ai, |this| {
+                        let is_maximized = self.ai_panel.read(cx).is_maximized;
                         this.child(
                             div()
-                                .w(px(350.0)) // AI Panel Width
+                                .h_full() // Force strict height boundary
+                                .min_h_0() // Allow shrinking below content size
+                                .when(!is_maximized, |this| this.w(px(350.0)))
+                                .when(is_maximized, |this| this.flex_1())
+                                .overflow_hidden()
                                 .border_l_1()
                                 .border_color(rgb(0x181a1f))
                                 .child(self.ai_panel.clone()),

@@ -2,17 +2,17 @@ use aemacs_core::{Editor, mode::Mode};
 use gpui::prelude::*;
 use gpui::{IntoElement, div, px, rgb, rgba};
 
-pub fn render_editor_view(editor: &Editor) -> impl IntoElement {
+pub fn render_editor_view(editor: &Editor, wrap: bool) -> impl IntoElement {
     let theme_bg = rgb(0x282c34);
     let text_color = rgb(0xabb2bf);
     let cursor_pos = editor.cursor_position();
     let cursor_line_idx = cursor_pos.0 - 1;
     let cursor_col_idx = cursor_pos.1 - 1;
 
-    let (cursor_bg, is_block, has_shadow) = match editor.mode {
-        Mode::Normal => (rgb(0xd19a66), true, false),  // Orange
-        Mode::Insert => (rgb(0x98c379), false, false), // Green
-        Mode::Visual => (rgba(0x3e445180), true, true), // Grey Shadow
+    let (cursor_bg, is_block, _has_shadow) = match editor.mode {
+        Mode::Normal => (rgb(0xd19a66), true, false),
+        Mode::Insert => (rgb(0x98c379), false, false),
+        Mode::Visual => (rgba(0x3e445180), true, true),
     };
 
     let line_count = editor.line_count();
@@ -20,64 +20,79 @@ pub fn render_editor_view(editor: &Editor) -> impl IntoElement {
     let lines_view = div()
         .flex()
         .flex_col()
-        .size_full()
+        .when(!wrap, |this| this.size_full())
+        .when(wrap, |this| this.w_full())
         .font_family("Fira Code")
         .text_size(px(14.0))
         .text_color(text_color)
         .children((0..line_count).map(|line_idx| {
             let line_text = editor.buffer.content.line(line_idx).to_string();
 
-            if line_idx == cursor_line_idx {
-                let chars: Vec<char> = line_text.chars().collect();
-                let len = chars.len();
-                let safe_col = std::cmp::min(cursor_col_idx, len);
-
-                let pre_text: String = chars.iter().take(safe_col).collect();
-                let cursor_char_str = if safe_col < len && chars[safe_col] != ' ' {
-                    chars[safe_col].to_string()
-                } else {
-                    " ".to_string()
-                };
-                let post_text: String = chars.iter().skip(safe_col + 1).collect();
+            if wrap {
+                let mut display_text = line_text.clone();
+                if line_idx == cursor_line_idx {
+                    let chars: Vec<char> = display_text.chars().collect();
+                    let len = chars.len();
+                    let safe_col = std::cmp::min(cursor_col_idx, len);
+                    
+                    let mut new_chars = chars.clone();
+                    if is_block {
+                        new_chars.insert(safe_col, '█');
+                    } else {
+                        new_chars.insert(safe_col, '|');
+                    }
+                    display_text = new_chars.into_iter().collect();
+                }
 
                 div()
-                    .h(px(20.0))
-                    .flex()
-                    .flex_row()
-                    .whitespace_nowrap()
-                    .child(pre_text)
-                    .child(
-                        div()
-                            .child(cursor_char_str)
-                            .text_color(if is_block && !has_shadow {
-                                rgb(0x282c34)
-                            } else {
-                                text_color
-                            })
-                            .bg(if is_block {
-                                cursor_bg
-                            } else {
-                                rgba(0x00000000)
-                            })
-                            .when(has_shadow, |this| this.shadow_sm())
-                            .when(!is_block, |this| this.border_l_2().border_color(cursor_bg)),
-                    )
-                    .child(post_text)
+                    .w_full()
+                    .whitespace_normal() // Enable native text wrapping
+                    .child(display_text)
                     .into_any_element()
             } else {
-                div()
-                    .h(px(20.0))
-                    .whitespace_nowrap()
-                    .child(line_text)
-                    .into_any_element()
+                if line_idx == cursor_line_idx {
+                    let chars: Vec<char> = line_text.chars().collect();
+                    let len = chars.len();
+                    let safe_col = std::cmp::min(cursor_col_idx, len);
+
+                    let pre_text: String = chars.iter().take(safe_col).collect();
+                    let cursor_char_str = if safe_col < len && chars[safe_col] != ' ' && chars[safe_col] != '\n' {
+                        chars[safe_col].to_string()
+                    } else {
+                        " ".to_string()
+                    };
+                    let post_text: String = chars.iter().skip(safe_col + 1).collect();
+
+                    div()
+                        .flex()
+                        .flex_row()
+                        .h(px(20.0))
+                        .whitespace_nowrap()
+                        .child(pre_text)
+                        .child(
+                            div()
+                                .child(cursor_char_str)
+                                .bg(if is_block { cursor_bg } else { rgba(0x00000000) })
+                                .text_color(if is_block { rgb(0x282c34) } else { text_color })
+                                .when(!is_block, |this| this.border_l_2().border_color(cursor_bg)),
+                        )
+                        .child(post_text)
+                        .into_any_element()
+                } else {
+                    div()
+                        .h(px(20.0))
+                        .whitespace_nowrap()
+                        .child(line_text)
+                        .into_any_element()
+                }
             }
         }));
 
     div()
         .flex()
-        .size_full()
+        .when(!wrap, |this| this.size_full())
+        .when(wrap, |this| this.w_full())
         .bg(theme_bg)
-        .pl(px(16.0))
-        .pt(px(16.0))
+        .when(!wrap, |this| this.pl(px(16.0)).pt(px(16.0)))
         .child(lines_view)
 }

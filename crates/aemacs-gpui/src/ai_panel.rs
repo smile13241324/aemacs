@@ -5,7 +5,9 @@ use aemacs_ai::{AIBackend, Conversation, PersonaRegistry};
 use aemacs_core::{Editor, command::Command, mode::Mode};
 use async_trait::async_trait;
 use gpui::prelude::*;
-use gpui::{App, Context, Entity, FocusHandle, IntoElement, KeyDownEvent, Window, div, px, rgb};
+use gpui::{
+    App, Context, Entity, FocusHandle, IntoElement, KeyDownEvent, Window, div, px, relative, rgb,
+};
 use regex::Regex;
 use std::path::Path;
 use std::sync::Arc;
@@ -85,6 +87,8 @@ impl ToolHost for GuiHost {
 pub struct AiPanel {
     pub input_editor: Entity<Editor>,
     pub focus_handle: FocusHandle,
+    pub message_scroll_handle: gpui::ScrollHandle,
+    pub input_scroll_handle: gpui::ScrollHandle,
     messages: Vec<ChatMessage>,
     backend: OpenAICompatibleBackend,
     host_tx: async_channel::Sender<HostRequest>, // Store TX for later ToolRegistry integration
@@ -101,6 +105,18 @@ pub struct AiPanel {
     pub width: f32,
     pub is_maximized: bool,
     pub current_action: Option<String>,
+    pub status: CognitiveStatus,
+    pub shimmer_offset: f32,
+    pub window_handle: gpui::AnyWindowHandle,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CognitiveStatus {
+    Idle,
+    Thinking,
+    #[allow(dead_code)]
+    Streaming,
+    Errored(String),
 }
 
 struct ChatMessage {
@@ -215,6 +231,7 @@ fn parse_markdown_blocks(text: &str) -> Vec<MarkdownBlock> {
 impl AiPanel {
     pub fn new(
         cx: &mut App,
+        window_handle: gpui::AnyWindowHandle,
         host_tx: async_channel::Sender<HostRequest>,
         kb: Arc<KnowledgeBase>,
         registry: Arc<ToolRegistry>,
@@ -227,10 +244,14 @@ impl AiPanel {
         let panel = cx.new(|cx| {
             let input_editor = cx.new(|_cx| Editor::new());
             let focus_handle = cx.focus_handle();
+            let message_scroll_handle = gpui::ScrollHandle::new();
+            let input_scroll_handle = gpui::ScrollHandle::new();
 
             AiPanel {
                 input_editor,
                 focus_handle,
+                message_scroll_handle,
+                input_scroll_handle,
                 messages: vec![ChatMessage::new(
                     "System",
                     "AI System Online. Waiting for input...",
@@ -250,6 +271,9 @@ impl AiPanel {
                 width: 400.0,
                 is_maximized: false,
                 current_action: None,
+                status: CognitiveStatus::Idle,
+                shimmer_offset: 0.0,
+                window_handle,
             }
         });
 
@@ -396,6 +420,10 @@ impl AiPanel {
     fn trigger_ai_response(&mut self, cx: &mut Context<Self>) {
         // Prepare AI Message Placeholder
         self.messages.push(ChatMessage::new("AI", ""));
+        self.status = CognitiveStatus::Thinking;
+
+        // ACO-040: Start recursive animation loop
+        self.animate_pulse(cx);
 
         let registry = self.registry.clone();
         let host = GuiHost {
@@ -419,17 +447,23 @@ impl AiPanel {
             conversation,
             |panel, cx, event| {
                 match event {
-                    AgentEvent::Result(result) => {
+                    AgentEvent::StreamChunk(chunk) => {
+                        panel.status = CognitiveStatus::Streaming;
                         if let Some(last_msg) = panel.messages.last_mut() {
                             if last_msg.role == "AI" {
-                                last_msg.update_content(result.clone());
+                                last_msg.update_content(last_msg.content.clone() + &chunk);
                             }
                         }
-                        panel
-                            .conversation
-                            .add_message(aemacs_ai::Message::assistant(result));
+                        panel.message_scroll_handle.set_offset(gpui::point(px(0.0), px(999999.0)));
+                    }
+                    AgentEvent::Result(_result) => {
+                        panel.status = CognitiveStatus::Idle;
+                        // The stream has already populated the UI message and run_agent_loop 
+                        // has already appended the message to the conversation history.
+                        // We do not overwrite last_msg.content here, otherwise we lose multi-turn tool outputs!
                     }
                     AgentEvent::Error(e) => {
+                        panel.status = CognitiveStatus::Errored(e.to_string());
                         if let Some(last_msg) = panel.messages.last_mut() {
                             if last_msg.role == "AI" {
                                 last_msg.role = "System".to_string();
@@ -443,6 +477,33 @@ impl AiPanel {
             },
         )
         .detach();
+    }
+
+    /// Schedules the next frame of the cognition pulse animation.
+    fn animate_pulse(&mut self, cx: &mut Context<Self>) {
+        if matches!(self.status, CognitiveStatus::Idle) {
+            return;
+        }
+
+        let window_handle = self.window_handle;
+        let handle = cx.entity().downgrade();
+
+        let _ = cx.update_window(window_handle, move |_, window, _cx| {
+            window.on_next_frame(move |_, cx| {
+                if let Some(panel) = handle.upgrade() {
+                    let _ = panel.update(cx, |this, cx| {
+                        // Adjust speed based on status
+                        let delta = match this.status {
+                            CognitiveStatus::Thinking => 0.015,
+                            _ => 0.025,
+                        };
+                        this.shimmer_offset = (this.shimmer_offset + delta) % 1.0;
+                        cx.notify();
+                        this.animate_pulse(cx);
+                    });
+                }
+            });
+        });
     }
 
     fn render_agent_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -622,6 +683,39 @@ impl AiPanel {
             .text_color(rgb(0xbd93f9))
             .italic()
             .child(format!("Estimated VRAM: {:.2} GB", estimate))
+    }
+
+    fn render_cognition_pulse(&self, _cx: &mut Context<Self>) -> impl IntoElement {
+        let status = &self.status;
+        let is_active = !matches!(status, CognitiveStatus::Idle);
+
+        div()
+            .h(px(2.0))
+            .w_full()
+            .mt(px(8.0)) // Holy 8-pixel grid alignment
+            .when(is_active, |this| {
+                let color = match status {
+                    CognitiveStatus::Thinking => rgb(0x61afef),   // Sapphire
+                    CognitiveStatus::Streaming => rgb(0x98c379),  // Growth Green
+                    CognitiveStatus::Errored(_) => rgb(0xe06c75), // Error Red
+                    _ => rgb(0x61afef),
+                };
+
+                // The Shimmer: A gradient that shifts horizontally
+                this.bg(rgb(0x181a1f)).child(
+                    div().size_full().bg(color).relative().child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .bottom_0()
+                            .left(relative(self.shimmer_offset))
+                            .w(relative(0.3))
+                            .bg(rgb(0xffffff))
+                            .opacity(0.5),
+                    ),
+                )
+            })
+            .when(!is_active, |this| this.bg(gpui::transparent_black()))
     }
 
     fn handle_input_keydown(
@@ -846,10 +940,7 @@ impl AiPanel {
             return;
         }
 
-        // 3. Prepare AI Message Placeholder
-        self.messages.push(ChatMessage::new("AI", ""));
-
-        // 4. Update persistent conversation
+        // 3. Update persistent conversation
         if let Some(persona_name) = &self.active_persona_name {
             if let Some(persona) =
                 futures::executor::block_on(self.persona_registry.get_persona(persona_name))
@@ -861,6 +952,9 @@ impl AiPanel {
         }
         self.conversation
             .add_message(aemacs_ai::Message::user(text));
+
+        // Auto-scroll to the bottom so the user's message is immediately visible
+        self.message_scroll_handle.set_offset(gpui::point(px(0.0), px(999999.0)));
 
         cx.notify();
 
@@ -883,11 +977,15 @@ impl Render for AiPanel {
 
         root_div
             .size_full()
+            .min_h_0() // CRITICAL: Stop the root panel from blowing out
             .bg(bg)
+            .overflow_hidden() // Enforce strict bounding box to prevent layout blowouts
             .border_l_1()
             .border_color(rgb(0x181a1f))
             .child(
                 div()
+                    .flex_shrink_0() // Ensure header doesn't shrink
+                    .w_full()
                     .p(px(10.0))
                     .border_b_1()
                     .border_color(rgb(0x181a1f))
@@ -926,7 +1024,8 @@ impl Render for AiPanel {
             .when(!self.tasks.is_empty(), |this| {
                 this.child(
                     div()
-                        .flex_grow()
+                        .flex_shrink_0()
+                        .w_full()
                         .max_h(px(400.0))
                         .border_b_1()
                         .border_color(rgb(0x181a1f))
@@ -961,17 +1060,21 @@ impl Render for AiPanel {
             })
             .child(
                 div()
+                    .w_full()
                     .flex_1()
+                    .min_h_0() // Crucial for allowing flex children to shrink and scroll
                     .flex_col()
                     .gap_y(px(10.0))
                     .p(px(10.0))
                     .id("message_area")
                     .overflow_y_scroll()
+                    .track_scroll(&self.message_scroll_handle)
                     .children(self.messages.iter().map(|msg| {
                         let is_user = msg.role == "User";
                         let is_error = msg.content.starts_with("❌");
 
                         div()
+                            .w_full()
                             .flex()
                             .flex_col()
                             .child(
@@ -982,6 +1085,7 @@ impl Render for AiPanel {
                             )
                             .child(
                                 div()
+                                    .w_full()
                                     .p(px(8.0))
                                     .rounded_md()
                                     .bg(if is_user {
@@ -999,15 +1103,18 @@ impl Render for AiPanel {
                                     .gap_y(px(4.0))
                                     .children(msg.parsed_blocks.iter().map(|block| {
                                         match block {
-                                            MarkdownBlock::Paragraph(text) => {
-                                                div().child(text.clone()).into_any_element()
-                                            }
+                                            MarkdownBlock::Paragraph(text) => div()
+                                                .w_full()
+                                                .child(text.clone())
+                                                .into_any_element(),
                                             MarkdownBlock::Code { language, content } => div()
+                                                .w_full()
                                                 .bg(rgb(0x1e1e1e))
                                                 .p(px(6.0))
                                                 .rounded_sm()
                                                 .border_1()
                                                 .border_color(rgb(0x3e4451))
+                                                .overflow_x_hidden()
                                                 .child(
                                                     div()
                                                         .text_color(rgb(0x61afef))
@@ -1029,6 +1136,7 @@ impl Render for AiPanel {
                                                     _ => 12.0,
                                                 };
                                                 div()
+                                                    .w_full()
                                                     .text_size(px(size))
                                                     .font_weight(gpui::FontWeight::BOLD)
                                                     .child(content.clone())
@@ -1039,6 +1147,7 @@ impl Render for AiPanel {
                             )
                     })),
             )
+            .child(self.render_cognition_pulse(cx))
             .child(
                 // ACO-030: Progress Signal line
                 div().px(px(10.0)).h(px(16.0)).flex().items_center().child(
@@ -1056,16 +1165,22 @@ impl Render for AiPanel {
             .child(
                 // Input Area
                 div()
-                    .h(px(100.0))
+                    .id("input_area")
+                    .flex_shrink_0()
+                    .min_h(px(40.0))
+                    .max_h(px(200.0))
                     .bg(input_bg)
                     .border_t_1()
                     .border_color(rgb(0x181a1f))
                     .p(px(8.0))
+                    .overflow_y_scroll()
+                    .overflow_x_hidden()
+                    .track_scroll(&self.input_scroll_handle)
                     .track_focus(&self.focus_handle)
                     .on_key_down(cx.listener(Self::handle_input_keydown))
                     .child({
                         let editor = self.input_editor.read(cx);
-                        render_editor_view(editor)
+                        render_editor_view(editor, true)
                     }),
             )
     }
