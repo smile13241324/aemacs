@@ -45,8 +45,8 @@ impl ReactiveObserver for TimePulseObserver {
                 interval_seconds: self.interval_seconds,
             };
 
-            let payload = serde_json::to_string(&signal)
-                .context("Failed to serialize TimePulseSignal")?;
+            let payload =
+                serde_json::to_string(&signal).context("Failed to serialize TimePulseSignal")?;
 
             let system_event = SystemEvent::Signal {
                 source: self.name().to_string(),

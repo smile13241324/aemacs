@@ -34,7 +34,7 @@ where
         // Create a proxy channel to map String chunks to AgentEvent::StreamChunk
         let (chunk_tx, chunk_rx) = async_channel::unbounded::<String>();
         let tx_proxy = tx_for_stream.clone();
-        
+
         tokio::spawn(async move {
             while let Ok(chunk) = chunk_rx.recv().await {
                 let _ = tx_proxy.send(AgentEvent::StreamChunk(chunk)).await;

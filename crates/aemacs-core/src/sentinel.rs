@@ -29,11 +29,12 @@ pub async fn spawn_sentinel(bus: EventBus) -> Result<()> {
             // Check for silence
             if last_report.elapsed() > timeout {
                 warn!("🚨 [SENTINEL ALERT] Agent silence exceeds 1 hour! Sanity compromised.");
-                
+
                 let alert = SystemEvent::Notification(
-                    "Sentinel Alert: Agent Sanity Compromised. Automated Rescue Protocol required.".to_string()
+                    "Sentinel Alert: Agent Sanity Compromised. Automated Rescue Protocol required."
+                        .to_string(),
                 );
-                
+
                 if let Err(_) = bus.tx.send(alert).await {
                     warn!("EventBus disconnected. Sentinel shutting down.");
                     return;

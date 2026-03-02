@@ -104,7 +104,10 @@ impl AIBackend for OpenAICompatibleBackend {
 
     #[instrument(skip(self, request))]
     async fn complete(&self, request: AIRequest) -> AIResult<Message> {
-        info!("🤖 [Ollama] Requesting completion from model: {}", request.model);
+        info!(
+            "🤖 [Ollama] Requesting completion from model: {}",
+            request.model
+        );
         let body = json!({
             "model": request.model,
             "messages": request.messages,
@@ -144,7 +147,10 @@ impl AIBackend for OpenAICompatibleBackend {
     }
 
     async fn stream(&self, request: AIRequest) -> AIResult<AIResponseStream> {
-        info!("🤖 [Ollama] Requesting stream from model: {}", request.model);
+        info!(
+            "🤖 [Ollama] Requesting stream from model: {}",
+            request.model
+        );
         let body = json!({
             "model": request.model,
             "messages": request.messages,
@@ -164,42 +170,43 @@ impl AIBackend for OpenAICompatibleBackend {
 
         if !resp.status().is_success() {
             let error_text = resp.text().await.unwrap_or_default();
-            return Err(AIError::ConnectorError(format!("API Error: {}", error_text)));
+            return Err(AIError::ConnectorError(format!(
+                "API Error: {}",
+                error_text
+            )));
         }
 
         let byte_stream = resp.bytes_stream();
         let stream_with_io_error = byte_stream.map(|res| res.map_err(std::io::Error::other));
         let reader = StreamReader::new(stream_with_io_error);
 
-        let line_stream = FramedRead::new(reader, LinesCodec::new()).map(|result| {
-            match result {
-                Ok(line) => {
-                    let line = line.trim();
-                    if line.is_empty() || line.starts_with(':') || line == "data: [DONE]" {
-                        return Ok(Vec::new());
-                    }
+        let line_stream = FramedRead::new(reader, LinesCodec::new()).map(|result| match result {
+            Ok(line) => {
+                let line = line.trim();
+                if line.is_empty() || line.starts_with(':') || line == "data: [DONE]" {
+                    return Ok(Vec::new());
+                }
 
-                    if let Some(json_str) = line.strip_prefix("data: ") {
-                        if let Ok(chunk) = serde_json::from_str::<OpenAIStreamChunk>(json_str) {
-                            let mut events = Vec::new();
-                            for choice in chunk.choices {
-                                if let Some(content) = choice.delta.content {
-                                    events.push(crate::StreamEvent::Content(content));
-                                }
-                                if let Some(tool_calls) = choice.delta.tool_calls {
-                                    for tc in tool_calls {
-                                        events.push(crate::StreamEvent::ToolCall(tc));
-                                    }
+                if let Some(json_str) = line.strip_prefix("data: ") {
+                    if let Ok(chunk) = serde_json::from_str::<OpenAIStreamChunk>(json_str) {
+                        let mut events = Vec::new();
+                        for choice in chunk.choices {
+                            if let Some(content) = choice.delta.content {
+                                events.push(crate::StreamEvent::Content(content));
+                            }
+                            if let Some(tool_calls) = choice.delta.tool_calls {
+                                for tc in tool_calls {
+                                    events.push(crate::StreamEvent::ToolCall(tc));
                                 }
                             }
-                            return Ok(events);
                         }
+                        return Ok(events);
                     }
-
-                    Ok(Vec::new())
                 }
-                Err(e) => Err(AIError::IoError(std::io::Error::other(e))),
+
+                Ok(Vec::new())
             }
+            Err(e) => Err(AIError::IoError(std::io::Error::other(e))),
         });
 
         // Flatten the events and filter empty ones

@@ -48,7 +48,7 @@ impl OllamaEmbedder {
         if !res.status().is_success() {
             let status = res.status();
             let err_text = res.text().await.unwrap_or_default();
-            
+
             if status == reqwest::StatusCode::NOT_FOUND {
                 return Err(AIError::ConnectorError(format!(
                     "Embedding Error: 404 Not Found. Ensure the model '{}' is pulled (ollama pull {}) and the URL is correct: {}",
