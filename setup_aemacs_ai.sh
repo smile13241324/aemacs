@@ -122,6 +122,19 @@ while true; do
 done
 
 echo "✅ Selected Tier: $TIER"
+
+# --- Save Configuration ---
+CONFIG_DIR="$HOME/.aemacs"
+CONFIG_FILE="$CONFIG_DIR/config.ron"
+mkdir -p "$CONFIG_DIR"
+
+cat <<EOF > "$CONFIG_FILE"
+UserConfig(
+    hardware_tier: Some("$TIER"),
+)
+EOF
+
+echo "   ✅ Configuration saved to $CONFIG_FILE"
 echo ""
 
 # 1. CLEANUP & PREPARATION

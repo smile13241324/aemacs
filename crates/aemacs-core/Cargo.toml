@@ -22,3 +22,5 @@ serde_json = { workspace = true }
 tree-sitter = { workspace = true }
 tree-sitter-rust = { workspace = true }
 notify = { workspace = true }
+ron = { workspace = true }
+dirs = { workspace = true }

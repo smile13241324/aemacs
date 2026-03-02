@@ -1,6 +1,7 @@
 pub mod buffer;
 pub mod bus;
 pub mod command;
+pub mod config;
 pub mod editor;
 pub mod keymap;
 pub mod mode;

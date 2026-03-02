@@ -313,3 +313,18 @@ pub const MODELS: &[ModelDefinition] = &[
 ];
 
 pub const CONTEXT_OPTIONS: &[u32] = &[4096, 8192, 16384, 32768, 65536, 131072];
+
+pub fn get_models_for_tier(tier_str: &str) -> Vec<&'static ModelDefinition> {
+    let target_tier = match tier_str.to_uppercase().as_str() {
+        "LOW" => ModelTier::Low,
+        "MEDIUM" => ModelTier::Medium,
+        "HIGH" => ModelTier::High,
+        _ => {
+            tracing::warn!("Unknown hardware tier '{}', defaulting to LOW", tier_str);
+            ModelTier::Low
+        }
+    };
+
+    MODELS.iter().filter(|m| m.tier == target_tier).collect()
+}
+
