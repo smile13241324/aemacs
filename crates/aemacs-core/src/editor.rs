@@ -334,7 +334,7 @@ impl Editor {
     pub fn cursor_position(&self) -> (usize, usize) {
         let max_chars = self.buffer.len_chars();
         let head = std::cmp::min(self.primary_cursor().head, max_chars);
-        
+
         let line_idx = self.buffer.content.char_to_line(head);
         let line_start = self.buffer.content.line_to_char(line_idx);
         let col_idx = head - line_start;

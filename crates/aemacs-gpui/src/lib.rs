@@ -32,6 +32,7 @@ use std::sync::Arc;
 
 pub struct Workspace {
     editor: Entity<Editor>,
+    editor_list_state: gpui::ListState,
     ai_panel: Entity<AiPanel>,
     focus_handle: FocusHandle,
     last_key: Option<(String, Instant)>,
@@ -89,6 +90,12 @@ impl Workspace {
                 }
             });
 
+            // --- Load Configuration & Models (ACO-019) ---
+            let config = aemacs_core::config::load_user_config();
+            let tier_str = config.hardware_tier.unwrap_or_else(|| "LOW".to_string());
+            let available_models = aemacs_ai::models::get_models_for_tier(&tier_str);
+            log::info!("🚀 [Workspace] Hardware Tier: {} ({} models loaded)", tier_str, available_models.len());
+
             let (host_tx, host_rx) = async_channel::unbounded::<ai_panel::HostRequest>();
             let ai_panel = AiPanel::new(
                 cx,
@@ -98,7 +105,9 @@ impl Workspace {
                 registry.clone(),
                 persona_registry.clone(),
                 bus.clone(),
+                available_models,
             );
+            let editor_list_state = gpui::ListState::new(0, gpui::ListAlignment::Top, px(100.0));
             let focus_handle = cx.focus_handle();
 
             let rx = bus.rx.clone();
@@ -278,6 +287,7 @@ impl Workspace {
 
             Workspace {
                 editor,
+                editor_list_state,
                 ai_panel,
                 focus_handle,
                 last_key: None,
@@ -427,6 +437,13 @@ impl Workspace {
 impl Render for Workspace {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let editor = self.editor.read(cx);
+        let line_count = editor.line_count();
+        
+        let current_count = self.editor_list_state.item_count();
+        if current_count != line_count {
+            self.editor_list_state.splice(0..current_count, line_count);
+        }
+
         let is_empty = editor.buffer.len_chars() == 0;
         let (line, col) = editor.cursor_position();
         let mode_name = format!("{:?}", editor.mode).to_uppercase();
@@ -462,18 +479,22 @@ impl Render for Workspace {
                     .text_size(px(14.0))
                     .font_family("Fira Code")
                     .text_color(gutter_text)
-                    .children(if is_empty {
-                        vec![div().child("~").into_any_element()]
-                    } else {
-                        (1..=editor.line_count())
-                            .map(|i| div().child(i.to_string()).h(px(20.0)).into_any_element())
-                            .collect()
-                    }),
+                    .child(
+                        gpui::list(self.editor_list_state.clone(), move |line_idx, _window, _cx| {
+                            if is_empty {
+                                div().child("~").h(px(20.0)).into_any_element()
+                            } else {
+                                div().child((line_idx + 1).to_string()).h(px(20.0)).into_any_element()
+                            }
+                        })
+                        .w_full()
+                        .h_full()
+                    )
             )
             .child(if is_empty {
                 self.render_welcome().into_any_element()
             } else {
-                render_editor_view(editor, false).into_any_element()
+                render_editor_view(editor, self.editor_list_state.clone(), false).into_any_element()
             });
 
         div()
@@ -490,9 +511,10 @@ impl Render for Workspace {
                     .child(
                         div()
                             .flex_1()
-                            .when(self.show_ai && self.ai_panel.read(cx).is_maximized, |this| {
-                                this.hidden()
-                            })
+                            .when(
+                                self.show_ai && self.ai_panel.read(cx).is_maximized,
+                                |this| this.hidden(),
+                            )
                             .child(main_view),
                     )
                     .when(self.show_ai, |this| {

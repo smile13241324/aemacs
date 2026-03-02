@@ -86,6 +86,7 @@ impl ToolHost for GuiHost {
 
 pub struct AiPanel {
     pub input_editor: Entity<Editor>,
+    pub input_list_state: gpui::ListState,
     pub focus_handle: FocusHandle,
     pub message_scroll_handle: gpui::ScrollHandle,
     pub input_scroll_handle: gpui::ScrollHandle,
@@ -108,6 +109,7 @@ pub struct AiPanel {
     pub status: CognitiveStatus,
     pub shimmer_offset: f32,
     pub window_handle: gpui::AnyWindowHandle,
+    pub available_models: Vec<&'static aemacs_ai::models::ModelDefinition>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -237,18 +239,22 @@ impl AiPanel {
         registry: Arc<ToolRegistry>,
         persona_registry: Arc<PersonaRegistry>,
         bus: aemacs_core::bus::EventBus,
+        available_models: Vec<&'static aemacs_ai::models::ModelDefinition>,
     ) -> Entity<Self> {
         let backend = OpenAICompatibleBackend::new("http://localhost:11434/v1", None);
-        let model_name = aemacs_ai::models::MODELS[0].name;
+        let model_name = available_models.first().map(|m| m.name).unwrap_or("hermes3:8b-llama3.1-q4_K_M");
+        let initial_context = available_models.first().map(|m| m.max_context).unwrap_or(8192);
 
         let panel = cx.new(|cx| {
             let input_editor = cx.new(|_cx| Editor::new());
+            let input_list_state = gpui::ListState::new(0, gpui::ListAlignment::Top, px(10.0));
             let focus_handle = cx.focus_handle();
             let message_scroll_handle = gpui::ScrollHandle::new();
             let input_scroll_handle = gpui::ScrollHandle::new();
 
             AiPanel {
                 input_editor,
+                input_list_state,
                 focus_handle,
                 message_scroll_handle,
                 input_scroll_handle,
@@ -261,7 +267,7 @@ impl AiPanel {
                 event_tx: bus.tx.clone(),
                 tasks: Vec::new(),
                 selected_model_index: 0,
-                selected_context: aemacs_ai::models::MODELS[0].max_context,
+                selected_context: initial_context,
                 kb,
                 registry,
                 persona_registry,
@@ -274,6 +280,7 @@ impl AiPanel {
                 status: CognitiveStatus::Idle,
                 shimmer_offset: 0.0,
                 window_handle,
+                available_models,
             }
         });
 
@@ -454,12 +461,14 @@ impl AiPanel {
                                 last_msg.update_content(last_msg.content.clone() + &chunk);
                             }
                         }
-                        panel.message_scroll_handle.set_offset(gpui::point(px(0.0), px(999999.0)));
+                        panel
+                            .message_scroll_handle
+                            .set_offset(gpui::point(px(0.0), px(999999.0)));
                     }
                     AgentEvent::Result(updated_conv) => {
                         panel.status = CognitiveStatus::Idle;
                         panel.conversation = updated_conv;
-                        // The stream has already populated the UI message and run_agent_loop 
+                        // The stream has already populated the UI message and run_agent_loop
                         // has already appended the message to the conversation history.
                         // We do not overwrite last_msg.content here, otherwise we lose multi-turn tool outputs!
                     }
@@ -550,7 +559,9 @@ impl AiPanel {
                         .cursor_pointer()
                         .on_click(cx.listener(move |this, _, _window, cx| {
                             let name_lower = name_clone.clone();
-                            if let Some(persona) = futures::executor::block_on(this.persona_registry.get_persona(&name_lower)) {
+                            if let Some(persona) = futures::executor::block_on(
+                                this.persona_registry.get_persona(&name_lower),
+                            ) {
                                 this.active_persona_name = Some(name_lower);
                                 this.conversation.set_persona(persona);
                                 cx.notify();
@@ -563,6 +574,7 @@ impl AiPanel {
 
     fn render_model_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let selected_index = self.selected_model_index;
+        
         div()
             .flex()
             .flex_col()
@@ -571,17 +583,29 @@ impl AiPanel {
                 div()
                     .text_size(px(10.0))
                     .text_color(rgb(0x5c6370))
-                    .child("MODEL"),
+                    .child("MODEL MATRIX"),
             )
             .child(
                 div().flex().flex_wrap().gap(px(4.0)).children(
-                    aemacs_ai::models::MODELS
+                    self.available_models
                         .iter()
                         .enumerate()
                         .map(|(i, model)| {
                             let is_selected = i == selected_index;
+                            
+                            // Role colors (Sacred Palette)
+                            let role_color = match model.role {
+                                aemacs_ai::models::ModelRole::Logic => rgb(0x61afef),    // Sapphire
+                                aemacs_ai::models::ModelRole::Creative => rgb(0xd19a66), // Amber
+                                aemacs_ai::models::ModelRole::Roleplay => rgb(0x98c379), // Emerald
+                            };
+
                             div()
                                 .id(("model", i))
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap_x(px(4.0))
                                 .px(px(6.0))
                                 .py(px(2.0))
                                 .rounded_md()
@@ -605,18 +629,59 @@ impl AiPanel {
                                 .cursor_pointer()
                                 .on_click(cx.listener(move |this, _, _window, cx| {
                                     this.selected_model_index = i;
-                                    let model_name = aemacs_ai::models::MODELS[i].name;
-                                    this.conversation.set_model(model_name);
-                                    // Reset context to max for new model
-                                    this.selected_context =
-                                        aemacs_ai::models::MODELS[i].max_context;
-                                    this.conversation.set_context_window(this.selected_context);
+                                    if let Some(m) = this.available_models.get(i) {
+                                        this.conversation.set_model(m.name);
+                                        this.selected_context = m.max_context;
+                                        this.conversation.set_context_window(this.selected_context);
+                                    }
                                     cx.notify();
                                 }))
+                                .child(
+                                    div()
+                                        .size(px(6.0))
+                                        .rounded_full()
+                                        .bg(role_color)
+                                )
                                 .child(model.label)
                         }),
                 ),
             )
+            .child({
+                let model = self.available_models.get(selected_index);
+                div()
+                    .when_some(model, |this, model| {
+                        this.p(px(8.0))
+                            .bg(rgb(0x181a1f))
+                            .rounded_md()
+                            .mt(px(4.0))
+                            .flex_col()
+                            .gap_y(px(2.0))
+                            .child(
+                                div()
+                                    .text_size(px(10.0))
+                                    .text_color(rgb(0xffffff))
+                                    .child(format!(
+                                        "{} | VRAM: {:.1} GB | Context: {}k",
+                                        model.label,
+                                        model.base_vram_gb,
+                                        model.max_context / 1024
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(11.0))
+                                    .text_color(rgb(0xabb2bf))
+                                    .child(model.model_description),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(9.0))
+                                    .italic()
+                                    .text_color(rgb(0x5c6370))
+                                    .child(model.license_constraints),
+                            )
+                    })
+            })
     }
 
     fn render_context_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -694,29 +759,31 @@ impl AiPanel {
         let status = &self.status;
         let is_active = !matches!(status, CognitiveStatus::Idle);
 
-        div()
-            .h(px(2.0))
-            .w_full()
-            .mt(px(8.0)) // Holy 8-pixel grid alignment
-            .when(is_active, |this| {
-                let color = match status {
-                    CognitiveStatus::Thinking => rgb(0x61afef),   // Sapphire
-                    CognitiveStatus::Streaming => rgb(0x98c379),  // Growth Green
-                    CognitiveStatus::Errored(_) => rgb(0xe06c75), // Error Red
-                    _ => rgb(0x61afef),
-                };
+        let (color, shimmer_width, intensity) = match status {
+            CognitiveStatus::Idle => (gpui::rgba(0x1c315eff), Default::default(), Default::default()), // Dormant cobalt
+            CognitiveStatus::Thinking => (gpui::rgba(0xffbf00ff), 0.4, 0.8), // Radiating amber
+            CognitiveStatus::Streaming => (gpui::rgba(0x00ff7fff), 0.8, 1.0), // Vibrant emerald
+            CognitiveStatus::Errored(_) => (gpui::rgba(0xdc143cff), 0.2, 1.0), // Jagged crimson
+        };
 
-                // The Shimmer: A gradient that shifts horizontally
-                this.bg(rgb(0x181a1f)).child(
-                    div().size_full().bg(color).relative().child(
+        // Simulated Sine-wave pulsing for opacity (intensity)
+        let pulse_opacity = (self.shimmer_offset * std::f32::consts::PI * 2.0).sin() * 0.3 + 0.7;
+        let final_opacity = intensity * pulse_opacity;
+
+        div()
+            .h(px(8.0)) // The Height of Sanctity
+            .w_full()
+            .when(is_active, |this| {
+                this.bg(gpui::rgba(0x181a1fff)).child(
+                    div().size_full().bg(color).opacity(final_opacity).relative().child(
                         div()
                             .absolute()
                             .top_0()
                             .bottom_0()
                             .left(relative(self.shimmer_offset))
-                            .w(relative(0.3))
-                            .bg(rgb(0xffffff))
-                            .opacity(0.5),
+                            .w(relative(shimmer_width))
+                            .bg(gpui::rgba(0xffffffff))
+                            .opacity(0.4), // The "Heat" core
                     ),
                 )
             })
@@ -959,7 +1026,8 @@ impl AiPanel {
             .add_message(aemacs_ai::Message::user(text));
 
         // Auto-scroll to the bottom so the user's message is immediately visible
-        self.message_scroll_handle.set_offset(gpui::point(px(0.0), px(999999.0)));
+        self.message_scroll_handle
+            .set_offset(gpui::point(px(0.0), px(999999.0)));
 
         cx.notify();
 
@@ -969,6 +1037,14 @@ impl AiPanel {
 
 impl Render for AiPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let editor = self.input_editor.read(cx);
+        let line_count = editor.line_count();
+        
+        let current_count = self.input_list_state.item_count();
+        if current_count != line_count {
+            self.input_list_state.splice(0..current_count, line_count);
+        }
+
         let bg = rgb(0x21252b);
         let input_bg = rgb(0x282c34);
 
@@ -1185,13 +1261,12 @@ impl Render for AiPanel {
                     .on_key_down(cx.listener(Self::handle_input_keydown))
                     .child({
                         let editor = self.input_editor.read(cx);
-                        render_editor_view(editor, true)
+                        render_editor_view(editor, self.input_list_state.clone(), true)
                     }),
             )
     }
 }
 
-#[cfg(test)]
 mod tests {
     use regex::Regex;
 
