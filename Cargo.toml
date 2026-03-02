@@ -61,6 +61,7 @@ async-channel = "2.3"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9"
+ron = "0.8"
 reqwest = { version = "0.12", features = ["json", "stream"], default-features = false }
 axum = "0.7"
 

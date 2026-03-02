@@ -91,8 +91,10 @@ impl ToolRegistry {
         registry.register(Box::new(WriteKnowledgeBaseTool::new(kb.clone())));
         registry.register(Box::new(UpdateMemoryTool::new(kb.clone())));
         registry.register(Box::new(DeleteMemoryTool::new(kb.clone())));
+        registry.register(Box::new(FetchContiguousMemoryTool::new(kb.clone())));
         registry.register(Box::new(GetSystemTimeTool));
         registry.register(Box::new(ParseAstTool));
+
         registry.register(Box::new(ReportStatusTool {
             event_tx: event_tx.clone(),
         }));
@@ -144,7 +146,7 @@ pub async fn run_agent_loop(
         // Clone conversation for the request (snapshot of current state)
         let request = conversation.clone().build();
         tracing::debug!("🚀 [AI Loop] Sending request to model: {:#?}", request);
-        
+
         let mut stream = backend.stream(request).await?;
 
         let mut full_content = String::new();
@@ -169,12 +171,18 @@ pub async fn run_agent_loop(
             }
         }
 
-        tracing::debug!("✅ [AI Loop] Stream finished. Total content: {:?}", full_content);
+        tracing::debug!(
+            "✅ [AI Loop] Stream finished. Total content: {:?}",
+            full_content
+        );
 
         let tool_calls = if accumulated_tool_calls.is_empty() {
             None
         } else {
-            tracing::debug!("✅ [AI Loop] Tools accumulated: {:?}", accumulated_tool_calls);
+            tracing::debug!(
+                "✅ [AI Loop] Tools accumulated: {:?}",
+                accumulated_tool_calls
+            );
             Some(accumulated_tool_calls.into_values().collect::<Vec<_>>())
         };
 
@@ -186,7 +194,10 @@ pub async fn run_agent_loop(
             timestamp: chrono::Utc::now(),
         };
 
-        tracing::debug!("💾 [AI Loop] Saving to conversation history: {:#?}", response_msg);
+        tracing::debug!(
+            "💾 [AI Loop] Saving to conversation history: {:#?}",
+            response_msg
+        );
         // ALWAYS add the assistant's response to history
         conversation.add_message(response_msg);
 
@@ -644,7 +655,7 @@ impl Tool for SearchKnowledgeBaseTool {
         let query = args["query"].as_str().ok_or(anyhow!("Missing query"))?;
         let collection = args["collection"].as_str().unwrap_or("aemacs_docs");
         let scope = args["scope"].as_str().unwrap_or("internal");
-        
+
         let categories: Vec<&str> = if let Some(cats) = args["categories"].as_array() {
             cats.iter().filter_map(|v| v.as_str()).collect()
         } else {
@@ -686,7 +697,7 @@ impl Tool for SearchKnowledgeBaseTool {
                     Some(categories),
                 )
                 .await?;
-            
+
             if !results.is_empty() {
                 fuzzy_warning = "NOTICE: High-confidence historical data not found. Displaying fuzzy/low-confidence matches.\n\n".to_string();
             }
@@ -725,8 +736,8 @@ impl Tool for WriteKnowledgeBaseTool {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "content": { "type": "string", "description": "The information to be remembered." },
-                "category": { "type": "string", "enum": ["ARCHIVE", "INSIGHT", "CORE"], "description": "The tier of memory." },
+                "content": { "type": "string", "description": "The information to be remembered (max 2000 chars)." },
+                "category": { "type": "string", "enum": ["INSIGHT", "CORE"], "description": "The tier of memory. INSIGHT is for observed facts, CORE is for immutable laws." },
                 "collection": { "type": "string", "description": "Defaults to aemacs_docs." }
             },
             "required": ["content", "category"]
@@ -736,9 +747,19 @@ impl Tool for WriteKnowledgeBaseTool {
         let content = args["content"]
             .as_str()
             .ok_or(anyhow::anyhow!("Missing content"))?;
+
+        if content.len() > 2000 {
+            return Err(anyhow::anyhow!("Memory content too large ({} chars). Insights and Core directives must be concise summaries under 2000 characters. Please synthesize the information and try again.", content.len()));
+        }
+
         let category = args["category"]
             .as_str()
             .ok_or(anyhow::anyhow!("Missing category"))?;
+
+        if category == "ARCHIVE" {
+            return Err(anyhow::anyhow!("Permission Denied: Agents cannot manually write to the ARCHIVE tier."));
+        }
+
         let collection = args["collection"].as_str().unwrap_or("aemacs_docs");
         let agent_id = host.get_agent_id();
 
@@ -834,8 +855,8 @@ impl Tool for UpdateMemoryTool {
             "type": "object",
             "properties": {
                 "id": { "type": "string", "description": "The UUID of the memory to update." },
-                "content": { "type": "string", "description": "The new information to be remembered." },
-                "category": { "type": "string", "enum": ["ARCHIVE", "INSIGHT", "CORE"], "description": "The tier of memory." },
+                "content": { "type": "string", "description": "The new information to be remembered (max 2000 chars)." },
+                "category": { "type": "string", "enum": ["INSIGHT", "CORE"], "description": "The tier of memory. INSIGHT is for observed facts, CORE is for immutable laws." },
                 "collection": { "type": "string", "description": "Defaults to aemacs_docs." }
             },
             "required": ["id", "content", "category"]
@@ -844,9 +865,19 @@ impl Tool for UpdateMemoryTool {
     async fn execute(&self, args: Value, host: &dyn ToolHost) -> Result<String> {
         let id = args["id"].as_str().ok_or(anyhow!("Missing memory ID"))?;
         let content = args["content"].as_str().ok_or(anyhow!("Missing content"))?;
+
+        if content.len() > 2000 {
+            return Err(anyhow::anyhow!("Memory content too large ({} chars). Insights and Core directives must be concise summaries under 2000 characters. Please synthesize the information and try again.", content.len()));
+        }
+
         let category = args["category"]
             .as_str()
             .ok_or(anyhow!("Missing category"))?;
+
+        if category == "ARCHIVE" {
+            return Err(anyhow::anyhow!("Permission Denied: Agents cannot manually write to the ARCHIVE tier."));
+        }
+
         let collection = args["collection"].as_str().unwrap_or("aemacs_docs");
         let agent_id = host.get_agent_id();
 
@@ -1015,7 +1046,7 @@ impl Tool for WebSearchTool {
 
         // Base URL for Ecosia search
         let base_url = "https://www.ecosia.org/search?tt=mzl";
-        
+
         // Ensure we handle URL encoding
         let encoded_query = urlencoding::encode(query);
         let request_url = format!("{}&q={}", base_url, encoded_query);
@@ -1153,7 +1184,7 @@ impl Tool for RecallPastInsightsTool {
                     Some(vec!["INSIGHT", "CORE"]),
                 )
                 .await?;
-            
+
             if !results.is_empty() {
                 fuzzy_warning = "NOTICE: High-confidence insights not found. Displaying fuzzy/low-confidence matches.\n\n".to_string();
             }
@@ -1165,8 +1196,16 @@ impl Tool for RecallPastInsightsTool {
 
         // 3. Temporal Sorting: Prioritize recent insights
         results.sort_by(|a, b| {
-            let ts_a = a.metadata.get("timestamp").and_then(|v| v.as_str()).unwrap_or("");
-            let ts_b = b.metadata.get("timestamp").and_then(|v| v.as_str()).unwrap_or("");
+            let ts_a = a
+                .metadata
+                .get("timestamp")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let ts_b = b
+                .metadata
+                .get("timestamp")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             ts_b.cmp(ts_a) // Descending order
         });
 
@@ -1180,16 +1219,22 @@ impl Tool for RecallPastInsightsTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
-    use anyhow::Result;
     use crate::AIRequest;
+    use anyhow::Result;
+    use serde_json::json;
 
     struct TestHost;
     #[async_trait]
     impl ToolHost for TestHost {
-        async fn ask_approval(&self, _description: &str) -> bool { true }
-        async fn ask_user(&self, _question: &str) -> String { String::new() }
-        fn get_agent_id(&self) -> String { "test_agent".to_string() }
+        async fn ask_approval(&self, _description: &str) -> bool {
+            true
+        }
+        async fn ask_user(&self, _question: &str) -> String {
+            String::new()
+        }
+        fn get_agent_id(&self) -> String {
+            "test_agent".to_string()
+        }
         fn report_progress(&self, _tool_name: String, _is_running: bool) {}
     }
 
@@ -1198,11 +1243,14 @@ mod tests {
         let tool = WebSearchTool;
         let args = json!({ "query": "aemacs editor" });
         let host = TestHost;
-        
+
         let result = tool.execute(args, &host).await?;
-        
+
         assert!(!result.is_empty(), "The Oracle returned a void response!");
-        assert!(result.to_lowercase().contains("ecosia"), "The response does not appear to be an Ecosia scroll!");
+        assert!(
+            result.to_lowercase().contains("ecosia"),
+            "The response does not appear to be an Ecosia scroll!"
+        );
         Ok(())
     }
 
@@ -1211,10 +1259,13 @@ mod tests {
         let tool = WebSearchTool;
         let args = json!({ "query": "こんにちは Æmacs" });
         let host = TestHost;
-        
+
         let result = tool.execute(args, &host).await?;
-        
-        assert!(!result.is_empty(), "The Oracle choked on the foreign runes!");
+
+        assert!(
+            !result.is_empty(),
+            "The Oracle choked on the foreign runes!"
+        );
         Ok(())
     }
 
@@ -1223,11 +1274,14 @@ mod tests {
         let tool = WebSearchTool;
         let args = json!({ "query": "Rust programming language documentation exhaustive search" });
         let host = TestHost;
-        
+
         let result = tool.execute(args, &host).await?;
-        
+
         if result.len() >= 2000 {
-            assert!(result.ends_with("\n... (results truncated to 2000 chars)"), "The floodgate failed to hold back the tide!");
+            assert!(
+                result.ends_with("\n... (results truncated to 2000 chars)"),
+                "The floodgate failed to hold back the tide!"
+            );
             assert!(result.len() <= 2100, "The output exceeded the holy limit!");
         }
         Ok(())
@@ -1239,9 +1293,15 @@ mod tests {
 
     #[async_trait]
     impl AIBackend for MockBackend {
-        fn name(&self) -> &str { "mock" }
-        async fn health_check(&self) -> crate::error::AIResult<()> { Ok(()) }
-        async fn complete(&self, _req: AIRequest) -> crate::error::AIResult<Message> { unimplemented!() }
+        fn name(&self) -> &str {
+            "mock"
+        }
+        async fn health_check(&self) -> crate::error::AIResult<()> {
+            Ok(())
+        }
+        async fn complete(&self, _req: AIRequest) -> crate::error::AIResult<Message> {
+            unimplemented!()
+        }
         async fn stream(&self, _req: AIRequest) -> crate::error::AIResult<crate::AIResponseStream> {
             let mut res = self.responses.lock().unwrap();
             let event = res.remove(0);
@@ -1254,30 +1314,48 @@ mod tests {
         let registry = ToolRegistry::new();
         let host = TestHost;
         let mut conversation = Conversation::new("mock-model");
-        
+
         // Turn 1
-        let backend1 = MockBackend { 
-            responses: std::sync::Mutex::new(vec![crate::StreamEvent::Content("Response 1".to_string())]) 
+        let backend1 = MockBackend {
+            responses: std::sync::Mutex::new(vec![crate::StreamEvent::Content(
+                "Response 1".to_string(),
+            )]),
         };
         conversation = conversation.with_user("User 1");
         run_agent_loop(&backend1, &registry, &host, &mut conversation, 5, None).await?;
-        
+
         assert_eq!(conversation.messages().len(), 2);
         assert_eq!(conversation.messages()[0].role, Role::User);
         assert_eq!(conversation.messages()[1].role, Role::Assistant);
 
         // Turn 2 - Use the SAME conversation object
-        let backend2 = MockBackend { 
-            responses: std::sync::Mutex::new(vec![crate::StreamEvent::Content("Response 2".to_string())]) 
+        let backend2 = MockBackend {
+            responses: std::sync::Mutex::new(vec![crate::StreamEvent::Content(
+                "Response 2".to_string(),
+            )]),
         };
         conversation = conversation.with_user("User 2");
         run_agent_loop(&backend2, &registry, &host, &mut conversation, 5, None).await?;
 
         // Total should be 4: U1, A1, U2, A2
-        assert_eq!(conversation.messages().len(), 4, "The 'Amnesia-Dragon' has consumed the history!");
-        assert!(conversation.messages()[1].content.to_string().contains("Response 1"));
-        assert!(conversation.messages()[3].content.to_string().contains("Response 2"));
-        
+        assert_eq!(
+            conversation.messages().len(),
+            4,
+            "The 'Amnesia-Dragon' has consumed the history!"
+        );
+        assert!(
+            conversation.messages()[1]
+                .content
+                .to_string()
+                .contains("Response 1")
+        );
+        assert!(
+            conversation.messages()[3]
+                .content
+                .to_string()
+                .contains("Response 2")
+        );
+
         Ok(())
     }
 
@@ -1312,16 +1390,30 @@ mod tests {
         let history = conversation.messages();
         assert_eq!(history.len(), 4, "Tool interaction was not chronicled!");
         assert_eq!(history[1].role, Role::Assistant, "Assistant turn missing");
-        assert!(history[1].tool_calls.is_some(), "Tool call missing from history");
-        assert_eq!(history[2].role, Role::Tool, "Tool result missing from history");
-        assert_eq!(history[3].role, Role::Assistant, "Final assistant response missing");
+        assert!(
+            history[1].tool_calls.is_some(),
+            "Tool call missing from history"
+        );
+        assert_eq!(
+            history[2].role,
+            Role::Tool,
+            "Tool result missing from history"
+        );
+        assert_eq!(
+            history[3].role,
+            Role::Assistant,
+            "Final assistant response missing"
+        );
 
         Ok(())
     }
 
     #[tokio::test]
     async fn test_search_knowledge_base_precision_quest() -> Result<()> {
-        let kb = Arc::new(KnowledgeBase::new("http://localhost:6334", "http://localhost:11434")?);
+        let kb = Arc::new(KnowledgeBase::new(
+            "http://localhost:6334",
+            "http://localhost:11434",
+        )?);
         let tool = SearchKnowledgeBaseTool::new(kb.clone());
         let host = TestHost;
 
@@ -1330,39 +1422,48 @@ mod tests {
             "query": "test query",
             "categories": ["ARCHIVE", "INSIGHT"]
         });
-        
+
         // We can't easily mock the internal KnowledgeBase::search return values without a trait,
         // but we can at least verify it doesn't panic and returns a valid string result (even if empty).
         let result = tool.execute(args, &host).await?;
-        assert!(result.contains("No results found.") || result.contains("[") , "Historian returned nonsense!");
+        assert!(
+            result.contains("No results found.") || result.contains("["),
+            "Historian returned nonsense!"
+        );
 
         Ok(())
     }
 
     #[tokio::test]
     async fn test_historian_bias_check() -> Result<()> {
-        let kb = Arc::new(KnowledgeBase::new("http://localhost:6334", "http://localhost:11434")?);
+        let kb = Arc::new(KnowledgeBase::new(
+            "http://localhost:6334",
+            "http://localhost:11434",
+        )?);
         let tool = SearchKnowledgeBaseTool::new(kb.clone());
         let host = TestHost;
 
         // Turn 1: No categories provided
         let args = json!({ "query": "default search" });
         let _result = tool.execute(args, &host).await?;
-        
-        // Verification of the "Bias" requires observing the internal call, 
+
+        // Verification of the "Bias" requires observing the internal call,
         // which we've verified in the code refactor. This test ensures it still runs.
         Ok(())
     }
 
     #[tokio::test]
     async fn test_philosopher_clarity_quest() -> Result<()> {
-        let kb = Arc::new(KnowledgeBase::new("http://localhost:6334", "http://localhost:11434")?);
+        let kb = Arc::new(KnowledgeBase::new(
+            "http://localhost:6334",
+            "http://localhost:11434",
+        )?);
         let tool = RecallPastInsightsTool::new(kb.clone());
         let host = TestHost;
 
         let args = json!({ "query": "architectural core" });
         let _result = tool.execute(args, &host).await?;
-        
+
         Ok(())
     }
 }
@@ -1491,3 +1592,168 @@ impl Tool for ManageTasksTool {
         }
     }
 }
+
+pub struct FetchContiguousMemoryTool {
+    kb: Arc<KnowledgeBase>,
+}
+
+impl FetchContiguousMemoryTool {
+    pub fn new(kb: Arc<KnowledgeBase>) -> Self {
+        Self { kb }
+    }
+}
+
+#[async_trait]
+impl Tool for FetchContiguousMemoryTool {
+    fn name(&self) -> &str {
+        "fetch_contiguous_memory"
+    }
+
+    fn description(&self) -> &str {
+        "Fetches the complete, original message from the archive using a message_id. Use this when a normal memory search returns a truncated 'Chunk X/Y' and you need to read the surrounding context."
+    }
+
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "message_id": {
+                    "type": "string",
+                    "description": "The UUID of the message to retrieve."
+                }
+            },
+            "required": ["message_id"]
+        })
+    }
+
+    async fn execute(&self, args: Value, _host: &dyn ToolHost) -> Result<String> {
+        let message_id = args["message_id"]
+            .as_str()
+            .ok_or(anyhow!("Missing message_id"))?;
+
+        let chunks = self.kb.fetch_by_message_id("aemacs_docs", message_id).await?;
+
+        if chunks.is_empty() {
+            return Ok(format!("No memory chunks found for message_id: {}", message_id));
+        }
+
+        let mut full_text = String::new();
+        full_text.push_str(&format!("<contiguous_memory id=\"{}\">\n", message_id));
+        for chunk in chunks {
+            full_text.push_str(&chunk.content);
+            full_text.push('\n');
+        }
+        full_text.push_str("</contiguous_memory>");
+
+        Ok(full_text)
+    }
+}
+
+#[cfg(test)]
+mod weaver_tests {
+    use super::*;
+    use serde_json::json;
+
+    // A dummy host to satisfy the tool execution signature.
+    struct TestHost;
+    #[async_trait]
+    impl ToolHost for TestHost {
+        async fn ask_approval(&self, _description: &str) -> bool { true }
+        async fn ask_user(&self, _question: &str) -> String { "Test".to_string() }
+        fn get_agent_id(&self) -> String { "test_agent".to_string() }
+        fn report_progress(&self, _tool_name: String, _is_running: bool) {}
+    }
+
+    #[tokio::test]
+    async fn test_fetch_contiguous_memory_offline_quest() -> Result<()> {
+        let kb = Arc::new(KnowledgeBase::new(
+            "http://localhost:12345",
+            "http://localhost:11434",
+        )?);
+        let tool = FetchContiguousMemoryTool::new(kb.clone());
+        let host = TestHost;
+
+        let args = json!({
+            "message_id": "test-uuid-1234"
+        });
+
+        let result = tool.execute(args, &host).await;
+        
+        // We expect it to fail gracefully with an anyhow error because the dummy port is closed,
+        // rather than panicking.
+        assert!(result.is_err(), "Expected graceful failure when Qdrant is offline.");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("Failed to fetch by message_id"), "Error message should contain expected context.");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_fetch_contiguous_memory_missing_arg() -> Result<()> {
+        let kb = Arc::new(KnowledgeBase::new(
+            "http://localhost:12345",
+            "http://localhost:11434",
+        )?);
+        let tool = FetchContiguousMemoryTool::new(kb.clone());
+        let host = TestHost;
+
+        let args = json!({});
+
+        let result = tool.execute(args, &host).await;
+        
+        assert!(result.is_err(), "Expected error for missing arguments.");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("Missing message_id"), "Error message should indicate missing arg.");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_write_kb_brevity_enforcement() -> Result<()> {
+        let kb = Arc::new(KnowledgeBase::new(
+            "http://localhost:12345",
+            "http://localhost:11434",
+        )?);
+        let tool = WriteKnowledgeBaseTool::new(kb.clone());
+        let host = TestHost;
+
+        let long_string = "a".repeat(2005);
+        let args = json!({
+            "content": long_string,
+            "category": "INSIGHT"
+        });
+
+        let result = tool.execute(args, &host).await;
+        
+        assert!(result.is_err(), "Expected error for oversized content.");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("Memory content too large"), "Error message should enforce brevity limit.");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_write_kb_archive_rejection() -> Result<()> {
+        let kb = Arc::new(KnowledgeBase::new(
+            "http://localhost:12345",
+            "http://localhost:11434",
+        )?);
+        let tool = WriteKnowledgeBaseTool::new(kb.clone());
+        let host = TestHost;
+
+        let args = json!({
+            "content": "A valid insight",
+            "category": "ARCHIVE"
+        });
+
+        let result = tool.execute(args, &host).await;
+        
+        assert!(result.is_err(), "Expected error for restricted category.");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("Permission Denied: Agents cannot manually write to the ARCHIVE tier"), "Error message should reject ARCHIVE.");
+
+        Ok(())
+    }
+}
+
+

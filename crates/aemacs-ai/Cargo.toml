@@ -32,6 +32,7 @@ chrono = { workspace = true }
 regex = { workspace = true }
 urlencoding = { workspace = true }
 async-channel = { workspace = true }
+text-splitter = { version = "0.16", features = ["markdown"] }
 
 [dev-dependencies]
 tracing-subscriber = { workspace = true }

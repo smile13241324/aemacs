@@ -225,15 +225,8 @@ impl Conversation {
 
         for (i, msg) in self.messages.iter().enumerate() {
             let timestamp = msg.timestamp.to_rfc3339();
-            let mut metadata = std::collections::HashMap::new();
-            metadata.insert("type".to_string(), "episodic_memory".to_string());
-            metadata.insert("category".to_string(), "ARCHIVE".to_string());
-            metadata.insert("agent_id".to_string(), agent_name.to_string());
-            metadata.insert("session_id".to_string(), session_id.to_string());
-            metadata.insert("role".to_string(), format!("{:?}", msg.role));
-            metadata.insert("timestamp".to_string(), timestamp.clone());
-            metadata.insert("turn_index".to_string(), i.to_string());
-
+            let message_id = uuid::Uuid::new_v4().to_string();
+            
             let mut display_content = msg.content.to_string();
 
             if let Some(tool_calls) = &msg.tool_calls {
@@ -254,23 +247,48 @@ impl Conversation {
                 display_content.push_str(&format!("[TOOL_CALL_ID: {}]", tool_id));
             }
 
-            // Contextualize the chunk for the embedder with tiered prefix and agent identity
-            let chunk = format!(
-                "[ARCHIVE] [Agent: {}] [{}] | Session: {} | Turn: {} | Role: {:?} | Content: {}",
-                agent_name.to_uppercase(),
-                timestamp,
-                session_id,
-                i,
-                msg.role,
-                display_content
-            );
+            let chunks = Self::chunk_message_for_archive(&display_content, 1000);
+            let total_chunks = chunks.len();
 
-            tracing::debug!("🧠 [Memory] Archiving to Qdrant: {:?}", chunk);
+            for (chunk_idx, chunk_text) in chunks.iter().enumerate() {
+                let mut metadata = std::collections::HashMap::new();
+                metadata.insert("type".to_string(), "episodic_memory".to_string());
+                metadata.insert("category".to_string(), "ARCHIVE".to_string());
+                metadata.insert("agent_id".to_string(), agent_name.to_string());
+                metadata.insert("session_id".to_string(), session_id.to_string());
+                metadata.insert("role".to_string(), format!("{:?}", msg.role));
+                metadata.insert("timestamp".to_string(), timestamp.clone());
+                metadata.insert("turn_index".to_string(), i.to_string());
+                metadata.insert("message_id".to_string(), message_id.clone());
+                metadata.insert("chunk_index".to_string(), chunk_idx.to_string());
+                metadata.insert("total_chunks".to_string(), total_chunks.to_string());
 
-            kb.add_document("aemacs_docs", &chunk, Some(metadata))
-                .await?;
+                let chunk_context = format!(
+                    "[ARCHIVE] [Agent: {}] [{}] | Session: {} | Turn: {} | Chunk {}/{} | Role: {:?} | Content: {}",
+                    agent_name.to_uppercase(),
+                    timestamp,
+                    session_id,
+                    i,
+                    chunk_idx + 1,
+                    total_chunks,
+                    msg.role,
+                    chunk_text
+                );
+
+                tracing::debug!("🧠 [Memory] Archiving Chunk {}/{} to Qdrant", chunk_idx + 1, total_chunks);
+
+                kb.add_document("aemacs_docs", &chunk_context, Some(metadata))
+                    .await?;
+            }
         }
         Ok(())
+    }
+
+    /// Pure function for shredding large strings into markdown-aware chunks.
+    pub fn chunk_message_for_archive(content: &str, chunk_size: usize) -> Vec<String> {
+        use text_splitter::MarkdownSplitter;
+        let splitter = MarkdownSplitter::new(chunk_size);
+        splitter.chunks(content).map(|s| s.to_string()).collect()
     }
 
     /// Consumes the builder and returns the AIRequest.
@@ -479,7 +497,7 @@ mod tests {
             assert!(text.contains("You are the Neural Engine of Æmacs"));
             assert!(text.contains(&format!("(v{})", VERSION)));
             assert!(text.contains("you stand as an equal to the human architect"));
-            
+
             // Assert Markdown requirement
             assert!(text.contains("Format your responses using Markdown"));
         } else {
@@ -491,13 +509,63 @@ mod tests {
     fn test_conversation_sync_and_attribution_quest() {
         let mut conv = Conversation::new("hermes3:8b-llama3.1-q4_K_M");
         let persona = Persona::new("bob", "Architect", "You are Bob.", None);
-        
+
         // Task 02: Verify set_persona updates the state
         conv.set_persona(persona.clone());
         assert_eq!(conv.active_persona.as_ref().unwrap().name, "bob");
 
         // Verify attribution logic
-        let agent_name = conv.active_persona.as_ref().map(|p| p.name.as_str()).unwrap_or("GLOBAL_MESH");
+        let agent_name = conv
+            .active_persona
+            .as_ref()
+            .map(|p| p.name.as_str())
+            .unwrap_or("GLOBAL_MESH");
         assert_eq!(agent_name, "bob", "Agent ID attribution failed!");
     }
+
+    #[test]
+    fn test_mnemonic_shredder_chunking_quest() {
+        let long_markdown = r#"
+# The Great Wall of Rust
+This is a very long text that must be shredded by the noble text-splitter crate.
+
+## Section 1: The Foundations
+Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.
+
+```rust
+fn unwrap_dragon_slayer() {
+    println!("I slay the unwrap!");
+    // More code here to take up space...
+    let x = 100;
+    let y = 200;
+    assert_eq!(x + y, 300);
 }
+```
+
+## Section 2: The High Towers
+Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
+
+* Item 1
+* Item 2
+* Item 3 with a really long explanation that just keeps going and going and going and going to ensure we hit the token limits and force a split right in the middle of a paragraph if necessary, though ideally the splitter respects the markdown boundaries!
+
+Let us see if the Mnemonic Shredder holds its edge!
+        "#;
+
+        let chunk_size = 300;
+        let chunks = Conversation::chunk_message_for_archive(long_markdown, chunk_size);
+
+        assert!(chunks.len() > 1, "The shredder failed to split the document!");
+
+        for (i, chunk) in chunks.iter().enumerate() {
+            assert!(
+                chunk.len() <= chunk_size,
+                "Chunk {} exceeded the maximum size! Size: {}, Max: {}",
+                i,
+                chunk.len(),
+                chunk_size
+            );
+        }
+    }
+}
+

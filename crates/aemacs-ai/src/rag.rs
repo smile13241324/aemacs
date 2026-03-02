@@ -5,7 +5,7 @@ use qdrant_client::Qdrant;
 use qdrant_client::qdrant::r#match::MatchValue;
 use qdrant_client::qdrant::{
     Condition, CreateCollection, DeletePointsBuilder, Distance, FieldCondition, Filter, PointId,
-    PointStruct, SearchPoints, UpsertPoints, VectorParams, VectorsConfig,
+    PointStruct, SearchPoints, ScrollPoints, UpsertPoints, VectorParams, VectorsConfig,
     condition::ConditionOneOf, vectors_config::Config,
 };
 use serde::Serialize;
@@ -34,6 +34,132 @@ impl KnowledgeBase {
         let embedder = OllamaEmbedder::new(ollama_url, "nomic-embed-text");
 
         Ok(Self { client, embedder })
+    }
+
+    /// Fetches the most recent 'CORE' or 'INSIGHT' directives for Mnemic Reflection.
+    pub async fn get_core_directives(&self, collection_name: &str) -> anyhow::Result<Vec<String>> {
+        let mut cat_conditions = Vec::new();
+        for cat in &["CORE", "INSIGHT"] {
+            cat_conditions.push(Condition {
+                condition_one_of: Some(ConditionOneOf::Field(FieldCondition {
+                    key: "category".to_string(),
+                    r#match: Some(qdrant_client::qdrant::Match {
+                        match_value: Some(MatchValue::Keyword(cat.to_string())),
+                    }),
+                    ..Default::default()
+                })),
+            });
+        }
+
+        let filter = Filter {
+            should: cat_conditions,
+            ..Default::default()
+        };
+
+        let request = ScrollPoints {
+            collection_name: collection_name.to_string(),
+            filter: Some(filter),
+            limit: Some(10), // Fetch up to 10 core directives
+            with_payload: Some(true.into()),
+            ..Default::default()
+        };
+
+        let scroll_result = self.client.scroll(request).await.map_err(|e| {
+            anyhow::anyhow!("Failed to scroll core directives: {}", e)
+        })?;
+
+        let mut contents = Vec::new();
+        for point in scroll_result.result {
+            if let Some(content) = point.payload.get("content").and_then(|v| v.as_str()) {
+                contents.push(content.to_string());
+            }
+        }
+
+        Ok(contents)
+    }
+
+    /// Fetches all chunks associated with a specific message_id, sorted by their original chunk index.
+    pub async fn fetch_by_message_id(
+        &self,
+        collection_name: &str,
+        message_id: &str,
+    ) -> AIResult<Vec<MemoryResult>> {
+        let filter = Filter {
+            must: vec![Condition {
+                condition_one_of: Some(ConditionOneOf::Field(FieldCondition {
+                    key: "message_id".to_string(),
+                    r#match: Some(qdrant_client::qdrant::Match {
+                        match_value: Some(MatchValue::Keyword(message_id.to_string())),
+                    }),
+                    ..Default::default()
+                })),
+            }],
+            ..Default::default()
+        };
+
+        let request = ScrollPoints {
+            collection_name: collection_name.to_string(),
+            filter: Some(filter),
+            limit: Some(100), // Generous limit for a single message
+            with_payload: Some(true.into()),
+            ..Default::default()
+        };
+
+        let scroll_result = self.client.scroll(request).await.map_err(|e| {
+            AIError::ConnectorError(format!("Failed to fetch by message_id: {}", e))
+        })?;
+
+        let mut results: Vec<(usize, MemoryResult)> = scroll_result
+            .result
+            .into_iter()
+            .filter_map(|point| {
+                let content = point
+                    .payload
+                    .get("content")
+                    .and_then(|v| v.as_str().map(|s| s.to_string()))?;
+
+                let mut metadata = HashMap::new();
+                let mut chunk_idx = 0;
+
+                for (k, v) in point.payload {
+                    if k == "chunk_index" {
+                        if let Some(s) = v.as_str() {
+                            chunk_idx = s.parse::<usize>().unwrap_or(0);
+                        } else if let Some(n) = v.as_integer() {
+                            chunk_idx = n as usize;
+                        }
+                    }
+                    if k != "content" {
+                        metadata.insert(k, v.into());
+                    }
+                }
+
+                let id = match point.id {
+                    Some(id) => match id.point_id_options {
+                        Some(qdrant_client::qdrant::point_id::PointIdOptions::Num(n)) => {
+                            n.to_string()
+                        }
+                        Some(qdrant_client::qdrant::point_id::PointIdOptions::Uuid(s)) => s,
+                        None => "unknown".to_string(),
+                    },
+                    None => "unknown".to_string(),
+                };
+
+                Some((
+                    chunk_idx,
+                    MemoryResult {
+                        id,
+                        content,
+                        metadata,
+                    },
+                ))
+            })
+            .collect();
+
+        // Sort by chunk index to ensure chronological reconstruction
+        results.sort_by_key(|k| k.0);
+
+        Ok(results.into_iter().map(|(_, res)| res).collect())
     }
 
     pub async fn ensure_collection(&self, collection_name: &str, dim: u64) -> AIResult<()> {
@@ -270,3 +396,25 @@ impl KnowledgeBase {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_get_core_directives_query_builder_quest() {
+        // Since testing against a live Qdrant instance is flaky in isolated CI
+        // environments, we verify that the function is structurally sound
+        // and handles connection errors gracefully without unwrapping/panicking.
+        let kb = KnowledgeBase::new("http://localhost:12345", "http://localhost:11434").unwrap();
+        
+        let result = kb.get_core_directives("test_collection").await;
+        
+        // We expect it to fail gracefully with an anyhow error because the dummy port is closed,
+        // rather than panicking.
+        assert!(result.is_err(), "Expected graceful failure when Qdrant is offline.");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("Failed to scroll core directives"), "Error message should contain expected context.");
+    }
+}
+
