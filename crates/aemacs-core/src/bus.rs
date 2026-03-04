@@ -1,5 +1,6 @@
 use gpui::Global;
 use std::path::PathBuf;
+use tokio::sync::broadcast;
 
 #[derive(Debug, Clone)]
 pub enum SystemEvent {
@@ -24,14 +25,17 @@ pub enum SystemEvent {
 
 #[derive(Clone)]
 pub struct EventBus {
-    pub tx: async_channel::Sender<SystemEvent>,
-    pub rx: async_channel::Receiver<SystemEvent>,
+    pub tx: broadcast::Sender<SystemEvent>,
 }
 
 impl EventBus {
     pub fn new() -> Self {
-        let (tx, rx) = async_channel::unbounded();
-        Self { tx, rx }
+        let (tx, _rx) = broadcast::channel(1024);
+        Self { tx }
+    }
+
+    pub fn subscribe(&self) -> broadcast::Receiver<SystemEvent> {
+        self.tx.subscribe()
     }
 }
 

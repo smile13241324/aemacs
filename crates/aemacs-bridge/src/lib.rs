@@ -56,7 +56,14 @@ pub async fn spawn_intent_bridge(bus: EventBus, port: u16) -> Result<()> {
     println!("🔑 [BRIDGE] SECURITY KEY: {}", api_key);
     println!("📡 [BRIDGE] Listening on: http://0.0.0.0:{}/intent\n", port);
 
-    let state = Arc::new(BridgeState { bus, api_key });
+    spawn_intent_bridge_internal(bus, port, api_key).await
+}
+
+async fn spawn_intent_bridge_internal(bus: EventBus, port: u16, api_key: String) -> Result<()> {
+    let state = Arc::new(BridgeState {
+        bus,
+        api_key: api_key.clone(),
+    });
 
     let app = Router::new()
         .route("/intent", post(handle_intent))
@@ -71,6 +78,89 @@ pub async fn spawn_intent_bridge(bus: EventBus, port: u16) -> Result<()> {
     });
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aemacs_core::bus::{EventBus, SystemEvent};
+    use serde_json::json;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn test_webhook_handshake_quest() -> Result<()> {
+        let bus = EventBus::new();
+        let api_key = "test-sacred-key".to_string();
+
+        // 1. Forge the Bridge state manually to get the assigned port
+        let state = Arc::new(BridgeState {
+            bus: bus.clone(),
+            api_key: api_key.clone(),
+        });
+
+        let app = Router::new()
+            .route("/intent", post(handle_intent))
+            .with_state(state);
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let addr = listener.local_addr()?;
+        let port = addr.port();
+
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        let client = reqwest::Client::new();
+        let url = format!("http://127.0.0.1:{}/intent", port);
+
+        let valid_intent = ExternalIntent {
+            source: "TestRunner".to_string(),
+            intent_type: "ManualTrigger".to_string(),
+            data: json!({ "command": "deploy" }),
+        };
+
+        // 2. Quest: Unauthorized Joust (No Key)
+        let res = client.post(&url).json(&valid_intent).send().await?;
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+
+        // 3. Quest: Unauthorized Joust (Wrong Key)
+        let res = client
+            .post(&url)
+            .header("X-API-KEY", "wrong-key")
+            .json(&valid_intent)
+            .send()
+            .await?;
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+
+        // 4. Quest: Successful Handshake
+        let res = client
+            .post(&url)
+            .header("X-API-KEY", &api_key)
+            .json(&valid_intent)
+            .send()
+            .await?;
+
+        assert_eq!(res.status(), StatusCode::OK);
+
+        // 5. Verify signal reached the bus
+        let mut rx = bus.subscribe();
+        let event = tokio::time::timeout(Duration::from_secs(1), rx.recv()).await??;
+
+        if let SystemEvent::Signal {
+            source,
+            event_type,
+            payload,
+        } = event
+        {
+            assert_eq!(source, "Bridge:TestRunner");
+            assert_eq!(event_type, "ManualTrigger");
+            assert!(payload.contains("deploy"));
+        } else {
+            panic!("Unexpected event type on bus: {:?}", event);
+        }
+
+        Ok(())
+    }
 }
 
 async fn handle_intent(
@@ -105,7 +195,7 @@ async fn handle_intent(
         payload,
     };
 
-    if state.bus.tx.send(event).await.is_err() {
+    if state.bus.tx.send(event).is_err() {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
             "Event Bus disconnected".to_string(),

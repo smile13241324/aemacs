@@ -110,7 +110,7 @@ impl Workspace {
             let editor_list_state = gpui::ListState::new(0, gpui::ListAlignment::Top, px(100.0));
             let focus_handle = cx.focus_handle();
 
-            let rx = bus.rx.clone();
+            let mut rx = bus.subscribe();
 
             // --- Tool Approval Listener (ACO-035) ---
             cx.spawn(

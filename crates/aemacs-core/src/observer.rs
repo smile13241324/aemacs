@@ -3,6 +3,8 @@ use crate::signals::TimePulseSignal;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use log::{info, warn};
+use notify::{RecursiveMode, Watcher};
+use std::path::PathBuf;
 use std::time::Duration;
 
 /// Defines the generic interface for all sensory and autonomous trigger modules.
@@ -54,11 +56,216 @@ impl ReactiveObserver for TimePulseObserver {
                 payload,
             };
 
-            if let Err(_) = bus.tx.send(system_event).await {
+            if let Err(_) = bus.tx.send(system_event) {
                 warn!("EventBus disconnected. {} shutting down.", self.name());
                 break;
             }
         }
+
+        Ok(())
+    }
+}
+
+/// ACO-026: Watches the filesystem for changes and emits signals to wake the agent.
+pub struct FileWatcherObserver {
+    pub path: PathBuf,
+}
+
+#[async_trait]
+impl ReactiveObserver for FileWatcherObserver {
+    fn name(&self) -> &str {
+        "FileWatcherObserver"
+    }
+
+    async fn run(&self, bus: EventBus) -> Result<()> {
+        info!(
+            "👁️  [{}] Watching path: {:?}",
+            self.name(),
+            self.path
+        );
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel(10);
+
+        let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+            if let Ok(event) = res {
+                // Only trigger on data modifications/saves
+                if event.kind.is_modify() {
+                    let _ = tx.blocking_send(event);
+                }
+            }
+        })?;
+
+        watcher.watch(&self.path, RecursiveMode::Recursive)?;
+
+        while let Some(event) = rx.recv().await {
+            for path in event.paths {
+                let rel_path = path.strip_prefix(&self.path).unwrap_or(&path);
+                
+                // ACO-029-03: Contextual Flooding (Quick Read)
+                let snippet = if path.is_file() {
+                    match std::fs::read_to_string(&path) {
+                        Ok(content) => {
+                            let lines: Vec<&str> = content.lines().take(50).collect();
+                            Some(lines.join("\n"))
+                        }
+                        Err(_) => None,
+                    }
+                } else {
+                    None
+                };
+
+                let payload = if let Some(s) = snippet {
+                    format!("{}@@{}", rel_path.to_string_lossy(), s)
+                } else {
+                    rel_path.to_string_lossy().to_string()
+                };
+
+                let system_event = SystemEvent::Signal {
+                    source: "FileSystem".to_string(),
+                    event_type: "FileSaved".to_string(),
+                    payload,
+                };
+
+                if let Err(_) = bus.tx.send(system_event) {
+                    warn!("EventBus disconnected. {} shutting down.", self.name());
+                    return Ok(());
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+/// ACO-030: Monitors an IMAP mailbox for new task intents from authorized senders.
+pub struct EmailObserver {
+    pub server: String,
+    pub port: u16,
+    pub user: String,
+    pub password: String,
+    pub authorized_senders: Vec<String>,
+}
+
+#[async_trait]
+impl ReactiveObserver for EmailObserver {
+    fn name(&self) -> &str {
+        "EmailObserver"
+    }
+
+    async fn run(&self, _bus: EventBus) -> Result<()> {
+        info!("📬 [{}] Stub active. Real-time Email listening requires crate API alignment.", self.name());
+        
+        // Placeholder loop to keep the observer alive
+        loop {
+            tokio::time::sleep(Duration::from_secs(3600)).await;
+        }
+    }
+}
+
+/// ACO-030: Monitors a Matrix room for mentions and direct messages.
+pub struct ChatObserver {
+    pub homeserver: String,
+    pub access_token: String,
+}
+
+#[async_trait]
+impl ReactiveObserver for ChatObserver {
+    fn name(&self) -> &str {
+        "ChatObserver"
+    }
+
+    async fn run(&self, _bus: EventBus) -> Result<()> {
+        info!("💬 [{}] Stub active. Real-time Chat listening requires crate API alignment.", self.name());
+
+        // Placeholder loop to keep the observer alive
+        loop {
+            tokio::time::sleep(Duration::from_secs(3600)).await;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bus::EventBus;
+
+    #[tokio::test]
+    async fn test_time_pulse_emission_quest() -> Result<()> {
+        let bus = EventBus::new();
+        let observer = TimePulseObserver { interval_seconds: 1 };
+
+        // Quest: Spawn the pulse in the background
+        let bus_clone = bus.clone();
+        tokio::spawn(async move {
+            let _ = observer.run(bus_clone).await;
+        });
+
+        // 1. Wait for the first tick (tokio interval ticks immediately on first call)
+        let mut rx = bus.subscribe();
+        
+        // Check for the first tick signal
+        let event = tokio::time::timeout(Duration::from_millis(500), rx.recv()).await??;
+        
+        if let SystemEvent::Signal { source, event_type, .. } = event {
+            assert_eq!(source, "TimePulseObserver");
+            assert_eq!(event_type, "TimePulse");
+        } else {
+            panic!("Received unexpected event type from TimePulseObserver!");
+        }
+
+        // 2. Wait for second tick
+        let event = tokio::time::timeout(Duration::from_millis(1500), rx.recv()).await??;
+        if let SystemEvent::Signal { event_type, .. } = event {
+            assert_eq!(event_type, "TimePulse");
+        } else {
+            panic!("Second tick failed to arrive!");
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_file_watcher_signal_quest() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let bus = EventBus::new();
+        let observer = FileWatcherObserver {
+            path: temp_dir.path().to_path_buf(),
+        };
+
+        // Quest: Spawn watcher
+        let bus_clone = bus.clone();
+        tokio::spawn(async move {
+            let _ = observer.run(bus_clone).await;
+        });
+
+        // Give it a moment to initialize
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        // 1. Trigger a file modification
+        let test_file = temp_dir.path().join("test.rs");
+        let content = "pub fn truth() -> bool { true }";
+        std::fs::write(&test_file, content)?;
+
+        // 2. Wait for signal
+        let mut rx = bus.subscribe();
+        
+        // We use a loop because other signals (like TimePulse) might be on the bus in a real app, 
+        // but here it's a fresh bus. However, notify might emit multiple events.
+        let mut found_content = false;
+        for _ in 0..10 {
+            if let Ok(Ok(event)) = tokio::time::timeout(Duration::from_secs(1), rx.recv()).await {
+                if let SystemEvent::Signal { source, event_type, payload } = event {
+                    if source == "FileSystem" && event_type == "FileSaved" {
+                        if payload.contains("@@") && payload.contains(content) {
+                            found_content = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        
+        assert!(found_content, "FileWatcherObserver failed to flood the signal with file context!");
 
         Ok(())
     }

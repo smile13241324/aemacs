@@ -4,6 +4,7 @@ use aemacs_ai::connectors::openai_compatible::OpenAICompatibleBackend;
 use aemacs_ai::mcp::ToolRegistry;
 use aemacs_ai::rag::KnowledgeBase;
 use aemacs_core::bus::EventBus;
+use aemacs_core::observer::ReactiveObserver;
 use anyhow::Result;
 use log::info;
 use std::sync::Arc;
@@ -63,13 +64,30 @@ async fn main() -> Result<()> {
             None,
         ));
 
-        // C. Optional External Bridge (ACO-007-03)
+        // C. Sensory Observers (ACO-007, ACO-026)
         if bridge_port > 0 {
             aemacs_bridge::spawn_intent_bridge(bus.clone(), bridge_port).await?;
         }
 
+        let watcher = aemacs_core::observer::FileWatcherObserver {
+            path: std::env::current_dir()?,
+        };
+        let bus_watcher = bus.clone();
+        tokio::spawn(async move {
+            if let Err(e) = watcher.run(bus_watcher).await {
+                log::warn!("👁️ FileWatcher failed: {}", e);
+            }
+        });
+
         // D. Launch Sovereign Orchestrator
-        let service = AutonomousService::new(bus, agent_name, persona_registry, registry, backend);
+        let service = AutonomousService::new(
+            bus,
+            agent_name,
+            persona_registry,
+            registry,
+            backend,
+            kb.clone(),
+        );
         service.start(interval).await?;
 
         return Ok(());

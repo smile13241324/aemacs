@@ -59,6 +59,11 @@ impl ToolHost for ConsoleHost {
             println!("   {} Executing {}...", color("⚒", CYAN), tool_name);
         }
     }
+
+    async fn emit_signal(&self, event_type: String, payload: String) -> anyhow::Result<()> {
+        println!("\n⚡ [SIGNAL] {}: {}", event_type, payload);
+        Ok(())
+    }
 }
 
 // --- Main ---
