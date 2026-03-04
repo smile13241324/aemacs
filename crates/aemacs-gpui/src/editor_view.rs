@@ -1,6 +1,6 @@
 use aemacs_core::{Editor, mode::Mode};
 use gpui::prelude::*;
-use gpui::{IntoElement, div, px, rgb, rgba, list, ListState, AnyElement};
+use gpui::{IntoElement, div, px, rgb, rgba, list, ListState};
 
 pub fn render_editor_view(editor: &Editor, list_state: ListState, wrap: bool) -> impl IntoElement {
     let theme_bg = rgb(0x282c34);

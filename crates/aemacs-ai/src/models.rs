@@ -328,3 +328,36 @@ pub fn get_models_for_tier(tier_str: &str) -> Vec<&'static ModelDefinition> {
     MODELS.iter().filter(|m| m.tier == target_tier).collect()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_models_for_tier_high() {
+        let models = get_models_for_tier("HIGH");
+        assert!(!models.is_empty(), "Should return high-tier models.");
+        for model in models {
+            assert_eq!(model.tier, ModelTier::High);
+        }
+    }
+
+    #[test]
+    fn test_get_models_for_tier_case_insensitive() {
+        let models = get_models_for_tier("medium");
+        assert!(!models.is_empty());
+        for model in models {
+            assert_eq!(model.tier, ModelTier::Medium);
+        }
+    }
+
+    #[test]
+    fn test_get_models_for_tier_invalid_fallback() {
+        // Fallback to LOW
+        let models = get_models_for_tier("TOASTER");
+        assert!(!models.is_empty());
+        for model in models {
+            assert_eq!(model.tier, ModelTier::Low);
+        }
+    }
+}
+

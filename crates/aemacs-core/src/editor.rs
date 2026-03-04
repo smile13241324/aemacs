@@ -669,4 +669,41 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn test_large_buffer_performance() {
+        use std::time::Instant;
+        let mut editor = Editor::new();
+
+        // 1. Create a large buffer (100,000 lines)
+        // We build the string first to test the ROPE mutation performance specifically.
+        let mut content = String::with_capacity(100_000 * 30);
+        for _i in 0..100_000 {
+            content.push_str("This is a standard line of code in the forge.\n");
+        }
+        editor.insert(&content);
+
+        let initial_line_count = editor.line_count();
+        assert!(initial_line_count >= 100_000);
+
+        // 2. Perform a mutation at the very end of the buffer
+        // Moving to the end first (though insert already did that)
+        let start_time = Instant::now();
+        editor.insert("The Final Forge Strike.");
+        let duration = start_time.elapsed();
+
+        // 3. Assert that the operation is instantaneous (O(log N))
+        // Even with 100k lines, a Rope insertion should be sub-millisecond.
+        // We use 10ms as a very safe "Quest-worthy" threshold.
+        assert!(
+            duration.as_millis() < 10,
+            "The Dragon of Latency has struck! Mutation took {:?}.",
+            duration
+        );
+
+        // Verify line count integrity
+        editor.insert_newline();
+        assert_eq!(editor.line_count(), initial_line_count + 1);
+    }
 }
+

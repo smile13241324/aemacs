@@ -69,10 +69,18 @@ axum = "0.7"
 gpui = { git = "https://github.com/zed-industries/zed" }
 tree-sitter = "0.26.3"
 tree-sitter-rust = "0.23.2"
+tree-sitter-python = "0.23.2"
+tree-sitter-go = "0.23.4"
+tree-sitter-haskell = "0.23.1"
+tree-sitter-c = "0.23.2"
+tree-sitter-cpp = "0.23.4"
+tree-sitter-javascript = "0.23.1"
+glob = "0.3"
 pyo3 = { version = "0.27.2", features = ["auto-initialize"] }
 tower-lsp = "0.20"
 ropey = "1.6"
 pulldown-cmark = "0.10"
+tempfile = "3.10"
 
 [dependencies]
 # Main App Dependencies
