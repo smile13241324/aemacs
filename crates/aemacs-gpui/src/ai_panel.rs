@@ -6,7 +6,8 @@ use aemacs_core::{Editor, command::Command, mode::Mode};
 use async_trait::async_trait;
 use gpui::prelude::*;
 use gpui::{
-    App, Context, Entity, FocusHandle, IntoElement, KeyDownEvent, Window, div, px, relative, rgb,
+    App, AsyncApp, Context, Entity, FocusHandle, IntoElement, KeyDownEvent, WeakEntity, Window,
+    div, px, relative, rgb,
 };
 use regex::Regex;
 use std::path::Path;
@@ -33,7 +34,7 @@ pub enum HostRequest {
 
 pub struct GuiHost {
     pub request_tx: async_channel::Sender<HostRequest>,
-    pub event_tx: async_channel::Sender<aemacs_core::bus::SystemEvent>,
+    pub event_tx: tokio::sync::broadcast::Sender<aemacs_core::bus::SystemEvent>,
     pub agent_id: String,
 }
 
@@ -75,12 +76,22 @@ impl ToolHost for GuiHost {
         if let Ok(payload) = serde_json::to_string(&signal) {
             let _ = self
                 .event_tx
-                .try_send(aemacs_core::bus::SystemEvent::Signal {
+                .send(aemacs_core::bus::SystemEvent::Signal {
                     source: "Specialist".to_string(),
                     event_type: "ToolProgress".to_string(),
                     payload,
                 });
         }
+    }
+
+    async fn emit_signal(&self, event_type: String, payload: String) -> anyhow::Result<()> {
+        let event = aemacs_core::bus::SystemEvent::Signal {
+            source: format!("Agent:{}", self.agent_id),
+            event_type,
+            payload,
+        };
+        let _ = self.event_tx.send(event);
+        Ok(())
     }
 }
 
@@ -93,7 +104,7 @@ pub struct AiPanel {
     messages: Vec<ChatMessage>,
     backend: OpenAICompatibleBackend,
     host_tx: async_channel::Sender<HostRequest>, // Store TX for later ToolRegistry integration
-    event_tx: async_channel::Sender<aemacs_core::bus::SystemEvent>,
+    event_tx: tokio::sync::broadcast::Sender<aemacs_core::bus::SystemEvent>,
     tasks: Vec<aemacs_core::task::Task>, // Store current plan (ACO-034)
     selected_model_index: usize,
     selected_context: u32,
@@ -110,6 +121,7 @@ pub struct AiPanel {
     pub shimmer_offset: f32,
     pub window_handle: gpui::AnyWindowHandle,
     pub available_models: Vec<&'static aemacs_ai::models::ModelDefinition>,
+    pub available_personas: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -281,12 +293,32 @@ impl AiPanel {
                 shimmer_offset: 0.0,
                 window_handle,
                 available_models,
+                available_personas: Vec::new(),
             }
         });
 
+        // Initialize personas (ACO-005)
+        let persona_registry = panel.read(cx).persona_registry.clone();
+        let panel_weak_init = panel.downgrade();
+        cx.spawn(|cx: &mut gpui::AsyncApp| {
+            let cx = cx.clone();
+            async move {
+                let personas = persona_registry.list_personas().await;
+                let _ = cx.update(|app: &mut App| {
+                    if let Some(panel) = panel_weak_init.upgrade() {
+                        panel.update(app, |this, cx| {
+                            this.available_personas = personas;
+                            cx.notify();
+                        });
+                    }
+                });
+            }
+        })
+        .detach();
+
         // ACO-026 & ACO-030: Spawn the Triage Router Listener
         let panel_weak = panel.downgrade();
-        let rx = bus.rx.clone();
+        let mut rx = bus.subscribe();
 
         cx.spawn(|cx: &mut gpui::AsyncApp| {
             let cx = cx.clone();
@@ -336,14 +368,23 @@ impl AiPanel {
 
                                             // Ensure we have an active persona, default to marjin for refactoring
                                             if this.active_persona_name.is_none() {
-                                                this.active_persona_name = Some("marjin".to_string());
-                                                if let Some(persona) = futures::executor::block_on(this.persona_registry.get_persona("marjin")) {
-                                                    this.conversation.set_persona(persona);
-                                                }
+                                                let persona_registry = this.persona_registry.clone();
+                                                cx.spawn(|panel: WeakEntity<Self>, mut cx: &mut AsyncApp| {
+                                                    let mut cx = cx.clone();
+                                                    async move {
+                                                        if let Some(persona) = persona_registry.get_persona("marjin").await {
+                                                            let _ = panel.update(&mut cx, |this, cx: &mut Context<Self>| {
+                                                                this.active_persona_name = Some("marjin".to_string());
+                                                                this.conversation.set_persona(persona);
+                                                                this.trigger_ai_response(cx);
+                                                                cx.notify();
+                                                            });
+                                                        }
+                                                    }
+                                                }).detach();
+                                            } else {
+                                                this.trigger_ai_response(cx);
                                             }
-
-                                            cx.notify();
-                                            this.trigger_ai_response(cx);
                                         }
                                     });
                                 }
@@ -465,12 +506,35 @@ impl AiPanel {
                             .message_scroll_handle
                             .set_offset(gpui::point(px(0.0), px(999999.0)));
                     }
+                    AgentEvent::ToolStarted(name) => {
+                        panel.current_action = Some(format!("Executing {}...", name));
+                    }
+                    AgentEvent::ToolFinished(_name, _success) => {
+                        panel.current_action = None;
+                    }
                     AgentEvent::Result(updated_conv) => {
                         panel.status = CognitiveStatus::Idle;
                         panel.conversation = updated_conv;
-                        // The stream has already populated the UI message and run_agent_loop
-                        // has already appended the message to the conversation history.
-                        // We do not overwrite last_msg.content here, otherwise we lose multi-turn tool outputs!
+                        
+                        // ACO-025: Synchronize UI messages with the updated conversation
+                        // This ensures tool outputs are visible in the message area.
+                        let conv_messages = panel.conversation.messages();
+                        if conv_messages.len() > panel.messages.len() {
+                            for i in panel.messages.len()..conv_messages.len() {
+                                let m = &conv_messages[i];
+                                let role = match m.role {
+                                    aemacs_ai::Role::System => "System",
+                                    aemacs_ai::Role::User => "User",
+                                    aemacs_ai::Role::Assistant => "AI",
+                                    aemacs_ai::Role::Tool => "Tool",
+                                };
+                                let content = match &m.content {
+                                    aemacs_ai::Content::Text(t) => t.clone(),
+                                    _ => String::new(),
+                                };
+                                panel.messages.push(ChatMessage::new(role, content));
+                            }
+                        }
                     }
                     AgentEvent::Error(e) => {
                         panel.status = CognitiveStatus::Errored(e.to_string());
@@ -517,7 +581,6 @@ impl AiPanel {
     }
 
     fn render_agent_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let personas = futures::executor::block_on(self.persona_registry.list_personas());
         let active_persona = self.active_persona_name.clone();
 
         div()
@@ -531,8 +594,8 @@ impl AiPanel {
                     .child("ACTIVE AGENT"),
             )
             .child(div().flex().flex_wrap().gap(px(4.0)).children(
-                personas.into_iter().enumerate().map(|(i, name)| {
-                    let is_selected = active_persona.as_ref() == Some(&name);
+                self.available_personas.iter().enumerate().map(|(i, name)| {
+                    let is_selected = active_persona.as_ref() == Some(name);
                     let name_clone = name.clone();
                     div()
                         .id(i)
@@ -559,13 +622,20 @@ impl AiPanel {
                         .cursor_pointer()
                         .on_click(cx.listener(move |this, _, _window, cx| {
                             let name_lower = name_clone.clone();
-                            if let Some(persona) = futures::executor::block_on(
-                                this.persona_registry.get_persona(&name_lower),
-                            ) {
-                                this.active_persona_name = Some(name_lower);
-                                this.conversation.set_persona(persona);
-                                cx.notify();
-                            }
+                            let persona_registry = this.persona_registry.clone();
+                            
+                            cx.spawn(|panel: WeakEntity<Self>, mut cx: &mut AsyncApp| {
+                                let mut cx = cx.clone();
+                                async move {
+                                    if let Some(persona) = persona_registry.get_persona(&name_lower).await {
+                                        let _ = panel.update(&mut cx, |this, cx: &mut Context<Self>| {
+                                            this.active_persona_name = Some(name_lower);
+                                            this.conversation.set_persona(persona);
+                                            cx.notify();
+                                        });
+                                    }
+                                }
+                            }).detach();
                         }))
                         .child(name.to_uppercase())
                 }),
@@ -1152,7 +1222,44 @@ impl Render for AiPanel {
                     .track_scroll(&self.message_scroll_handle)
                     .children(self.messages.iter().map(|msg| {
                         let is_user = msg.role == "User";
-                        let is_error = msg.content.starts_with("❌");
+                        let is_tool = msg.role == "Tool";
+                        let is_error = msg.content.contains("🛠️ TOOL_ERROR");
+
+                        if is_tool {
+                            // ACO-025: Visual Loom - Specialist Pill
+                            return div()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap_x(px(8.0))
+                                .px(px(8.0))
+                                .py(px(4.0))
+                                .h(px(24.0))
+                                .rounded_full()
+                                .border_1()
+                                .border_color(if is_error {
+                                    rgb(0xe06c75) // Error Red
+                                } else {
+                                    rgb(0x61afef) // Sapphire Blue
+                                })
+                                .bg(rgb(0x1e1e1e))
+                                .child(
+                                    div()
+                                        .text_size(px(12.0))
+                                        .child("🛠️")
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(11.0))
+                                        .text_color(if is_error {
+                                            rgb(0xe06c75)
+                                        } else {
+                                            rgb(0xabb2bf)
+                                        })
+                                        .child("Specialist action performed")
+                                )
+                                .into_any_element();
+                        }
 
                         div()
                             .w_full()
@@ -1226,6 +1333,7 @@ impl Render for AiPanel {
                                         }
                                     })),
                             )
+                            .into_any_element()
                     })),
             )
             .child(self.render_cognition_pulse(cx))
@@ -1268,6 +1376,7 @@ impl Render for AiPanel {
 }
 
 mod tests {
+    use super::ChatMessage;
     use regex::Regex;
 
     /// This quest verifies that our regex can distinguish between the Holy Statute (@)
@@ -1279,14 +1388,14 @@ mod tests {
         let find_statute_indices = |text: &str| {
             statute_regex
                 .find_iter(text)
-                .filter(|m| {
+                .filter(|m: &regex::Match| {
                     let start = m.start();
                     if start > 0 && text.as_bytes()[start - 1] == b'@' {
                         return false;
                     }
                     true
                 })
-                .map(|m| (m.start(), m.end()))
+                .map(|m: regex::Match| (m.start(), m.end()))
                 .collect::<Vec<(usize, usize)>>()
         };
 
@@ -1330,7 +1439,7 @@ mod tests {
         // 1. Extract Statute
         let statute_matches: Vec<_> = statute_regex
             .find_iter(&text)
-            .filter(|m| {
+            .filter(|m: &regex::Match| {
                 let start = m.start();
                 if start > 0 && text.as_bytes()[start - 1] == b'@' {
                     return false;
@@ -1348,9 +1457,9 @@ mod tests {
         // 3. Execute Stripping (Simulating the reverse-iteration logic used in send_message)
         let mut all_tags: Vec<_> = statute_matches
             .iter()
-            .map(|m| (m.start(), m.end()))
+            .map(|m: &regex::Match| (m.start(), m.end()))
             .collect();
-        all_tags.extend(material_matches.iter().map(|m| (m.start(), m.end())));
+        all_tags.extend(material_matches.iter().map(|m: &regex::Match| (m.start(), m.end())));
         all_tags.sort_by_key(|k| k.0);
 
         for (start, end) in all_tags.iter().rev() {
@@ -1363,4 +1472,26 @@ mod tests {
             "The final intent must be pure and free of metadata tags!"
         );
     }
+
+    #[test]
+    fn test_visual_loom_pill_logic() {
+        // Quest: Verify that the UI correctly identifies tool roles and errors
+        
+        // Case 1: Successful tool
+        let msg_ok = ChatMessage::new("Tool", "Result of read_file...");
+        let is_tool_ok = msg_ok.role == "Tool";
+        let is_error_ok = msg_ok.content.contains("🛠️ TOOL_ERROR");
+        
+        assert!(is_tool_ok, "Should identify 'Tool' role.");
+        assert!(!is_error_ok, "Should not identify error in successful result.");
+
+        // Case 2: Failed tool
+        let msg_err = ChatMessage::new("Tool", "🛠️ TOOL_ERROR: [File not found]");
+        let is_tool_err = msg_err.role == "Tool";
+        let is_error_err = msg_err.content.contains("🛠️ TOOL_ERROR");
+
+        assert!(is_tool_err, "Should identify 'Tool' role.");
+        assert!(is_error_err, "Should identify error when TOOL_ERROR prefix is present.");
+    }
 }
+

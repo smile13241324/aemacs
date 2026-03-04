@@ -9,6 +9,8 @@ use std::sync::Arc;
 
 pub enum AgentEvent {
     StreamChunk(String),
+    ToolStarted(String),
+    ToolFinished(String, bool),
     Result(Conversation),
     Error(String),
 }
@@ -31,13 +33,20 @@ where
     let tx_for_stream = tx.clone();
 
     let tokio_task = Tokio::spawn(cx, async move {
-        // Create a proxy channel to map String chunks to AgentEvent::StreamChunk
-        let (chunk_tx, chunk_rx) = async_channel::unbounded::<String>();
+        // Create a proxy channel to map LoopSignals to AgentEvents
+        let (signal_tx, signal_rx) = async_channel::unbounded::<aemacs_ai::mcp::LoopSignal>();
         let tx_proxy = tx_for_stream.clone();
 
         tokio::spawn(async move {
-            while let Ok(chunk) = chunk_rx.recv().await {
-                let _ = tx_proxy.send(AgentEvent::StreamChunk(chunk)).await;
+            while let Ok(signal) = signal_rx.recv().await {
+                let event = match signal {
+                    aemacs_ai::mcp::LoopSignal::Text(chunk) => AgentEvent::StreamChunk(chunk),
+                    aemacs_ai::mcp::LoopSignal::ToolCall(name) => AgentEvent::ToolStarted(name),
+                    aemacs_ai::mcp::LoopSignal::ToolResult(name, success) => {
+                        AgentEvent::ToolFinished(name, success)
+                    }
+                };
+                let _ = tx_proxy.send(event).await;
             }
         });
 
@@ -47,7 +56,7 @@ where
             &host,
             &mut conversation,
             10,
-            Some(chunk_tx),
+            Some(signal_tx),
         )
         .await
         {

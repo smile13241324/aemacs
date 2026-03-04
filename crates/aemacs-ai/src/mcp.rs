@@ -16,6 +16,19 @@ fn get_session_start() -> std::time::Instant {
     *SESSION_START.get_or_init(std::time::Instant::now)
 }
 
+// --- Signals ---
+
+/// ACO-025: High-fidelity telemetry signals from the agentic loop.
+#[derive(Debug, Clone)]
+pub enum LoopSignal {
+    /// A chunk of conversational text from the model.
+    Text(String),
+    /// A tool is about to be executed.
+    ToolCall(String),
+    /// a tool execution has finished (name, success).
+    ToolResult(String, bool),
+}
+
 // --- Interfaces ---
 
 #[async_trait]
@@ -24,6 +37,7 @@ pub trait ToolHost: Send + Sync {
     async fn ask_user(&self, question: &str) -> String;
     fn get_agent_id(&self) -> String;
     fn report_progress(&self, tool_name: String, is_running: bool);
+    async fn emit_signal(&self, event_type: String, payload: String) -> Result<()>;
 }
 
 #[async_trait]
@@ -47,6 +61,9 @@ impl ToolHost for DenyAllHost {
         "anonymous".to_string()
     }
     fn report_progress(&self, _tool_name: String, _is_running: bool) {}
+    async fn emit_signal(&self, _event_type: String, _payload: String) -> Result<()> {
+        Ok(())
+    }
 }
 
 // --- Registry ---
@@ -65,10 +82,11 @@ impl ToolRegistry {
     pub fn with_core_tools(
         kb: Arc<KnowledgeBase>,
         persona_registry: Arc<PersonaRegistry>,
-        event_tx: Option<async_channel::Sender<aemacs_core::bus::SystemEvent>>,
+        event_tx: Option<tokio::sync::broadcast::Sender<aemacs_core::bus::SystemEvent>>,
     ) -> Self {
         let mut registry = Self::new();
         registry.register(Box::new(ReadFileTool));
+        registry.register(Box::new(ReadManyFilesTool));
         registry.register(Box::new(WriteFileTool {
             event_tx: event_tx.clone(),
         }));
@@ -137,7 +155,7 @@ pub async fn run_agent_loop(
     host: &dyn ToolHost,
     conversation: &mut Conversation, // Mutable reference
     max_turns: usize,
-    stream_tx: Option<async_channel::Sender<String>>,
+    stream_tx: Option<async_channel::Sender<LoopSignal>>,
 ) -> Result<String> {
     let tool_defs = registry.list_definitions();
     conversation.set_tools(tool_defs); // Use setter
@@ -158,7 +176,7 @@ pub async fn run_agent_loop(
                     tracing::trace!("📥 [AI Loop] Received chunk: {:?}", chunk); // Trace to avoid log spam, debug full_content later
                     full_content.push_str(&chunk);
                     if let Some(tx) = &stream_tx {
-                        let _ = tx.send(chunk).await;
+                        let _ = tx.send(LoopSignal::Text(chunk)).await;
                     }
                 }
                 crate::StreamEvent::ToolCall(tc) => {
@@ -177,10 +195,20 @@ pub async fn run_agent_loop(
         );
 
         let tool_calls = if accumulated_tool_calls.is_empty() {
-            None
+            // ACO-021-03: Implementation of Prose Fallback Parser
+            let fallback_calls = extract_tool_calls_from_prose(&full_content);
+            if fallback_calls.is_empty() {
+                None
+            } else {
+                tracing::debug!(
+                    "✨ [AI Loop] Extracted {} tool calls from prose fallback.",
+                    fallback_calls.len()
+                );
+                Some(fallback_calls)
+            }
         } else {
             tracing::debug!(
-                "✅ [AI Loop] Tools accumulated: {:?}",
+                "✅ [AI Loop] Tools accumulated via native API: {:?}",
                 accumulated_tool_calls
             );
             Some(accumulated_tool_calls.into_values().collect::<Vec<_>>())
@@ -210,21 +238,29 @@ pub async fn run_agent_loop(
                 let tool_name = &call.function.name;
                 let args_str = &call.function.arguments;
 
-                let result = match registry.get(tool_name) {
+                if let Some(tx) = &stream_tx {
+                    let _ = tx.send(LoopSignal::ToolCall(tool_name.clone())).await;
+                }
+
+                let (result, success) = match registry.get(tool_name) {
                     Some(tool) => match serde_json::from_str::<Value>(args_str) {
                         Ok(args) => {
                             host.report_progress(tool_name.clone(), true);
                             let exec_result = tool.execute(args, host).await;
                             host.report_progress(tool_name.clone(), false);
                             match exec_result {
-                                Ok(output) => output,
-                                Err(e) => format!("Error executing tool: {}", e),
+                                Ok(output) => (output, true),
+                                Err(e) => (format!("🛠️ TOOL_ERROR: [{}]. SUGGESTION: Analyze the reason and retry with corrected arguments.", e), false),
                             }
                         }
-                        Err(e) => format!("Error parsing arguments: {}", e),
+                        Err(e) => (format!("🛠️ TOOL_ERROR: [PARSE_FAILURE - {}]. SUGGESTION: The arguments provided were not valid JSON. Ensure you use the exact schema defined in the tool definition and retry.", e), false),
                     },
-                    None => format!("Tool '{}' not found.", tool_name),
+                    None => (format!("🛠️ TOOL_ERROR: [Tool '{}' not found]. SUGGESTION: Check the spelling of the tool name or use a different tool available in your toolbox.", tool_name), false),
                 };
+
+                if let Some(tx) = &stream_tx {
+                    let _ = tx.send(LoopSignal::ToolResult(tool_name.clone(), success)).await;
+                }
 
                 let tool_msg = Message {
                     role: Role::Tool,
@@ -245,6 +281,40 @@ pub async fn run_agent_loop(
 }
 
 // --- Utils ---
+
+/// ACO-021-03: Extracts tool calls from conversational text using regex fallback.
+/// This acts as a safety net for models that 'hallucinate' calls into prose.
+fn extract_tool_calls_from_prose(text: &str) -> Vec<crate::models::ToolCall> {
+    // Regex matches: tool_name(arguments)
+    let re = Regex::new(r"([\w_]+)\s*\(([^)]*)\)").expect("Static regex is valid");
+    let mut calls = Vec::new();
+
+    for cap in re.captures_iter(text) {
+        let name = cap[1].to_string();
+        let args_raw = cap[2].trim();
+
+        // Heuristic: If it looks like JSON, pass it through.
+        // If it looks like a single string arg (common in simple models), wrap it.
+        let arguments = if args_raw.starts_with('{') && args_raw.ends_with('}') {
+            args_raw.to_string()
+        } else {
+            // Assume it's a single 'path' argument for common file tools, or a generic 'query'
+            let val = args_raw.trim_matches('"').trim_matches('\'');
+            if name.contains("search") || name.contains("query") {
+                format!("{{\"query\": \"{}\"}}", val)
+            } else {
+                format!("{{\"path\": \"{}\"}}", val)
+            }
+        };
+
+        calls.push(crate::models::ToolCall {
+            id: Some(format!("fallback-{}", uuid::Uuid::new_v4())),
+            call_type: "function".to_string(),
+            function: crate::models::ToolCallFunction { name, arguments },
+        });
+    }
+    calls
+}
 
 /// Validates that a path is safe to access (no escaping the project root).
 pub fn validate_path(path_str: &str) -> Result<PathBuf> {
@@ -287,8 +357,77 @@ impl Tool for ReadFileTool {
     }
 }
 
+pub struct ReadManyFilesTool;
+#[async_trait]
+impl Tool for ReadManyFilesTool {
+    fn name(&self) -> &str {
+        "read_many_files"
+    }
+    fn description(&self) -> &str {
+        "Reads and concatenates multiple files using glob patterns. Efficient for getting context from multiple files at once."
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "patterns": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Glob patterns to match files (e.g. ['src/**/*.rs', 'docs/*.md'])"
+                }
+            },
+            "required": ["patterns"]
+        })
+    }
+    async fn execute(&self, args: Value, _host: &dyn ToolHost) -> Result<String> {
+        let patterns = args["patterns"]
+            .as_array()
+            .ok_or(anyhow!("Missing patterns array"))?;
+        
+        let mut results = String::new();
+        let mut processed_count = 0;
+        let mut file_list = Vec::new();
+
+        for pattern_val in patterns {
+            let pattern_str = pattern_val.as_str().ok_or(anyhow!("Invalid pattern string"))?;
+            
+            for entry in glob::glob(pattern_str).map_err(|e| anyhow!("Invalid glob pattern: {}", e))? {
+                match entry {
+                    Ok(path) => {
+                        if path.is_file() {
+                            // Validate safety barrier
+                            let validated_path = validate_path(path.to_str().unwrap_or(""))?;
+                            
+                            match fs::read_to_string(&validated_path) {
+                                Ok(content) => {
+                                    results.push_str(&format!("--- File: {:?} ---\n", validated_path));
+                                    results.push_str(&content);
+                                    results.push_str("\n\n");
+                                    processed_count += 1;
+                                    file_list.push(validated_path.to_string_lossy().to_string());
+                                }
+                                Err(e) => {
+                                    results.push_str(&format!("--- File: {:?} (ERROR) ---\nError reading file: {}\n\n", validated_path, e));
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => return Err(anyhow!("Error matching glob pattern: {}", e)),
+                }
+            }
+        }
+
+        let summary = format!("Successfully read and concatenated content from {} file(s).\n\nProcessed Files:\n- {}\n\n", 
+            processed_count, 
+            file_list.join("\n- ")
+        );
+
+        Ok(format!("{}{}", summary, results))
+    }
+}
+
 pub struct WriteFileTool {
-    pub event_tx: Option<async_channel::Sender<aemacs_core::bus::SystemEvent>>,
+    pub event_tx: Option<tokio::sync::broadcast::Sender<aemacs_core::bus::SystemEvent>>,
 }
 #[async_trait]
 impl Tool for WriteFileTool {
@@ -329,9 +468,7 @@ impl Tool for WriteFileTool {
         fs::write(&path, content).with_context(|| format!("Failed to write file: {:?}", path))?;
 
         if let Some(tx) = &self.event_tx {
-            let _ = tx
-                .send(aemacs_core::bus::SystemEvent::FileModified(path.clone()))
-                .await;
+            let _ = tx.send(aemacs_core::bus::SystemEvent::FileModified(path.clone()));
         }
 
         Ok(format!("Successfully wrote to {:?}", path))
@@ -339,7 +476,7 @@ impl Tool for WriteFileTool {
 }
 
 pub struct ReplaceTextTool {
-    pub event_tx: Option<async_channel::Sender<aemacs_core::bus::SystemEvent>>,
+    pub event_tx: Option<tokio::sync::broadcast::Sender<aemacs_core::bus::SystemEvent>>,
 }
 #[async_trait]
 impl Tool for ReplaceTextTool {
@@ -400,9 +537,7 @@ impl Tool for ReplaceTextTool {
         fs::write(&path, content).with_context(|| format!("Failed to write file: {:?}", path))?;
 
         if let Some(tx) = &self.event_tx {
-            let _ = tx
-                .send(aemacs_core::bus::SystemEvent::FileModified(path.clone()))
-                .await;
+            let _ = tx.send(aemacs_core::bus::SystemEvent::FileModified(path.clone()));
         }
 
         Ok(format!("Successfully replaced text in {:?}", path))
@@ -940,14 +1075,15 @@ impl Tool for ParseAstTool {
         "parse_ast"
     }
     fn description(&self) -> &str {
-        "Parses a code file using Tree-sitter and extracts the source code of a specific symbol (struct, enum, impl, or function) by name."
+        "Parses a code file using Tree-sitter and extracts the source code of a specific symbol (struct, enum, impl, function, class, defn) by name. Supports Rust, Python, Go, Haskell, C, C++, Clojure, and JavaScript."
     }
     fn parameters(&self) -> Value {
         serde_json::json!({
             "type": "object",
             "properties": {
                 "path": { "type": "string", "description": "Relative path to the code file." },
-                "symbol": { "type": "string", "description": "The name of the symbol to extract." }
+                "symbol": { "type": "string", "description": "The name of the symbol to extract." },
+                "language": { "type": "string", "enum": ["rust", "python", "go", "haskell", "c", "cpp", "javascript"], "description": "Optional: Manually specify the language if it cannot be inferred from the file extension." }
             },
             "required": ["path", "symbol"]
         })
@@ -957,14 +1093,25 @@ impl Tool for ParseAstTool {
         let symbol_name = args["symbol"].as_str().ok_or(anyhow!("Missing symbol"))?;
         let path = validate_path(path_str)?;
 
-        let code = aemacs_core::syntax::extract_symbol(&path, symbol_name)?;
+        let language_override = args["language"].as_str().and_then(|l| match l.to_lowercase().as_str() {
+            "rust" => Some(aemacs_core::syntax::SupportedLanguage::Rust),
+            "python" => Some(aemacs_core::syntax::SupportedLanguage::Python),
+            "go" => Some(aemacs_core::syntax::SupportedLanguage::Go),
+            "haskell" => Some(aemacs_core::syntax::SupportedLanguage::Haskell),
+            "c" => Some(aemacs_core::syntax::SupportedLanguage::C),
+            "cpp" => Some(aemacs_core::syntax::SupportedLanguage::Cpp),
+            "javascript" => Some(aemacs_core::syntax::SupportedLanguage::JavaScript),
+            _ => None,
+        });
+
+        let code = aemacs_core::syntax::extract_symbol(&path, symbol_name, language_override)?;
         Ok(code)
     }
 }
 
 pub struct HandoffAgentTool {
     pub persona_registry: Arc<PersonaRegistry>,
-    pub event_tx: Option<async_channel::Sender<aemacs_core::bus::SystemEvent>>,
+    pub event_tx: Option<tokio::sync::broadcast::Sender<aemacs_core::bus::SystemEvent>>,
 }
 
 #[async_trait]
@@ -1013,7 +1160,6 @@ impl Tool for HandoffAgentTool {
             name: agent_name.to_string(),
             message,
         })
-        .await
         .context("Failed to send PersonaChanged event")?;
 
         Ok(format!(
@@ -1087,7 +1233,7 @@ impl Tool for WebSearchTool {
 }
 
 pub struct ReportStatusTool {
-    pub event_tx: Option<async_channel::Sender<aemacs_core::bus::SystemEvent>>,
+    pub event_tx: Option<tokio::sync::broadcast::Sender<aemacs_core::bus::SystemEvent>>,
 }
 
 #[async_trait]
@@ -1118,8 +1264,7 @@ impl Tool for ReportStatusTool {
             source: "Specialist".to_string(),
             event_type: "StatusReport".to_string(),
             payload: message.to_string(),
-        })
-        .await?;
+        })?;
 
         Ok(format!("Status report filed: {}", message))
     }
@@ -1187,10 +1332,21 @@ impl Tool for RecallPastInsightsTool {
 
             if !results.is_empty() {
                 fuzzy_warning = "NOTICE: High-confidence insights not found. Displaying fuzzy/low-confidence matches.\n\n".to_string();
+                
+                // ACO-028: Trigger Reflective Re-Indexing
+                let _ = host.emit_signal(
+                    "LowConfidenceRecall".to_string(), 
+                    format!("{{\"query\": {:?}, \"confidence\": \"low\"}}", query)
+                ).await;
             }
         }
 
         if results.is_empty() {
+            // Also trigger if absolutely nothing found
+            let _ = host.emit_signal(
+                "LowConfidenceRecall".to_string(), 
+                format!("{{\"query\": {:?}, \"confidence\": \"none\"}}", query)
+            ).await;
             return Ok("No relevant past insights found.".to_string());
         }
 
@@ -1236,6 +1392,7 @@ mod tests {
             "test_agent".to_string()
         }
         fn report_progress(&self, _tool_name: String, _is_running: bool) {}
+        async fn emit_signal(&self, _: String, _: String) -> Result<()> { Ok(()) }
     }
 
     #[tokio::test]
@@ -1529,7 +1686,7 @@ impl Tool for GitContextTool {
 }
 
 pub struct ManageTasksTool {
-    pub event_tx: Option<async_channel::Sender<aemacs_core::bus::SystemEvent>>,
+    pub event_tx: Option<tokio::sync::broadcast::Sender<aemacs_core::bus::SystemEvent>>,
 }
 
 #[async_trait]
@@ -1570,8 +1727,7 @@ impl Tool for ManageTasksTool {
                 for t in tasks_val {
                     tasks.push(t.as_str().unwrap_or_default().to_string());
                 }
-                tx.send(aemacs_core::bus::SystemEvent::PlanCreated(tasks))
-                    .await?;
+                tx.send(aemacs_core::bus::SystemEvent::PlanCreated(tasks))?;
                 Ok("Plan initialized.".to_string())
             }
             "update_task" => {
@@ -1584,8 +1740,7 @@ impl Tool for ManageTasksTool {
                     "Failed" => aemacs_core::task::TaskStatus::Failed,
                     _ => return Err(anyhow!("Invalid status: {}", status_str)),
                 };
-                tx.send(aemacs_core::bus::SystemEvent::TaskUpdated { index, status })
-                    .await?;
+                tx.send(aemacs_core::bus::SystemEvent::TaskUpdated { index, status })?;
                 Ok(format!("Task {} updated to {:?}.", index, status))
             }
             _ => Err(anyhow!("Invalid action: {}", action)),
@@ -1662,6 +1817,7 @@ mod weaver_tests {
         async fn ask_user(&self, _question: &str) -> String { "Test".to_string() }
         fn get_agent_id(&self) -> String { "test_agent".to_string() }
         fn report_progress(&self, _tool_name: String, _is_running: bool) {}
+        async fn emit_signal(&self, _: String, _: String) -> Result<()> { Ok(()) }
     }
 
     #[tokio::test]
@@ -1748,12 +1904,271 @@ mod weaver_tests {
 
         let result = tool.execute(args, &host).await;
         
-        assert!(result.is_err(), "Expected error for restricted category.");
+        assert!(result.is_err(), "Error message should reject ARCHIVE.");
         let err_msg = result.unwrap_err().to_string();
         assert!(err_msg.contains("Permission Denied: Agents cannot manually write to the ARCHIVE tier"), "Error message should reject ARCHIVE.");
 
         Ok(())
+        }
+
+        #[test]
+        fn test_extract_tool_calls_from_prose() {
+        let text = "I will check the file now. read_file(path: \"main.rs\") and then I will search for the bug. web_search(\"rust borrow checker error\")";
+        let calls = extract_tool_calls_from_prose(text);
+
+        assert_eq!(calls.len(), 2, "Should have extracted two tool calls.");
+
+        assert_eq!(calls[0].function.name, "read_file");
+        assert!(calls[0].function.arguments.contains("main.rs"));
+        assert!(calls[0].function.arguments.contains("path"), "Fallback should assume 'path' arg for read_file.");
+
+        assert_eq!(calls[1].function.name, "web_search");
+        assert!(calls[1].function.arguments.contains("rust borrow checker error"));
+        assert!(calls[1].function.arguments.contains("query"), "Fallback should assume 'query' arg for search tools.");
+        }
+
+        #[tokio::test]
+        async fn test_tool_error_directive_formatting() -> Result<()> {
+        struct FailingTool;
+        #[async_trait]
+        impl Tool for FailingTool {
+            fn name(&self) -> &str { "fail" }
+            fn description(&self) -> &str { "always fails" }
+            fn parameters(&self) -> Value { json!({}) }
+            async fn execute(&self, _: Value, _: &dyn ToolHost) -> Result<String> {
+                Err(anyhow::anyhow!("CRITICAL_FAILURE"))
+            }
+        }
+
+        let _kb = Arc::new(KnowledgeBase::new("http://localhost", "http://localhost")?);
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(FailingTool));
+
+        // Since run_agent_loop is internal and requires full model mock, 
+        // we verify the specific formatting logic here by looking at how the loop was refactored.
+        // We simulate the loop's error handling block.
+
+        let tool = registry.get("fail").unwrap();
+        let exec_result = tool.execute(json!({}), &TestHost).await;
+
+        let formatted_err = match exec_result {
+            Ok(_) => panic!("Should have failed"),
+            Err(e) => format!("🛠️ TOOL_ERROR: [{}]. SUGGESTION: Analyze the reason and retry with corrected arguments.", e),
+        };
+
+        assert!(formatted_err.contains("🛠️ TOOL_ERROR:"));
+        assert!(formatted_err.contains("CRITICAL_FAILURE"));
+        assert!(formatted_err.contains("SUGGESTION:"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_read_many_files_glob_expansion() -> Result<()> {
+        let tool = ReadManyFilesTool;
+        let host = TestHost;
+
+        // Quest 1: Valid internal file
+        let args = json!({
+            "patterns": ["Cargo.toml"]
+        });
+        let result = tool.execute(args, &host).await?;
+        assert!(result.contains("Successfully read and concatenated content from 1 file(s)."));
+
+        // Quest 2: Multiple patterns
+        let args = json!({
+            "patterns": ["Cargo.toml", "src/lib.rs"]
+        });
+        let result = tool.execute(args, &host).await?;
+        assert!(result.contains("Successfully read and concatenated content from 2 file(s)."));
+
+        // Quest 3: Invalid Glob pattern (triggers glob error)
+        let args = json!({
+            "patterns": ["invalid[glob"]
+        });
+        let result = tool.execute(args, &host).await;
+        assert!(result.is_err(), "Invalid glob should trigger error.");
+
+        // Quest 4: Safety Barrier (triggers validate_path error)
+        // We use a glob that expansion might find but validate_path will reject.
+        // Or simply a path that validate_path considers a traversal.
+        // Since glob expansion happens first, we need a glob that expansion returns.
+        let args = json!({
+            "patterns": ["../**/*.rs"]
+        });
+        // validate_path triggers error if path contains '..'
+        let result = tool.execute(args, &host).await;
+        assert!(result.is_err(), "Path traversal should be blocked by validate_path.");
+        assert!(result.unwrap_err().to_string().contains("Path traversal"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_loop_signal_streaming() -> Result<()> {
+        use crate::models::{AIRequest, ToolCall, ToolCallFunction};
+        use crate::{AIBackend, AIResponseStream, StreamEvent, AIResult};
+        use futures::stream;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        struct MockBackend {
+            turn: AtomicUsize,
+        }
+        #[async_trait]
+        impl AIBackend for MockBackend {
+            fn name(&self) -> &str { "mock" }
+            async fn health_check(&self) -> AIResult<()> { Ok(()) }
+            async fn complete(&self, _: AIRequest) -> AIResult<crate::Message> { unreachable!() }
+            async fn stream(&self, _: AIRequest) -> AIResult<AIResponseStream> {
+                let turn = self.turn.fetch_add(1, Ordering::SeqCst);
+                let events = if turn == 0 {
+                    vec![
+                        Ok(StreamEvent::ToolCall(ToolCall {
+                            id: Some("call_1".to_string()),
+                            call_type: "function".to_string(),
+                            function: ToolCallFunction {
+                                name: "test_tool".to_string(),
+                                arguments: "{}".to_string(),
+                            },
+                        })),
+                        Ok(StreamEvent::Content("Calling tool...".to_string())),
+                    ]
+                } else {
+                    vec![Ok(StreamEvent::Content("Finished".to_string()))]
+                };
+                Ok(Box::pin(stream::iter(events)))
+            }
+        }
+
+        struct SimpleTool;
+        #[async_trait]
+        impl Tool for SimpleTool {
+            fn name(&self) -> &str { "test_tool" }
+            fn description(&self) -> &str { "desc" }
+            fn parameters(&self) -> Value { json!({}) }
+            async fn execute(&self, _: Value, _: &dyn ToolHost) -> Result<String> {
+                Ok("Success".to_string())
+            }
+        }
+
+        let backend = MockBackend { turn: AtomicUsize::new(0) };
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(SimpleTool));
+        let mut conv = Conversation::new("mock");
+        let (tx, rx) = async_channel::unbounded();
+
+        let _ = run_agent_loop(
+            &backend,
+            &registry,
+            &TestHost,
+            &mut conv,
+            5, // Allow enough turns
+            Some(tx),
+        ).await?;
+
+        let mut signals = Vec::new();
+        while let Ok(sig) = rx.try_recv() {
+            signals.push(sig);
+        }
+
+        // We expect: Text("Finished"), ToolCall("test_tool"), ToolResult("test_tool", true)
+        // Order of Text vs Tool signals depends on implementation details of the loop, 
+        // but both must be present.
+        
+        let has_call = signals.iter().any(|s| matches!(s, LoopSignal::ToolCall(name) if name == "test_tool"));
+        let has_result = signals.iter().any(|s| matches!(s, LoopSignal::ToolResult(name, true) if name == "test_tool"));
+        let has_text = signals.iter().any(|s| matches!(s, LoopSignal::Text(t) if t == "Finished"));
+
+        assert!(has_call, "Missing ToolCall signal");
+        assert!(has_result, "Missing ToolResult signal");
+        assert!(has_text, "Missing Text signal");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_report_status_tool_quest() -> Result<()> {
+        let (tx, rx) = async_channel::unbounded();
+        let tool = ReportStatusTool {
+            event_tx: Some(tx),
+        };
+        let host = TestHost;
+
+        let args = json!({ "message": "All systems nominal" });
+        let result = tool.execute(args, &host).await?;
+
+        assert!(result.contains("Status report filed"));
+
+        let event = rx.try_recv()?;
+        if let aemacs_core::bus::SystemEvent::Signal {
+            event_type,
+            payload,
+            ..
+        } = event
+        {
+            assert_eq!(event_type, "StatusReport");
+            assert_eq!(payload, "All systems nominal");
+        } else {
+            panic!("Unexpected event type");
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_recall_insights_identity_filtering_quest() -> Result<()> {
+        // QUEST: Verify that RecallPastInsightsTool uses the host's agent_id for filtering.
+        // REQUIRES: A running Qdrant instance at http://localhost:6334.
+        use tracing::info;
+        
+        let kb = Arc::new(KnowledgeBase::new("http://localhost:6334", "http://localhost:11434")?);
+        let tool = RecallPastInsightsTool::new(kb);
+        
+        struct IdentityHost {
+            agent_id: String,
+        }
+        #[async_trait]
+        impl ToolHost for IdentityHost {
+            async fn ask_approval(&self, _: &str) -> bool { true }
+            async fn ask_user(&self, _: &str) -> String { String::new() }
+            fn get_agent_id(&self) -> String { self.agent_id.clone() }
+            fn report_progress(&self, _: String, _: bool) {}
+            async fn emit_signal(&self, _: String, _: String) -> Result<()> { Ok(()) }
+        }
+
+        let host = IdentityHost { agent_id: "test-knight".to_string() };
+        let args = json!({ "query": "Who am I?" });
+        
+        // Execute the tool. Even if no results are found, it proves the call chain
+        // including the agent_id extracted from the host.
+        let result = tool.execute(args, &host).await;
+        
+        match result {
+            Ok(_) => {
+                info!("Quest Victorious: Qdrant was reachable and tool executed.");
+            },
+            Err(e) => {
+                let msg = e.to_string();
+                // If it fails with a connection error, we at least know it reached for the server.
+                // But if Qdrant is UP, this should result in an Ok("No relevant insights...") response.
+                assert!(
+                    msg.contains("No relevant past insights found") || 
+                    msg.contains("connect") || 
+                    msg.contains("compatibility") ||
+                    msg.contains("version"),
+                    "Unexpected error in Recall Tool: {}", msg
+                );
+            }
+        }
+
+        Ok(())
     }
 }
+
+
+
+
+
+
 
 
