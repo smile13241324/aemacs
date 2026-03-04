@@ -395,6 +395,26 @@ impl KnowledgeBase {
 
         Ok(())
     }
+
+    /// ACO-028: Triggers background maintenance/optimization for a specific collection.
+    pub async fn optimize_collection(&self, collection_name: &str) -> AIResult<()> {
+        use qdrant_client::qdrant::UpdateCollection;
+
+        // In Qdrant, we can trigger optimization by updating collection parameters.
+        // We'll just 'touch' the configuration to nudge the indexing engine.
+        let request = UpdateCollection {
+            collection_name: collection_name.to_string(),
+            ..Default::default()
+        };
+
+        self.client
+            .update_collection(request)
+            .await
+            .map_err(|e| AIError::ConnectorError(format!("Optimization nudge failed: {}", e)))?;
+
+        tracing::info!("🧠 [RAG] Background optimization triggered for collection: {}", collection_name);
+        Ok(())
+    }
 }
 
 #[cfg(test)]
