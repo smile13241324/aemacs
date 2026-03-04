@@ -12,6 +12,7 @@ pub mod sentinel;
 pub mod signals;
 pub mod syntax;
 pub mod task;
+pub mod triage;
 pub mod watcher;
 
 use anyhow::Result;
