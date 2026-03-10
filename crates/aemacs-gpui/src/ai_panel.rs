@@ -74,13 +74,11 @@ impl ToolHost for GuiHost {
             is_running,
         };
         if let Ok(payload) = serde_json::to_string(&signal) {
-            let _ = self
-                .event_tx
-                .send(aemacs_core::bus::SystemEvent::Signal {
-                    source: "Specialist".to_string(),
-                    event_type: "ToolProgress".to_string(),
-                    payload,
-                });
+            let _ = self.event_tx.send(aemacs_core::bus::SystemEvent::Signal {
+                source: "Specialist".to_string(),
+                event_type: "ToolProgress".to_string(),
+                payload,
+            });
         }
     }
 
@@ -254,8 +252,14 @@ impl AiPanel {
         available_models: Vec<&'static aemacs_ai::models::ModelDefinition>,
     ) -> Entity<Self> {
         let backend = OpenAICompatibleBackend::new("http://localhost:11434/v1", None);
-        let model_name = available_models.first().map(|m| m.name).unwrap_or("hermes3:8b-llama3.1-q4_K_M");
-        let initial_context = available_models.first().map(|m| m.max_context).unwrap_or(8192);
+        let model_name = available_models
+            .first()
+            .map(|m| m.name)
+            .unwrap_or("hermes3:8b-llama3.1-q4_K_M");
+        let initial_context = available_models
+            .first()
+            .map(|m| m.max_context)
+            .unwrap_or(8192);
 
         let panel = cx.new(|cx| {
             let input_editor = cx.new(|_cx| Editor::new());
@@ -515,7 +519,7 @@ impl AiPanel {
                     AgentEvent::Result(updated_conv) => {
                         panel.status = CognitiveStatus::Idle;
                         panel.conversation = updated_conv;
-                        
+
                         // ACO-025: Synchronize UI messages with the updated conversation
                         // This ensures tool outputs are visible in the message area.
                         let conv_messages = panel.conversation.messages();
@@ -623,19 +627,25 @@ impl AiPanel {
                         .on_click(cx.listener(move |this, _, _window, cx| {
                             let name_lower = name_clone.clone();
                             let persona_registry = this.persona_registry.clone();
-                            
+
                             cx.spawn(|panel: WeakEntity<Self>, mut cx: &mut AsyncApp| {
                                 let mut cx = cx.clone();
                                 async move {
-                                    if let Some(persona) = persona_registry.get_persona(&name_lower).await {
-                                        let _ = panel.update(&mut cx, |this, cx: &mut Context<Self>| {
-                                            this.active_persona_name = Some(name_lower);
-                                            this.conversation.set_persona(persona);
-                                            cx.notify();
-                                        });
+                                    if let Some(persona) =
+                                        persona_registry.get_persona(&name_lower).await
+                                    {
+                                        let _ = panel.update(
+                                            &mut cx,
+                                            |this, cx: &mut Context<Self>| {
+                                                this.active_persona_name = Some(name_lower);
+                                                this.conversation.set_persona(persona);
+                                                cx.notify();
+                                            },
+                                        );
                                     }
                                 }
-                            }).detach();
+                            })
+                            .detach();
                         }))
                         .child(name.to_uppercase())
                 }),
@@ -644,7 +654,7 @@ impl AiPanel {
 
     fn render_model_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let selected_index = self.selected_model_index;
-        
+
         div()
             .flex()
             .flex_col()
@@ -655,102 +665,91 @@ impl AiPanel {
                     .text_color(rgb(0x5c6370))
                     .child("MODEL MATRIX"),
             )
-            .child(
-                div().flex().flex_wrap().gap(px(4.0)).children(
-                    self.available_models
-                        .iter()
-                        .enumerate()
-                        .map(|(i, model)| {
-                            let is_selected = i == selected_index;
-                            
-                            // Role colors (Sacred Palette)
-                            let role_color = match model.role {
-                                aemacs_ai::models::ModelRole::Logic => rgb(0x61afef),    // Sapphire
-                                aemacs_ai::models::ModelRole::Creative => rgb(0xd19a66), // Amber
-                                aemacs_ai::models::ModelRole::Roleplay => rgb(0x98c379), // Emerald
-                            };
+            .child(div().flex().flex_wrap().gap(px(4.0)).children(
+                self.available_models.iter().enumerate().map(|(i, model)| {
+                    let is_selected = i == selected_index;
 
-                            div()
-                                .id(("model", i))
-                                .flex()
-                                .flex_row()
-                                .items_center()
-                                .gap_x(px(4.0))
-                                .px(px(6.0))
-                                .py(px(2.0))
-                                .rounded_md()
-                                .border_1()
-                                .border_color(if is_selected {
-                                    rgb(0xbd93f9)
-                                } else {
-                                    rgb(0x3e4451)
-                                })
-                                .bg(if is_selected {
-                                    rgb(0x282c34)
-                                } else {
-                                    rgb(0x21252b)
-                                })
-                                .text_color(if is_selected {
-                                    rgb(0xffffff)
-                                } else {
-                                    rgb(0xabb2bf)
-                                })
-                                .text_size(px(11.0))
-                                .cursor_pointer()
-                                .on_click(cx.listener(move |this, _, _window, cx| {
-                                    this.selected_model_index = i;
-                                    if let Some(m) = this.available_models.get(i) {
-                                        this.conversation.set_model(m.name);
-                                        this.selected_context = m.max_context;
-                                        this.conversation.set_context_window(this.selected_context);
-                                    }
-                                    cx.notify();
-                                }))
-                                .child(
-                                    div()
-                                        .size(px(6.0))
-                                        .rounded_full()
-                                        .bg(role_color)
-                                )
-                                .child(model.label)
-                        }),
-                ),
-            )
+                    // Role colors (Sacred Palette)
+                    let role_color = match model.role {
+                        aemacs_ai::models::ModelRole::Logic => rgb(0x61afef), // Sapphire
+                        aemacs_ai::models::ModelRole::Creative => rgb(0xd19a66), // Amber
+                        aemacs_ai::models::ModelRole::Roleplay => rgb(0x98c379), // Emerald
+                    };
+
+                    div()
+                        .id(("model", i))
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_x(px(4.0))
+                        .px(px(6.0))
+                        .py(px(2.0))
+                        .rounded_md()
+                        .border_1()
+                        .border_color(if is_selected {
+                            rgb(0xbd93f9)
+                        } else {
+                            rgb(0x3e4451)
+                        })
+                        .bg(if is_selected {
+                            rgb(0x282c34)
+                        } else {
+                            rgb(0x21252b)
+                        })
+                        .text_color(if is_selected {
+                            rgb(0xffffff)
+                        } else {
+                            rgb(0xabb2bf)
+                        })
+                        .text_size(px(11.0))
+                        .cursor_pointer()
+                        .on_click(cx.listener(move |this, _, _window, cx| {
+                            this.selected_model_index = i;
+                            if let Some(m) = this.available_models.get(i) {
+                                this.conversation.set_model(m.name);
+                                this.selected_context = m.max_context;
+                                this.conversation.set_context_window(this.selected_context);
+                            }
+                            cx.notify();
+                        }))
+                        .child(div().size(px(6.0)).rounded_full().bg(role_color))
+                        .child(model.label)
+                }),
+            ))
             .child({
                 let model = self.available_models.get(selected_index);
-                div()
-                    .when_some(model, |this, model| {
-                        this.p(px(8.0))
-                            .bg(rgb(0x181a1f))
-                            .rounded_md()
-                            .mt(px(4.0))
-                            .flex_col()
-                            .gap_y(px(2.0))
-                            .child(
-                                div()
-                                    .text_size(px(10.0))
-                                    .text_color(rgb(0xffffff))
-                                    .child(format!(
-                                        "{} | VRAM: {:.1} GB | Context: {}k",
-                                        model.label,
-                                        model.base_vram_gb,
-                                        model.max_context / 1024
-                                    )),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(11.0))
-                                    .text_color(rgb(0xabb2bf))
-                                    .child(model.model_description),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(9.0))
-                                    .italic()
-                                    .text_color(rgb(0x5c6370))
-                                    .child(model.license_constraints),
-                            )
-                    })
+                div().when_some(model, |this, model| {
+                    this.p(px(8.0))
+                        .bg(rgb(0x181a1f))
+                        .rounded_md()
+                        .mt(px(4.0))
+                        .flex_col()
+                        .gap_y(px(2.0))
+                        .child(
+                            div()
+                                .text_size(px(10.0))
+                                .text_color(rgb(0xffffff))
+                                .child(format!(
+                                    "{} | VRAM: {:.1} GB | Context: {}k",
+                                    model.label,
+                                    model.base_vram_gb,
+                                    model.max_context / 1024
+                                )),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(11.0))
+                                .text_color(rgb(0xabb2bf))
+                                .child(model.model_description),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(9.0))
+                                .italic()
+                                .text_color(rgb(0x5c6370))
+                                .child(model.license_constraints),
+                        )
+                })
             })
     }
 
@@ -830,7 +829,11 @@ impl AiPanel {
         let is_active = !matches!(status, CognitiveStatus::Idle);
 
         let (color, shimmer_width, intensity) = match status {
-            CognitiveStatus::Idle => (gpui::rgba(0x1c315eff), Default::default(), Default::default()), // Dormant cobalt
+            CognitiveStatus::Idle => (
+                gpui::rgba(0x1c315eff),
+                Default::default(),
+                Default::default(),
+            ), // Dormant cobalt
             CognitiveStatus::Thinking => (gpui::rgba(0xffbf00ff), 0.4, 0.8), // Radiating amber
             CognitiveStatus::Streaming => (gpui::rgba(0x00ff7fff), 0.8, 1.0), // Vibrant emerald
             CognitiveStatus::Errored(_) => (gpui::rgba(0xdc143cff), 0.2, 1.0), // Jagged crimson
@@ -845,16 +848,21 @@ impl AiPanel {
             .w_full()
             .when(is_active, |this| {
                 this.bg(gpui::rgba(0x181a1fff)).child(
-                    div().size_full().bg(color).opacity(final_opacity).relative().child(
-                        div()
-                            .absolute()
-                            .top_0()
-                            .bottom_0()
-                            .left(relative(self.shimmer_offset))
-                            .w(relative(shimmer_width))
-                            .bg(gpui::rgba(0xffffffff))
-                            .opacity(0.4), // The "Heat" core
-                    ),
+                    div()
+                        .size_full()
+                        .bg(color)
+                        .opacity(final_opacity)
+                        .relative()
+                        .child(
+                            div()
+                                .absolute()
+                                .top_0()
+                                .bottom_0()
+                                .left(relative(self.shimmer_offset))
+                                .w(relative(shimmer_width))
+                                .bg(gpui::rgba(0xffffffff))
+                                .opacity(0.4), // The "Heat" core
+                        ),
                 )
             })
             .when(!is_active, |this| this.bg(gpui::transparent_black()))
@@ -1109,7 +1117,7 @@ impl Render for AiPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let editor = self.input_editor.read(cx);
         let line_count = editor.line_count();
-        
+
         let current_count = self.input_list_state.item_count();
         if current_count != line_count {
             self.input_list_state.splice(0..current_count, line_count);
@@ -1243,11 +1251,7 @@ impl Render for AiPanel {
                                     rgb(0x61afef) // Sapphire Blue
                                 })
                                 .bg(rgb(0x1e1e1e))
-                                .child(
-                                    div()
-                                        .text_size(px(12.0))
-                                        .child("🛠️")
-                                )
+                                .child(div().text_size(px(12.0)).child("🛠️"))
                                 .child(
                                     div()
                                         .text_size(px(11.0))
@@ -1256,7 +1260,7 @@ impl Render for AiPanel {
                                         } else {
                                             rgb(0xabb2bf)
                                         })
-                                        .child("Specialist action performed")
+                                        .child("Specialist action performed"),
                                 )
                                 .into_any_element();
                         }
@@ -1459,7 +1463,11 @@ mod tests {
             .iter()
             .map(|m: &regex::Match| (m.start(), m.end()))
             .collect();
-        all_tags.extend(material_matches.iter().map(|m: &regex::Match| (m.start(), m.end())));
+        all_tags.extend(
+            material_matches
+                .iter()
+                .map(|m: &regex::Match| (m.start(), m.end())),
+        );
         all_tags.sort_by_key(|k| k.0);
 
         for (start, end) in all_tags.iter().rev() {
@@ -1476,14 +1484,17 @@ mod tests {
     #[test]
     fn test_visual_loom_pill_logic() {
         // Quest: Verify that the UI correctly identifies tool roles and errors
-        
+
         // Case 1: Successful tool
         let msg_ok = ChatMessage::new("Tool", "Result of read_file...");
         let is_tool_ok = msg_ok.role == "Tool";
         let is_error_ok = msg_ok.content.contains("🛠️ TOOL_ERROR");
-        
+
         assert!(is_tool_ok, "Should identify 'Tool' role.");
-        assert!(!is_error_ok, "Should not identify error in successful result.");
+        assert!(
+            !is_error_ok,
+            "Should not identify error in successful result."
+        );
 
         // Case 2: Failed tool
         let msg_err = ChatMessage::new("Tool", "🛠️ TOOL_ERROR: [File not found]");
@@ -1491,7 +1502,9 @@ mod tests {
         let is_error_err = msg_err.content.contains("🛠️ TOOL_ERROR");
 
         assert!(is_tool_err, "Should identify 'Tool' role.");
-        assert!(is_error_err, "Should identify error when TOOL_ERROR prefix is present.");
+        assert!(
+            is_error_err,
+            "Should identify error when TOOL_ERROR prefix is present."
+        );
     }
 }
-

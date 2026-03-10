@@ -1,6 +1,6 @@
 use aemacs_core::{Editor, mode::Mode};
 use gpui::prelude::*;
-use gpui::{IntoElement, div, px, rgb, rgba, list, ListState};
+use gpui::{IntoElement, ListState, div, list, px, rgb, rgba};
 
 pub fn render_editor_view(editor: &Editor, list_state: ListState, wrap: bool) -> impl IntoElement {
     let theme_bg = rgb(0x282c34);
@@ -52,14 +52,12 @@ pub fn render_editor_view(editor: &Editor, list_state: ListState, wrap: bool) ->
                 let safe_col = std::cmp::min(cursor_col_idx, len);
 
                 let pre_text: String = chars.iter().take(safe_col).collect();
-                let cursor_char_str = if safe_col < len
-                    && chars[safe_col] != ' '
-                    && chars[safe_col] != '\n'
-                {
-                    chars[safe_col].to_string()
-                } else {
-                    " ".to_string()
-                };
+                let cursor_char_str =
+                    if safe_col < len && chars[safe_col] != ' ' && chars[safe_col] != '\n' {
+                        chars[safe_col].to_string()
+                    } else {
+                        " ".to_string()
+                    };
                 let post_text: String = chars.iter().skip(safe_col + 1).collect();
 
                 div()

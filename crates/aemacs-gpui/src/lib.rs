@@ -94,7 +94,11 @@ impl Workspace {
             let config = aemacs_core::config::load_user_config();
             let tier_str = config.hardware_tier.unwrap_or_else(|| "LOW".to_string());
             let available_models = aemacs_ai::models::get_models_for_tier(&tier_str);
-            log::info!("🚀 [Workspace] Hardware Tier: {} ({} models loaded)", tier_str, available_models.len());
+            log::info!(
+                "🚀 [Workspace] Hardware Tier: {} ({} models loaded)",
+                tier_str,
+                available_models.len()
+            );
 
             let (host_tx, host_rx) = async_channel::unbounded::<ai_panel::HostRequest>();
             let ai_panel = AiPanel::new(
@@ -438,7 +442,7 @@ impl Render for Workspace {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let editor = self.editor.read(cx);
         let line_count = editor.line_count();
-        
+
         let current_count = self.editor_list_state.item_count();
         if current_count != line_count {
             self.editor_list_state.splice(0..current_count, line_count);
@@ -480,16 +484,22 @@ impl Render for Workspace {
                     .font_family("Fira Code")
                     .text_color(gutter_text)
                     .child(
-                        gpui::list(self.editor_list_state.clone(), move |line_idx, _window, _cx| {
-                            if is_empty {
-                                div().child("~").h(px(20.0)).into_any_element()
-                            } else {
-                                div().child((line_idx + 1).to_string()).h(px(20.0)).into_any_element()
-                            }
-                        })
+                        gpui::list(
+                            self.editor_list_state.clone(),
+                            move |line_idx, _window, _cx| {
+                                if is_empty {
+                                    div().child("~").h(px(20.0)).into_any_element()
+                                } else {
+                                    div()
+                                        .child((line_idx + 1).to_string())
+                                        .h(px(20.0))
+                                        .into_any_element()
+                                }
+                            },
+                        )
                         .w_full()
-                        .h_full()
-                    )
+                        .h_full(),
+                    ),
             )
             .child(if is_empty {
                 self.render_welcome().into_any_element()
