@@ -5,7 +5,7 @@ use qdrant_client::Qdrant;
 use qdrant_client::qdrant::r#match::MatchValue;
 use qdrant_client::qdrant::{
     Condition, CreateCollection, DeletePointsBuilder, Distance, FieldCondition, Filter, PointId,
-    PointStruct, SearchPoints, ScrollPoints, UpsertPoints, VectorParams, VectorsConfig,
+    PointStruct, ScrollPoints, SearchPoints, UpsertPoints, VectorParams, VectorsConfig,
     condition::ConditionOneOf, vectors_config::Config,
 };
 use serde::Serialize;
@@ -64,9 +64,11 @@ impl KnowledgeBase {
             ..Default::default()
         };
 
-        let scroll_result = self.client.scroll(request).await.map_err(|e| {
-            anyhow::anyhow!("Failed to scroll core directives: {}", e)
-        })?;
+        let scroll_result = self
+            .client
+            .scroll(request)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to scroll core directives: {}", e))?;
 
         let mut contents = Vec::new();
         for point in scroll_result.result {
@@ -412,7 +414,10 @@ impl KnowledgeBase {
             .await
             .map_err(|e| AIError::ConnectorError(format!("Optimization nudge failed: {}", e)))?;
 
-        tracing::info!("🧠 [RAG] Background optimization triggered for collection: {}", collection_name);
+        tracing::info!(
+            "🧠 [RAG] Background optimization triggered for collection: {}",
+            collection_name
+        );
         Ok(())
     }
 }
@@ -427,14 +432,19 @@ mod tests {
         // environments, we verify that the function is structurally sound
         // and handles connection errors gracefully without unwrapping/panicking.
         let kb = KnowledgeBase::new("http://localhost:12345", "http://localhost:11434").unwrap();
-        
+
         let result = kb.get_core_directives("test_collection").await;
-        
+
         // We expect it to fail gracefully with an anyhow error because the dummy port is closed,
         // rather than panicking.
-        assert!(result.is_err(), "Expected graceful failure when Qdrant is offline.");
+        assert!(
+            result.is_err(),
+            "Expected graceful failure when Qdrant is offline."
+        );
         let err_msg = result.unwrap_err().to_string();
-        assert!(err_msg.contains("Failed to scroll core directives"), "Error message should contain expected context.");
+        assert!(
+            err_msg.contains("Failed to scroll core directives"),
+            "Error message should contain expected context."
+        );
     }
 }
-

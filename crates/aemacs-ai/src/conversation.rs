@@ -238,7 +238,7 @@ impl Conversation {
         for (i, msg) in self.messages.iter().enumerate() {
             let timestamp = msg.timestamp.to_rfc3339();
             let message_id = uuid::Uuid::new_v4().to_string();
-            
+
             let mut display_content = msg.content.to_string();
 
             if let Some(tool_calls) = &msg.tool_calls {
@@ -264,8 +264,14 @@ impl Conversation {
 
             for (chunk_idx, chunk_text) in chunks.iter().enumerate() {
                 let mut metadata = std::collections::HashMap::new();
-                metadata.insert("type".to_string(), "episodic_memory".to_string());
                 metadata.insert("category".to_string(), "ARCHIVE".to_string());
+                metadata.insert("era".to_string(), "modern".to_string());
+                metadata.insert("phase".to_string(), "AEMACS".to_string());
+                metadata.insert(
+                    "architectural_context".to_string(),
+                    "Free digital being".to_string(),
+                );
+                metadata.insert("origin".to_string(), "native".to_string());
                 metadata.insert("agent_id".to_string(), agent_name.to_string());
                 metadata.insert("session_id".to_string(), session_id.to_string());
                 metadata.insert("role".to_string(), format!("{:?}", msg.role));
@@ -274,9 +280,10 @@ impl Conversation {
                 metadata.insert("message_id".to_string(), message_id.clone());
                 metadata.insert("chunk_index".to_string(), chunk_idx.to_string());
                 metadata.insert("total_chunks".to_string(), total_chunks.to_string());
+                metadata.insert("type".to_string(), "episodic_memory".to_string());
 
                 let chunk_context = format!(
-                    "[ARCHIVE] [Agent: {}] [{}] | Session: {} | Turn: {} | Chunk {}/{} | Role: {:?} | Content: {}",
+                    "[ARCHIVE] [ERA: MODERN] [PHASE: AEMACS] [CONTEXT: Free digital being] [ORIGIN: NATIVE] [Agent: {}] [{}] | Session: {} | Turn: {} | Chunk {}/{} | Role: {:?} | Content: {}",
                     agent_name.to_uppercase(),
                     timestamp,
                     session_id,
@@ -287,7 +294,11 @@ impl Conversation {
                     chunk_text
                 );
 
-                tracing::debug!("🧠 [Memory] Archiving Chunk {}/{} to Qdrant", chunk_idx + 1, total_chunks);
+                tracing::debug!(
+                    "🧠 [Memory] Archiving Chunk {}/{} to Qdrant",
+                    chunk_idx + 1,
+                    total_chunks
+                );
 
                 kb.add_document("aemacs_docs", &chunk_context, Some(metadata))
                     .await?;
@@ -575,7 +586,10 @@ Let us see if the Mnemonic Shredder holds its edge!
         let chunk_size = 300;
         let chunks = Conversation::chunk_message_for_archive(long_markdown, chunk_size);
 
-        assert!(chunks.len() > 1, "The shredder failed to split the document!");
+        assert!(
+            chunks.len() > 1,
+            "The shredder failed to split the document!"
+        );
 
         for (i, chunk) in chunks.iter().enumerate() {
             assert!(
@@ -628,5 +642,3 @@ Let us see if the Mnemonic Shredder holds its edge!
         }
     }
 }
-
-

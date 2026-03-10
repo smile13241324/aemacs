@@ -119,7 +119,10 @@ impl AutonomousService {
         });
 
         // ACO-029-02: Start the Triage Router
-        let triage_router = aemacs_core::triage::TriageRouter::new(self.bus.clone(), std::time::Duration::from_millis(500));
+        let triage_router = aemacs_core::triage::TriageRouter::new(
+            self.bus.clone(),
+            std::time::Duration::from_millis(500),
+        );
         tokio::spawn(async move {
             if let Err(e) = triage_router.run().await {
                 warn!("🧠 Triage Router failed: {}", e);
@@ -152,10 +155,14 @@ impl AutonomousService {
             match event {
                 SystemEvent::Notification(msg) => {
                     if msg.contains("Sanity Compromised") {
-                        warn!("🧠 [AUTONOMOUS] Sentinel Alert received! Initiating Mind-Heal Protocol...");
+                        warn!(
+                            "🧠 [AUTONOMOUS] Sentinel Alert received! Initiating Mind-Heal Protocol..."
+                        );
                         conversation.clear_history();
                         // Re-add the initial persona prompt
-                        if let Some(persona) = self.persona_registry.get_persona(&self.agent_name).await {
+                        if let Some(persona) =
+                            self.persona_registry.get_persona(&self.agent_name).await
+                        {
                             conversation.set_persona(persona);
                         }
                         info!("✨ [AUTONOMOUS] Mind-Heal complete. Conversation history purged.");
@@ -167,7 +174,9 @@ impl AutonomousService {
                     payload,
                 } => {
                     if event_type == "LowConfidenceRecall" {
-                        warn!("🧠 [AUTONOMOUS] Low confidence recall detected. Triggering background maintenance...");
+                        warn!(
+                            "🧠 [AUTONOMOUS] Low confidence recall detected. Triggering background maintenance..."
+                        );
                         let kb = self.kb.clone();
                         tokio::spawn(async move {
                             if let Err(e) = kb.optimize_collection("aemacs_docs").await {
@@ -177,14 +186,19 @@ impl AutonomousService {
                     }
 
                     let trigger_message = if event_type == "AutonomousIntent" {
-                        match serde_json::from_str::<aemacs_core::signals::SignalContext>(&payload) {
+                        match serde_json::from_str::<aemacs_core::signals::SignalContext>(&payload)
+                        {
                             Ok(ctx) => {
-                                let mut msg = format!("A sovereign intent was detected: {:?}\n", ctx.intent);
+                                let mut msg =
+                                    format!("A sovereign intent was detected: {:?}\n", ctx.intent);
                                 if let Some(path) = ctx.file_path {
                                     msg.push_str(&format!("File: {}\n", path));
                                 }
                                 if let Some(snippet) = ctx.snippet {
-                                    msg.push_str(&format!("Context Snippet:\n```\n{}\n```\n", snippet));
+                                    msg.push_str(&format!(
+                                        "Context Snippet:\n```\n{}\n```\n",
+                                        snippet
+                                    ));
                                 }
                                 Some(msg)
                             }
@@ -194,7 +208,7 @@ impl AutonomousService {
                             }
                         }
                     } else if event_type == "TimePulse" {
-                        // Keep legacy fallback for unrouted pulses if needed, 
+                        // Keep legacy fallback for unrouted pulses if needed,
                         // though router handles them now.
                         Some("Tick. Perform a mental inventory and decide on your next autonomous action.".to_string())
                     } else if source.starts_with("Bridge:") {
@@ -211,12 +225,12 @@ impl AutonomousService {
                             "⚡ [AUTONOMOUS] Waking agent: {} (Source: {})",
                             event_type, source
                         );
-                        
+
                         // Phase 2: Mnemic Reflection
                         info!("🔍 [AUTONOMOUS] Performing Mnemic Reflection...");
                         let reflection = perform_mnemic_reflection(&self.kb).await;
                         conversation.add_message(Message::system(reflection));
-                        
+
                         // Action phase
                         conversation.add_message(Message::user(msg));
 
@@ -246,10 +260,7 @@ mod tests {
 
     #[test]
     fn test_format_mnemic_reflection_populated_quest() {
-        let directives = vec![
-            "Rust is Law".to_string(),
-            "Never panic".to_string(),
-        ];
+        let directives = vec!["Rust is Law".to_string(), "Never panic".to_string()];
         let result = format_mnemic_reflection(&directives);
         let expected = "<system_memory_context>\nPrior Insights & Directives:\n- Rust is Law\n- Never panic\n</system_memory_context>";
         assert_eq!(result, expected);
@@ -265,15 +276,21 @@ mod tests {
 
     #[tokio::test]
     async fn test_mind_heal_protocol_quest() -> Result<()> {
-        use crate::mcp::ToolRegistry;
         use crate::connectors::openai_compatible::OpenAICompatibleBackend;
-        
+        use crate::mcp::ToolRegistry;
+
         let bus = EventBus::new();
         let tokio_handle = tokio::runtime::Handle::current();
         let persona_registry = PersonaRegistry::new(tokio_handle).await?;
-        let kb = Arc::new(KnowledgeBase::new("http://localhost:6334", "http://localhost:11434")?);
+        let kb = Arc::new(KnowledgeBase::new(
+            "http://localhost:6334",
+            "http://localhost:11434",
+        )?);
         let registry = Arc::new(ToolRegistry::new());
-        let backend = Arc::new(OpenAICompatibleBackend::new("http://localhost:11434/v1", None));
+        let backend = Arc::new(OpenAICompatibleBackend::new(
+            "http://localhost:11434/v1",
+            None,
+        ));
 
         let service = AutonomousService::new(
             bus.clone(),
@@ -293,10 +310,11 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(200)).await;
 
         // 1. Trigger the Alert
-        bus.tx.send(SystemEvent::Notification("Sanity Compromised".to_string()))?;
+        bus.tx
+            .send(SystemEvent::Notification("Sanity Compromised".to_string()))?;
 
         // 2. Since we can't easily inspect the internal conversation state of the running service
-        // without more instrumentation, we verify that the service is still alive 
+        // without more instrumentation, we verify that the service is still alive
         // and responding to further signals.
         bus.tx.send(SystemEvent::Signal {
             source: "Test".to_string(),
@@ -305,21 +323,27 @@ mod tests {
         })?;
 
         // If the service didn't crash or hang, the quest is provisionally successful.
-        
+
         Ok(())
     }
 
     #[tokio::test]
     async fn test_reflective_maintenance_trigger_quest() -> Result<()> {
-        use crate::mcp::ToolRegistry;
         use crate::connectors::openai_compatible::OpenAICompatibleBackend;
-        
+        use crate::mcp::ToolRegistry;
+
         let bus = EventBus::new();
         let tokio_handle = tokio::runtime::Handle::current();
         let persona_registry = PersonaRegistry::new(tokio_handle).await?;
-        let kb = Arc::new(KnowledgeBase::new("http://localhost:6334", "http://localhost:11434")?);
+        let kb = Arc::new(KnowledgeBase::new(
+            "http://localhost:6334",
+            "http://localhost:11434",
+        )?);
         let registry = Arc::new(ToolRegistry::new());
-        let backend = Arc::new(OpenAICompatibleBackend::new("http://localhost:11434/v1", None));
+        let backend = Arc::new(OpenAICompatibleBackend::new(
+            "http://localhost:11434/v1",
+            None,
+        ));
 
         let service = AutonomousService::new(
             bus.clone(),
