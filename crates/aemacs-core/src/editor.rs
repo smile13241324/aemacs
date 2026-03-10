@@ -706,4 +706,3 @@ mod tests {
         assert_eq!(editor.line_count(), initial_line_count + 1);
     }
 }
-

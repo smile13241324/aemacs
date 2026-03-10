@@ -48,9 +48,9 @@ pub fn spawn_global_watcher(bus: EventBus, workspace_root: PathBuf) -> Result<()
     let mut watcher = GlobalWatcher::new(bus)?;
     watcher.watch(workspace_root)?;
 
-    // Keep the watcher alive in a detached task if needed, but here we assume 
+    // Keep the watcher alive in a detached task if needed, but here we assume
     // the caller manages its lifecycle or we move it to a thread.
     // For now, let's just let it drop if not stored, but GlobalWatcher should be stored.
-    
+
     Ok(())
 }

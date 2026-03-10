@@ -33,7 +33,10 @@ impl TriageRouter {
 
     /// Starts the triage engine, which listens to the bus and emits enriched intents.
     pub async fn run(&self) -> Result<()> {
-        info!("🧠 [TRIAGE] Neural Bridge active. Debounce: {:?}", self.debounce_duration);
+        info!(
+            "🧠 [TRIAGE] Neural Bridge active. Debounce: {:?}",
+            self.debounce_duration
+        );
 
         let mut rx = self.bus.subscribe();
         let (signal_tx, mut signal_rx) = mpsc::channel::<SystemEvent>(100);
@@ -97,7 +100,9 @@ impl TriageRouter {
         // Main Listener
         while let Ok(event) = rx.recv().await {
             match &event {
-                SystemEvent::Signal { source, event_type, .. } => {
+                SystemEvent::Signal {
+                    source, event_type, ..
+                } => {
                     // Avoid recursive loops from our own emitted intents
                     if source == "TriageRouter" || event_type == "AutonomousIntent" {
                         continue;
@@ -117,13 +122,23 @@ impl TriageRouter {
         Self::triage_event_internal(&self.authorized_sources, event)
     }
 
-    fn triage_event_internal(authorized_sources: &Option<Vec<String>>, event: SystemEvent) -> Option<SignalContext> {
+    fn triage_event_internal(
+        authorized_sources: &Option<Vec<String>>,
+        event: SystemEvent,
+    ) -> Option<SignalContext> {
         match event {
-            SystemEvent::Signal { source, event_type, payload } => {
+            SystemEvent::Signal {
+                source,
+                event_type,
+                payload,
+            } => {
                 // ACO-030: Verify Authorization
                 if let Some(authorized) = authorized_sources {
                     if !authorized.iter().any(|s| source.contains(s)) {
-                        warn!("🧠 [TRIAGE] Dropping signal from unauthorized source: {}", source);
+                        warn!(
+                            "🧠 [TRIAGE] Dropping signal from unauthorized source: {}",
+                            source
+                        );
                         return None;
                     }
                 }
@@ -174,11 +189,15 @@ impl TriageRouter {
                     "EmailReceived" | "ChatMessage" => {
                         // ACO-030: Semantic Filter for Communication Mesh
                         let lower_payload = payload.to_lowercase();
-                        let intent = if lower_payload.contains("deploy") || lower_payload.contains("review") {
+                        let intent = if lower_payload.contains("deploy")
+                            || lower_payload.contains("review")
+                        {
                             AutonomousIntent::ReviewChange
                         } else if lower_payload.contains("fix") || lower_payload.contains("error") {
                             AutonomousIntent::FixBuildError
-                        } else if lower_payload.contains("status") || lower_payload.contains("inventory") {
+                        } else if lower_payload.contains("status")
+                            || lower_payload.contains("inventory")
+                        {
                             AutonomousIntent::RoutineCheck
                         } else {
                             AutonomousIntent::SummarizeExternalData
@@ -230,7 +249,12 @@ mod tests {
 
         let mut found_bulk = false;
         while let Ok(event) = rx.try_recv() {
-            if let SystemEvent::Signal { event_type, payload, .. } = event {
+            if let SystemEvent::Signal {
+                event_type,
+                payload,
+                ..
+            } = event
+            {
                 if event_type == "AutonomousIntent" {
                     let ctx: SignalContext = serde_json::from_str(&payload)?;
                     if ctx.intent == AutonomousIntent::BulkUpdate {
@@ -240,7 +264,10 @@ mod tests {
             }
         }
 
-        assert!(found_bulk, "Dampening field failed to merge signals into BulkUpdate!");
+        assert!(
+            found_bulk,
+            "Dampening field failed to merge signals into BulkUpdate!"
+        );
         Ok(())
     }
 
@@ -265,7 +292,12 @@ mod tests {
         let mut found_fix = false;
         for _ in 0..10 {
             if let Ok(Ok(event)) = tokio::time::timeout(Duration::from_secs(1), rx.recv()).await {
-                if let SystemEvent::Signal { event_type, payload, .. } = event {
+                if let SystemEvent::Signal {
+                    event_type,
+                    payload,
+                    ..
+                } = event
+                {
                     if event_type == "AutonomousIntent" {
                         let ctx: SignalContext = serde_json::from_str(&payload)?;
                         if ctx.intent == AutonomousIntent::FixBuildError {
@@ -277,7 +309,10 @@ mod tests {
             }
         }
 
-        assert!(found_fix, "Triage Router failed to map CI_FAILURE to FixBuildError intent!");
+        assert!(
+            found_fix,
+            "Triage Router failed to map CI_FAILURE to FixBuildError intent!"
+        );
         Ok(())
     }
 
@@ -304,7 +339,12 @@ mod tests {
         let mut found_intent = false;
         for _ in 0..10 {
             if let Ok(Ok(event)) = tokio::time::timeout(Duration::from_secs(1), rx.recv()).await {
-                if let SystemEvent::Signal { event_type, payload, .. } = event {
+                if let SystemEvent::Signal {
+                    event_type,
+                    payload,
+                    ..
+                } = event
+                {
                     if event_type == "AutonomousIntent" {
                         let ctx: SignalContext = serde_json::from_str(&payload)?;
                         assert_eq!(ctx.intent, AutonomousIntent::ReviewChange);
@@ -316,7 +356,10 @@ mod tests {
             }
         }
 
-        assert!(found_intent, "EmailReceived signal failed to trigger ReviewChange intent!");
+        assert!(
+            found_intent,
+            "EmailReceived signal failed to trigger ReviewChange intent!"
+        );
         Ok(())
     }
 
@@ -352,12 +395,17 @@ mod tests {
 
         let mut intent_count = 0;
         let mut found_authorized = false;
-        
+
         // Wait for router processing (debounce 50ms + slack)
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         while let Ok(event) = rx.try_recv() {
-            if let SystemEvent::Signal { event_type, payload, .. } = event {
+            if let SystemEvent::Signal {
+                event_type,
+                payload,
+                ..
+            } = event
+            {
                 if event_type == "AutonomousIntent" {
                     let ctx: SignalContext = serde_json::from_str(&payload)?;
                     intent_count += 1;
@@ -368,8 +416,14 @@ mod tests {
             }
         }
 
-        assert_eq!(intent_count, 1, "Triage Router failed to drop the unauthorized signal or missed the authorized one!");
-        assert!(found_authorized, "Authorized signal was incorrectly dropped!");
+        assert_eq!(
+            intent_count, 1,
+            "Triage Router failed to drop the unauthorized signal or missed the authorized one!"
+        );
+        assert!(
+            found_authorized,
+            "Authorized signal was incorrectly dropped!"
+        );
         Ok(())
     }
 }

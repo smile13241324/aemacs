@@ -233,7 +233,9 @@ data Mind = Sovereign | Bound
 
         // Testing signature extraction
         let result = extract_symbol(&path, "pureLogic", None)?;
-        assert!(result.contains("pureLogic :: Int -> Int") || result.contains("pureLogic x = x + 1"));
+        assert!(
+            result.contains("pureLogic :: Int -> Int") || result.contains("pureLogic x = x + 1")
+        );
 
         // Testing data type extraction
         let result = extract_symbol(&path, "Mind", None)?;
@@ -282,7 +284,7 @@ const handlePulse = (data) => {
         let code = "fn mystery() {}";
         // Extension is .tmp, but we tell it it's Rust
         file.write_all(code.as_bytes()).unwrap();
-        
+
         let result = extract_symbol(file.path(), "mystery", Some(SupportedLanguage::Rust))?;
         assert!(result.contains("fn mystery()"));
 

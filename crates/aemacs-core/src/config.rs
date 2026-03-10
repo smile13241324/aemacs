@@ -66,11 +66,7 @@ mod tests {
     #[test]
     fn test_load_config_ron_success() {
         let mut file = NamedTempFile::new().unwrap();
-        writeln!(
-            file,
-            "UserConfig(hardware_tier: Some(\"HIGH\"))"
-        )
-        .unwrap();
+        writeln!(file, "UserConfig(hardware_tier: Some(\"HIGH\"))").unwrap();
 
         let config = load_config_from_path(&file.path().to_path_buf());
         assert_eq!(config.hardware_tier, Some("HIGH".to_string()));
@@ -87,7 +83,7 @@ mod tests {
     #[test]
     fn test_load_config_fallback_on_invalid_ron() {
         let mut file = NamedTempFile::new().unwrap();
-        writeln!(file, "Invalid(format: !![[") .unwrap();
+        writeln!(file, "Invalid(format: !![[").unwrap();
 
         let config = load_config_from_path(&file.path().to_path_buf());
         assert_eq!(config.hardware_tier, Some("LOW".to_string()));

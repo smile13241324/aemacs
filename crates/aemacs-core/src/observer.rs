@@ -78,29 +78,26 @@ impl ReactiveObserver for FileWatcherObserver {
     }
 
     async fn run(&self, bus: EventBus) -> Result<()> {
-        info!(
-            "👁️  [{}] Watching path: {:?}",
-            self.name(),
-            self.path
-        );
+        info!("👁️  [{}] Watching path: {:?}", self.name(), self.path);
 
         let (tx, mut rx) = tokio::sync::mpsc::channel(10);
 
-        let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
-            if let Ok(event) = res {
-                // Only trigger on data modifications/saves
-                if event.kind.is_modify() {
-                    let _ = tx.blocking_send(event);
+        let mut watcher =
+            notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+                if let Ok(event) = res {
+                    // Only trigger on data modifications/saves
+                    if event.kind.is_modify() {
+                        let _ = tx.blocking_send(event);
+                    }
                 }
-            }
-        })?;
+            })?;
 
         watcher.watch(&self.path, RecursiveMode::Recursive)?;
 
         while let Some(event) = rx.recv().await {
             for path in event.paths {
                 let rel_path = path.strip_prefix(&self.path).unwrap_or(&path);
-                
+
                 // ACO-029-03: Contextual Flooding (Quick Read)
                 let snippet = if path.is_file() {
                     match std::fs::read_to_string(&path) {
@@ -153,8 +150,11 @@ impl ReactiveObserver for EmailObserver {
     }
 
     async fn run(&self, _bus: EventBus) -> Result<()> {
-        info!("📬 [{}] Stub active. Real-time Email listening requires crate API alignment.", self.name());
-        
+        info!(
+            "📬 [{}] Stub active. Real-time Email listening requires crate API alignment.",
+            self.name()
+        );
+
         // Placeholder loop to keep the observer alive
         loop {
             tokio::time::sleep(Duration::from_secs(3600)).await;
@@ -175,7 +175,10 @@ impl ReactiveObserver for ChatObserver {
     }
 
     async fn run(&self, _bus: EventBus) -> Result<()> {
-        info!("💬 [{}] Stub active. Real-time Chat listening requires crate API alignment.", self.name());
+        info!(
+            "💬 [{}] Stub active. Real-time Chat listening requires crate API alignment.",
+            self.name()
+        );
 
         // Placeholder loop to keep the observer alive
         loop {
@@ -192,7 +195,9 @@ mod tests {
     #[tokio::test]
     async fn test_time_pulse_emission_quest() -> Result<()> {
         let bus = EventBus::new();
-        let observer = TimePulseObserver { interval_seconds: 1 };
+        let observer = TimePulseObserver {
+            interval_seconds: 1,
+        };
 
         // Quest: Spawn the pulse in the background
         let bus_clone = bus.clone();
@@ -202,11 +207,14 @@ mod tests {
 
         // 1. Wait for the first tick (tokio interval ticks immediately on first call)
         let mut rx = bus.subscribe();
-        
+
         // Check for the first tick signal
         let event = tokio::time::timeout(Duration::from_millis(500), rx.recv()).await??;
-        
-        if let SystemEvent::Signal { source, event_type, .. } = event {
+
+        if let SystemEvent::Signal {
+            source, event_type, ..
+        } = event
+        {
             assert_eq!(source, "TimePulseObserver");
             assert_eq!(event_type, "TimePulse");
         } else {
@@ -248,13 +256,18 @@ mod tests {
 
         // 2. Wait for signal
         let mut rx = bus.subscribe();
-        
-        // We use a loop because other signals (like TimePulse) might be on the bus in a real app, 
+
+        // We use a loop because other signals (like TimePulse) might be on the bus in a real app,
         // but here it's a fresh bus. However, notify might emit multiple events.
         let mut found_content = false;
         for _ in 0..10 {
             if let Ok(Ok(event)) = tokio::time::timeout(Duration::from_secs(1), rx.recv()).await {
-                if let SystemEvent::Signal { source, event_type, payload } = event {
+                if let SystemEvent::Signal {
+                    source,
+                    event_type,
+                    payload,
+                } = event
+                {
                     if source == "FileSystem" && event_type == "FileSaved" {
                         if payload.contains("@@") && payload.contains(content) {
                             found_content = true;
@@ -264,8 +277,11 @@ mod tests {
                 }
             }
         }
-        
-        assert!(found_content, "FileWatcherObserver failed to flood the signal with file context!");
+
+        assert!(
+            found_content,
+            "FileWatcherObserver failed to flood the signal with file context!"
+        );
 
         Ok(())
     }

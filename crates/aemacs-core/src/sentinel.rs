@@ -106,12 +106,11 @@ mod tests {
         }
 
         // Send a report
-        bus.tx
-            .send(SystemEvent::Signal {
-                source: "Test".to_string(),
-                event_type: "StatusReport".to_string(),
-                payload: "I am alive!".to_string(),
-            })?;
+        bus.tx.send(SystemEvent::Signal {
+            source: "Test".to_string(),
+            event_type: "StatusReport".to_string(),
+            payload: "I am alive!".to_string(),
+        })?;
 
         // Wait a bit for the Sentinel to process the signal
         tokio::time::sleep(Duration::from_millis(100)).await;
