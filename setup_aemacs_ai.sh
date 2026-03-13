@@ -25,6 +25,55 @@ QDRANT_CONTAINER="aemacs_memory_qdrant"
 QDRANT_VOLUME="aemacs_qdrant_data"
 QDRANT_IMAGE="qdrant/qdrant:latest"
 
+# ==============================================================================
+# FUNCTION: SYSTEM TRAP & EMERGENCY CLEANUP
+# ==============================================================================
+# This function guarantees that no fragmented tensors or dangling containers
+# remain on the host system if the user aborts the setup (e.g., via Ctrl+C)
+# or if a critical error occurs.
+# ==============================================================================
+cleanup_on_exit() {
+    local exit_code=$?
+    
+    # Only print the abort/error messages if we didn't exit cleanly (Code 0)
+    if [ $exit_code -ne 0 ]; then
+        echo ""
+        echo "⚠️  CRITICAL: Setup interrupted or failed (Exit Code: $exit_code)."
+        echo "🧹 Initiating emergency cleanup to prevent storage leaks..."
+    fi
+
+    # 1. Purge ephemeral build artifacts on the persistent volume
+    # We execute this inside the Loader. If the Loader is dead, we suppress the error.
+    if docker ps -q -f name="^/${LOADER_CONTAINER}$" >/dev/null 2>&1; then
+        if [ $exit_code -ne 0 ]; then
+            echo "   -> Wiping temporary tensor fragments from the volume..."
+        fi
+        docker exec $LOADER_CONTAINER rm -rf "/root/.ollama/tmp_build" 2>/dev/null || true
+    fi
+
+    # 2. Terminate the Loader Container
+    # We force-remove the container so it doesn't block future setup attempts.
+    if docker ps -a -q -f name="^/${LOADER_CONTAINER}$" >/dev/null 2>&1; then
+        if [ $exit_code -ne 0 ]; then
+            echo "   -> Terminating ephemeral Loader container..."
+        fi
+        docker rm -f $LOADER_CONTAINER >/dev/null 2>&1 || true
+    fi
+
+    if [ $exit_code -ne 0 ]; then
+        echo "❌ Setup aborted. System state rolled back safely."
+    fi
+    
+    # Propagate the original exit code to the OS
+    exit $exit_code
+}
+
+# Bind the cleanup function to OS signals:
+# - SIGINT: Interrupt (Ctrl+C)
+# - SIGTERM: Termination signal (e.g., from kill)
+# - EXIT: Catch-all when the script naturally ends or crashes
+trap cleanup_on_exit SIGINT SIGTERM EXIT
+
 # ==========================================
 # FUNCTION: PULL NATIVE MODELS (IDEMPOTENT)
 # ==========================================
@@ -36,7 +85,7 @@ pull_model() {
         echo "   ✅ Model '$MODEL_NAME' is already installed. Skipping pull."
     else
         echo "   🔹 Pulling: $MODEL_NAME ..."
-        docker exec -t $LOADER_CONTAINER ollama pull "$MODEL_NAME"
+        docker exec $LOADER_CONTAINER ollama pull "$MODEL_NAME"
     fi
 }
 
@@ -49,32 +98,39 @@ load_hf_model() {
     local TMP_DIR="/root/.ollama/tmp_build"
 
     # 1. Existence Check: Do we already have this model?
+    # Removed -t, no pseudo-TTY needed for background checks
     if docker exec $LOADER_CONTAINER ollama show "$OLLAMA_TAG" >/dev/null 2>&1; then
         echo "   ✅ Custom Model '$OLLAMA_TAG' is already compiled and installed. Skipping download."
-        return 0 # Exit the function cleanly without doing anything
+        return 0
     fi
 
     echo "   🔹 Sideloading Custom Model: $OLLAMA_TAG ..."
 
-    # 2. Harden the container: Ensure aria2 is installed
-    docker exec -t $LOADER_CONTAINER bash -c "command -v aria2c >/dev/null || (apt-get update -qq && apt-get install -y aria2 -qq >/dev/null)"
+    # 2. Harden the container: Ensure aria2 is installed (Non-Interactive)
+    docker exec $LOADER_CONTAINER bash -c "command -v aria2c >/dev/null || (export DEBIAN_FRONTEND=noninteractive && apt-get update -qq && apt-get install -y aria2 -qq >/dev/null)"
 
     # Create an ephemeral build directory inside the container
-    docker exec -t $LOADER_CONTAINER mkdir -p "$TMP_DIR"
+    docker exec $LOADER_CONTAINER mkdir -p "$TMP_DIR"
 
-    # 3. Direct Tensor Download (Multi-Connection)
+    # 3. Direct Tensor Download (Multi-Connection with Strict Error Handling)
     echo "      -> Downloading bare weights concurrently (Maximum Speed)..."
-    docker exec -t $LOADER_CONTAINER aria2c -U "Mozilla/5.0" -x 16 -s 16 -k 1M -c -d "$TMP_DIR" -o "model.gguf" "$GGUF_URL"
+    if ! docker exec $LOADER_CONTAINER aria2c -U "Mozilla/5.0" -x 16 -s 16 -k 100M -c --file-allocation=falloc --summary-interval=10 -d "$TMP_DIR" -o "model.gguf" "$GGUF_URL"; then
+        echo "   ❌ CRITICAL: Download of $OLLAMA_TAG failed. Network error or invalid URL."
+        return 1 # Exit cleanly with error code, preventing corrupted compilation
+    fi
 
     # 4. Dynamic Modelfile Generation
-    docker exec -t $LOADER_CONTAINER bash -c "echo 'FROM $TMP_DIR/model.gguf' > $TMP_DIR/Modelfile"
+    docker exec $LOADER_CONTAINER bash -c "echo 'FROM $TMP_DIR/model.gguf' > $TMP_DIR/Modelfile"
 
-    # 5. Native Compilation inside Ollama
+    # 5. Native Compilation inside Ollama (With Error Handling)
     echo "      -> Compiling $OLLAMA_TAG inside the inference engine..."
-    docker exec -t $LOADER_CONTAINER ollama create "$OLLAMA_TAG" -f "$TMP_DIR/Modelfile"
+    if ! docker exec $LOADER_CONTAINER ollama create "$OLLAMA_TAG" -f "$TMP_DIR/Modelfile"; then
+        echo "   ❌ CRITICAL: Ollama compilation failed for $OLLAMA_TAG."
+        return 1
+    fi
 
     # 6. Storage Cleanup
-    docker exec -t $LOADER_CONTAINER rm -rf "$TMP_DIR"
+    docker exec $LOADER_CONTAINER rm -rf "$TMP_DIR"
     echo "   ✅ Custom model $OLLAMA_TAG successfully compiled and ready."
 }
 
@@ -98,28 +154,38 @@ echo "========================================"
 echo "🛡️  Initializing Æmacs AI Infrastructure"
 echo "========================================"
 
-# --- INTERACTIVE TIER SELECTION ---
-echo ""
-echo "🖥️  Please select your hardware capabilities to download the optimal AI models."
-echo "    This ensures The Living Mesh runs smoothly without crashing your system."
-echo ""
-echo "    [1] LOW    - Laptops & Standard PCs (< 8GB VRAM)"
-echo "                 Downloads fast, surgical 8B parameter models."
-echo "    [2] MEDIUM - Workstations (~12-26GB VRAM)"
-echo "                 Downloads highly efficient MoE (Mixture of Experts) & 12B models."
-echo "    [3] HIGH   - Heavy Compute & Multi-GPU (40GB+ VRAM)"
-echo "                 Downloads massive, uncompromising 70B parameter models."
-echo ""
-
-while true; do
-    read -p "Enter your choice [1-3]: " TIER_CHOICE
+if [ -n "$AEMACS_TIER" ]; then
+    TIER_CHOICE="$AEMACS_TIER"
+    echo "⚙️  Headless Mode: Tier explicitly set via environment variable to: $TIER_CHOICE"
     case $TIER_CHOICE in
-        1) TIER="LOW"; break;;
-        2) TIER="MEDIUM"; break;;
-        3) TIER="HIGH"; break;;
-        *) echo "❌ Invalid input. Please enter 1, 2, or 3.";;
+        1) TIER="LOW";;
+        2) TIER="MEDIUM";;
+        3) TIER="HIGH";;
+        *) echo "❌ CRITICAL: Invalid AEMACS_TIER environment variable. Must be 1, 2, or 3."; exit 1;;
     esac
-done
+else
+    echo ""
+    echo "🖥️  Please select your hardware capabilities to download the optimal AI models."
+    echo "    This ensures The Living Mesh runs smoothly without crashing your system."
+    echo ""
+    echo "    [1] LOW    - Laptops & Standard PCs (< 8GB VRAM)"
+    echo "                 Downloads fast, surgical 8B parameter models."
+    echo "    [2] MEDIUM - Workstations (~12-26GB VRAM)"
+    echo "                 Downloads highly efficient MoE (Mixture of Experts) & 12B models."
+    echo "    [3] HIGH   - Heavy Compute & Multi-GPU (40GB+ VRAM)"
+    echo "                 Downloads massive, uncompromising 70B parameter models."
+    echo ""
+
+    while true; do
+        read -p "Enter your choice [1-3]: " TIER_CHOICE
+        case $TIER_CHOICE in
+            1) TIER="LOW"; break;;
+            2) TIER="MEDIUM"; break;;
+            3) TIER="HIGH"; break;;
+            *) echo "❌ Invalid input. Please enter 1, 2, or 3.";;
+        esac
+    done
+fi
 
 echo "✅ Selected Tier: $TIER"
 
@@ -176,23 +242,25 @@ docker run -d --rm \
   -v $VOLUME_NAME:/root/.ollama \
   $OLLAMA_IMAGE >/dev/null
 
-# Wait for Ollama API to initialize inside the container
+# Wait for Ollama API to initialize inside the container (With Timeout)
 echo "   ⏳ Waiting for Ollama API to initialize..."
+MAX_WAIT=30
+WAIT_COUNT=0
 until docker logs $LOADER_CONTAINER 2>&1 | grep -q "Listening on"; do
+    if [ $WAIT_COUNT -ge $MAX_WAIT ]; then
+        echo "   ❌ CRITICAL: Loader failed to initialize within $MAX_WAIT seconds."
+        echo "      Dumping Container Logs:"
+        docker logs $LOADER_CONTAINER
+        exit 1
+    fi
     sleep 1
+    WAIT_COUNT=$((WAIT_COUNT + 1))
 done
 echo "   ✅ Loader is ready."
-
 
 # 3. PULLING MODELS
 # ------------------------------------------------------------------------------
 echo "📦 [Step 4/5] Pulling Models for Tier: $TIER..."
-
-# Function to pull a model and handle errors
-pull_model() {
-    echo "   🔹 Pulling: $1 ..."
-    docker exec -t $LOADER_CONTAINER ollama pull "$1"
-}
 
 # Pull models based on the interactive selection
 if [ "$TIER" == "LOW" ]; then
