@@ -17,6 +17,7 @@ pub struct Conversation {
     tools: Option<Vec<serde_json::Value>>,
     active_persona: Option<Persona>,
     active_profile_content: Option<String>,
+    active_host_codex: Option<String>,
     context_limit: u32,
     pub sovereign_mode: bool,
 }
@@ -24,6 +25,10 @@ pub struct Conversation {
 impl Conversation {
     /// Starts a new conversation with a specific model.
     pub fn new(model: impl Into<String>) -> Self {
+        let active_host_codex = dirs::home_dir()
+            .map(|home| home.join(".aemacs").join("user.md"))
+            .and_then(|path| std::fs::read_to_string(path).ok());
+
         Self {
             model: model.into(),
             messages: Vec::new(),
@@ -33,6 +38,7 @@ impl Conversation {
             tools: None,
             active_persona: None,
             active_profile_content: None,
+            active_host_codex,
             context_limit: 4096, // Default
             sovereign_mode: false,
         }
@@ -422,6 +428,13 @@ Restoration Protocol: Your tools are your limbs. If a tool call returns an 'ERRO
             }
         }
 
+        // ACO-037: Host Identity Injection (Recency Bias optimized)
+        if let Some(codex) = self.active_host_codex {
+            full_system_prompt.push_str("\n\n<host_context>\n");
+            full_system_prompt.push_str(&codex);
+            full_system_prompt.push_str("\n</host_context>\n");
+        }
+
         // ACO-027: Explicitly request Markdown
         full_system_prompt.push_str("\n\nFormat your responses using Markdown. Use code blocks with language tags for all code snippets.");
 
@@ -636,6 +649,55 @@ Let us see if the Mnemonic Shredder holds its edge!
             assert!(
                 text.contains("You are the Neural Engine of Æmacs"),
                 "Standard orientation should still be present."
+            );
+        } else {
+            panic!("First message should be text.");
+        }
+    }
+
+    #[test]
+    fn test_conversation_missing_codex_quest() {
+        let mut conv = Conversation::new("test-model");
+        // Force it to None in case a real user.md exists on the test runner's machine
+        conv.active_host_codex = None;
+        let request = conv.build();
+
+        if let crate::Content::Text(text) = &request.messages[0].content {
+            assert!(
+                !text.contains("<host_context>"),
+                "A missing codex should not inject host_context tags!"
+            );
+        } else {
+            panic!("First message should be text.");
+        }
+    }
+
+    #[test]
+    fn test_conversation_host_codex_injection_quest() {
+        let mut conv = Conversation::new("test-model");
+        conv.active_host_codex = Some("The user is Maxi. She likes Rust.".to_string());
+        
+        let persona = Persona::new("bob", "Architect", "You are Bob.", None);
+        conv.set_persona(persona);
+        conv.set_profile("Rule 1: Be solid.".to_string());
+
+        let request = conv.build();
+
+        if let crate::Content::Text(text) = &request.messages[0].content {
+            assert!(
+                text.contains("<host_context>\nThe user is Maxi. She likes Rust.\n</host_context>"),
+                "The Host Codex was not properly injected!"
+            );
+
+            // Verify Recency Bias (Codex is injected AFTER Persona and Profile)
+            let persona_idx = text.find("You are Bob.").expect("Persona missing!");
+            let profile_idx = text.find("Rule 1: Be solid.").expect("Profile missing!");
+            let codex_idx = text.find("<host_context>").expect("Codex missing!");
+
+            assert!(
+                codex_idx > persona_idx && codex_idx > profile_idx,
+                "The Host Codex must appear AFTER the Persona and Profile to ensure recency bias! (Persona: {}, Profile: {}, Codex: {})",
+                persona_idx, profile_idx, codex_idx
             );
         } else {
             panic!("First message should be text.");

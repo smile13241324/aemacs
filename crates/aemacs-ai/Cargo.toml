@@ -23,7 +23,7 @@ tracing = { workspace = true }
 reqwest = { workspace = true }
 aemacs-core = { workspace = true }
 notify = { workspace = true }
-dirs = { workspace = true }
+dirs.workspace = true
 base64 = { workspace = true }
 mime_guess = { workspace = true }
 qdrant-client = { workspace = true }
