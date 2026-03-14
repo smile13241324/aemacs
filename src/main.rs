@@ -9,8 +9,7 @@ use anyhow::Result;
 use log::info;
 use std::sync::Arc;
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     // 1. Initialize the logger
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
@@ -20,77 +19,84 @@ async fn main() -> Result<()> {
 
     // --- Headless Sovereign Detection (ACO-011) ---
     if args.iter().any(|arg| arg == "--server") {
-        info!("🌑 [SERVER] Headless Sovereign Mode detected.");
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("Failed to create server runtime");
 
-        let agent_name = args
-            .iter()
-            .position(|arg| arg == "--agent")
-            .and_then(|i| args.get(i + 1))
-            .cloned()
-            .unwrap_or_else(|| "bob".to_string());
+        return rt.block_on(async {
+            info!("🌑 [SERVER] Headless Sovereign Mode detected.");
 
-        let interval: u64 = args
-            .iter()
-            .position(|arg| arg == "--interval")
-            .and_then(|i| args.get(i + 1))
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(3600);
+            let agent_name = args
+                .iter()
+                .position(|arg| arg == "--agent")
+                .and_then(|i| args.get(i + 1))
+                .cloned()
+                .unwrap_or_else(|| "bob".to_string());
 
-        let bridge_port: u16 = args
-            .iter()
-            .position(|arg| arg == "--bridge")
-            .and_then(|i| args.get(i + 1))
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(0);
+            let interval: u64 = args
+                .iter()
+                .position(|arg| arg == "--interval")
+                .and_then(|i| args.get(i + 1))
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(3600);
 
-        // A. Core System Init
-        aemacs_core::init()?;
-        let bus = EventBus::new();
+            let bridge_port: u16 = args
+                .iter()
+                .position(|arg| arg == "--bridge")
+                .and_then(|i| args.get(i + 1))
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
 
-        // B. AI Infrastructure
-        let kb = Arc::new(KnowledgeBase::new(
-            "http://localhost:6334",
-            "http://localhost:11434",
-        )?);
-        let tokio_handle = tokio::runtime::Handle::current();
-        let persona_registry = PersonaRegistry::new(tokio_handle).await?;
-        let registry = Arc::new(ToolRegistry::with_core_tools(
-            kb.clone(),
-            persona_registry.clone(),
-            Some(bus.tx.clone()),
-        ));
-        let backend = Arc::new(OpenAICompatibleBackend::new(
-            "http://localhost:11434/v1",
-            None,
-        ));
+            // A. Core System Init
+            aemacs_core::init()?;
+            let bus = EventBus::new();
 
-        // C. Sensory Observers (ACO-007, ACO-026)
-        if bridge_port > 0 {
-            aemacs_bridge::spawn_intent_bridge(bus.clone(), bridge_port).await?;
-        }
+            // B. AI Infrastructure
+            let kb = Arc::new(KnowledgeBase::new(
+                "http://localhost:6334",
+                "http://localhost:11434",
+            )?);
+            let tokio_handle = tokio::runtime::Handle::current();
+            let persona_registry = PersonaRegistry::new(tokio_handle).await?;
+            let registry = Arc::new(ToolRegistry::with_core_tools(
+                kb.clone(),
+                persona_registry.clone(),
+                Some(bus.tx.clone()),
+            ));
+            let backend = Arc::new(OpenAICompatibleBackend::new(
+                "http://localhost:11434/v1",
+                None,
+            ));
 
-        let watcher = aemacs_core::observer::FileWatcherObserver {
-            path: std::env::current_dir()?,
-        };
-        let bus_watcher = bus.clone();
-        tokio::spawn(async move {
-            if let Err(e) = watcher.run(bus_watcher).await {
-                log::warn!("👁️ FileWatcher failed: {}", e);
+            // C. Sensory Observers (ACO-007, ACO-026)
+            if bridge_port > 0 {
+                aemacs_bridge::spawn_intent_bridge(bus.clone(), bridge_port).await?;
             }
+
+            let watcher = aemacs_core::observer::FileWatcherObserver {
+                path: std::env::current_dir()?,
+            };
+            let bus_watcher = bus.clone();
+            tokio::spawn(async move {
+                if let Err(e) = watcher.run(bus_watcher).await {
+                    log::warn!("👁️ FileWatcher failed: {}", e);
+                }
+            });
+
+            // D. Launch Sovereign Orchestrator
+            let service = AutonomousService::new(
+                bus,
+                agent_name,
+                persona_registry,
+                registry,
+                backend,
+                kb.clone(),
+            );
+            service.start(interval).await?;
+
+            Ok(())
         });
-
-        // D. Launch Sovereign Orchestrator
-        let service = AutonomousService::new(
-            bus,
-            agent_name,
-            persona_registry,
-            registry,
-            backend,
-            kb.clone(),
-        );
-        service.start(interval).await?;
-
-        return Ok(());
     }
 
     // --- GUI Mode (Default) ---

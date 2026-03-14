@@ -133,6 +133,8 @@ mod tests {
         assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
 
         // 4. Quest: Successful Handshake
+        let mut rx = bus.subscribe();
+
         let res = client
             .post(&url)
             .header("X-API-KEY", &api_key)
@@ -143,7 +145,6 @@ mod tests {
         assert_eq!(res.status(), StatusCode::OK);
 
         // 5. Verify signal reached the bus
-        let mut rx = bus.subscribe();
         let event = tokio::time::timeout(Duration::from_secs(1), rx.recv()).await??;
 
         if let SystemEvent::Signal {

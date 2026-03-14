@@ -1,7 +1,7 @@
 use aemacs_ai::PersonaRegistry;
 use aemacs_ai::connectors::openai_compatible::OpenAICompatibleBackend;
 use aemacs_ai::conversation::Conversation;
-use aemacs_ai::mcp::{ToolHost, ToolRegistry, run_agent_loop};
+use aemacs_ai::mcp::{LoopSignal, ToolHost, ToolRegistry, run_agent_loop};
 use aemacs_ai::rag::KnowledgeBase;
 use async_trait::async_trait;
 use std::io::{self, Write};
@@ -147,8 +147,10 @@ async fn main() -> anyhow::Result<()> {
             print!("{}: ", color("Agent", BLUE));
             io::stdout().flush().unwrap();
             while let Ok(chunk) = stream_rx.recv().await {
-                print!("{}", chunk);
-                io::stdout().flush().unwrap();
+                if let LoopSignal::Text(t) = chunk {
+                    print!("{}", t);
+                    io::stdout().flush().unwrap();
+                }
             }
             println!();
         });
