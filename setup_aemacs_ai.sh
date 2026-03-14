@@ -34,7 +34,7 @@ QDRANT_IMAGE="qdrant/qdrant:latest"
 # ==============================================================================
 cleanup_on_exit() {
     local exit_code=$?
-    
+
     # Only print the abort/error messages if we didn't exit cleanly (Code 0)
     if [ $exit_code -ne 0 ]; then
         echo ""
@@ -63,7 +63,7 @@ cleanup_on_exit() {
     if [ $exit_code -ne 0 ]; then
         echo "❌ Setup aborted. System state rolled back safely."
     fi
-    
+
     # Propagate the original exit code to the OS
     exit $exit_code
 }
@@ -90,12 +90,134 @@ pull_model() {
 }
 
 # ==========================================
+# FUNCTION: GENERATE MODELFILE CONTENT (PURE)
+# ==========================================
+# Takes the model tag and the GGUF path as arguments and returns the fully typed Modelfile content via stdout.
+generate_modelfile_content() {
+    local OLLAMA_TAG=$1
+    local GGUF_PATH=$2
+
+    # Initialer Aufbau des Modelfiles
+    echo "FROM $GGUF_PATH"
+    echo ""
+
+    # Wir nutzen single-quotes 'EOF', um Bash-Interpolation im Jinja-Template zu verhindern
+    case "$OLLAMA_TAG" in
+        "dolphin-3.0-mistral-24b-q4_K_M")
+            # ---------------------------------------------------------
+            # CHATML FORMAT + XML TOOL CALLING (Cognitive Computations)
+            # ---------------------------------------------------------
+            cat <<'EOF'
+TEMPLATE """{{- if .System }}
+<|im_start|>system
+{{ .System }}<|im_end|>
+{{- end }}
+{{- if .Tools }}
+<|im_start|>system
+You are a function calling AI model. You are provided with function signatures within <tools></tools> XML tags. You may call one or more functions to assist with the user query. Don't make assumptions about what values to plug into functions. For each function call return a json object with function name and arguments within <tool_call></tool_call> XML tags as follows:
+<tool_call>
+{"name": <function-name>, "arguments": <args-dict>}
+</tool_call>
+Here are the available tools:
+<tools>
+{{- range .Tools }}
+{{ .Function }}
+{{- end }}
+</tools><|im_end|>
+{{- end }}
+{{- range $i, $_ := .Messages }}
+{{- if eq .Role "user" }}
+<|im_start|>user
+{{ .Content }}<|im_end|>
+{{- else if eq .Role "assistant" }}
+<|im_start|>assistant
+{{- if .Content }}{{ .Content }}{{- end }}
+{{- if .ToolCalls }}
+<tool_call>
+{{ range .ToolCalls }}{"name": "{{ .Function.Name }}", "arguments": {{ .Function.Arguments }}}
+{{ end }}</tool_call>
+{{- end }}<|im_end|>
+{{- else if eq .Role "tool" }}
+<|im_start|>tool
+<tool_response>
+{"name": "{{ .Name }}", "content": {{ .Content }}}
+</tool_response><|im_end|>
+{{- end }}
+{{- end }}
+<|im_start|>assistant
+"""
+PARAMETER stop "<|im_end|>"
+PARAMETER stop "<|im_start|>"
+PARAMETER stop "<tool_call>"
+PARAMETER stop "</tool_call>"
+PARAMETER stop "<tool_response>"
+PARAMETER stop "</tool_response>"
+EOF
+            ;;
+
+        "magnum:12b")
+            # ---------------------------------------------------------
+            # CHATML FORMAT PURE (Roleplay / No Tools)
+            # ---------------------------------------------------------
+            cat <<'EOF'
+TEMPLATE """{{- if .System }}
+<|im_start|>system
+{{ .System }}<|im_end|>
+{{- end }}
+{{- range .Messages }}
+<|im_start|>{{ .Role }}
+{{ .Content }}<|im_end|>
+{{- end }}
+<|im_start|>assistant
+"""
+PARAMETER stop "<|im_end|>"
+PARAMETER stop "<|im_start|>"
+EOF
+            ;;
+
+        "stheno:8b" | "euryale:70b")
+            # ---------------------------------------------------------
+            # LLAMA 3 NATIVE FORMAT PURE (Roleplay / No Tools)
+            # ---------------------------------------------------------
+            cat <<'EOF'
+TEMPLATE """{{- if .System }}<|start_header_id|>system<|end_header_id|>
+
+{{ .System }}<|eot_id|>
+{{- end }}
+{{- range .Messages }}
+<|start_header_id|>{{ .Role }}<|end_header_id|>
+
+{{ .Content }}<|eot_id|>
+{{- end }}
+<|start_header_id|>assistant<|end_header_id|>
+
+"""
+PARAMETER stop "<|start_header_id|>"
+PARAMETER stop "<|end_header_id|>"
+PARAMETER stop "<|eot_id|>"
+EOF
+            ;;
+
+        *)
+            # Fallback-Verhalten
+            echo "⚠️  Kein spezifisches Template für $OLLAMA_TAG definiert. Nutze leeres Standard-Modelfile." >&2
+            ;;
+    esac
+}
+
+# ==========================================
 # FUNCTION: SIDELOAD HF MODELS (IDEMPOTENT)
 # ==========================================
 load_hf_model() {
     local OLLAMA_TAG=$1
     local GGUF_URL=$2
     local TMP_DIR="/root/.ollama/tmp_build"
+
+    # Sanitize tag for safe host file creation (replace ':' with '_')
+    local SAFE_TAG
+    SAFE_TAG=$(echo "$OLLAMA_TAG" | tr ':' '_')
+    local HOST_TMP_FILE
+    HOST_TMP_FILE="/tmp/aemacs_modelfile_$SAFE_TAG"
 
     # 1. Existence Check: Do we already have this model?
     # Removed -t, no pseudo-TTY needed for background checks
@@ -119,8 +241,13 @@ load_hf_model() {
         return 1 # Exit cleanly with error code, preventing corrupted compilation
     fi
 
-    # 4. Dynamic Modelfile Generation
-    docker exec $LOADER_CONTAINER bash -c "echo 'FROM $TMP_DIR/model.gguf' > $TMP_DIR/Modelfile"
+    # 4. Dynamic Modelfile Generation (Injecting the typed template)
+    echo "      -> Generating highly-typed Modelfile architecture..."
+    generate_modelfile_content "$OLLAMA_TAG" "$TMP_DIR/model.gguf" > "$HOST_TMP_FILE"
+
+    # Transfer the compiled Modelfile safely into the isolated container context
+    docker cp "$HOST_TMP_FILE" $LOADER_CONTAINER:"$TMP_DIR/Modelfile"
+    rm -f "$HOST_TMP_FILE"
 
     # 5. Native Compilation inside Ollama (With Error Handling)
     echo "      -> Compiling $OLLAMA_TAG inside the inference engine..."
@@ -177,7 +304,7 @@ else
     echo ""
 
     while true; do
-        read -p "Enter your choice [1-3]: " TIER_CHOICE
+        read -r -p "Enter your choice [1-3]: " TIER_CHOICE
         case $TIER_CHOICE in
             1) TIER="LOW"; break;;
             2) TIER="MEDIUM"; break;;
