@@ -268,14 +268,17 @@ if [ "$TIER" == "LOW" ]; then
     pull_model "hermes3:8b-llama3.1-q4_K_M"                 # Logic / The Dispatcher
     pull_model "dolphin3:8b"                        # Creative / The Sparring Partner
 
-    # pull_model "hf.co/Sao10K/L3-8B-Stheno-v3.2-GGUF:Q4_K_M" # Roleplay / The Method Actor
-    # Roleplay Sideload: Stheno 3.2 8B
-    load_hf_model "stheno:8b" "https://huggingface.co/bartowski/L3-8B-Stheno-v3.2-GGUF/resolve/main/L3-8B-Stheno-v3.2-Q4_K_M.gguf"
+    # pull_model "huggingface.co/Sao10K/Llama-3.1-8B-Stheno-v3.4" # Roleplay / The Method Actor
+    # Roleplay Sideload: Stheno 3.4 8B
+    load_hf_model "stheno:8b" "https://huggingface.co/bartowski/Llama-3.1-8B-Stheno-v3.4-GGUF/resolve/main/Llama-3.1-8B-Stheno-v3.4-Q4_K_M.gguf"
 
 elif [ "$TIER" == "MEDIUM" ]; then
     echo "   ⚠️  MEDIUM Tier detected. Pulling powerful MoE and 12B models..."
-    pull_model "mixtral:8x7b-instruct-v0.1-q4_K_M"                # Logic / The Dispatcher
-    pull_model "dolphin-mixtral:8x7b"                             # Creative / The Sparring Partner
+    pull_model "mistral-small:24b-instruct-2501-q4_K_M"                # Logic / The Dispatcher
+
+    # pull_model "huggingface.co/dphn/Dolphin3.0-Mistral-24B"   # Creative / The Sparring Partner
+    # Creative Sideload: Dolphin 3.0 24B
+    load_hf_model "dolphin-3.0-mistral-24b-q4_K_M" "https://huggingface.co/bartowski/cognitivecomputations_Dolphin3.0-R1-Mistral-24B-GGUF/resolve/main/cognitivecomputations_Dolphin3.0-R1-Mistral-24B-Q4_K_M.gguf"
 
     # pull_model "hf.co/anthracite-org/magnum-v2-12b-GGUF:Q4_K_M"   # Roleplay / The Method Actor
     # Roleplay Sideload: Magnum v2 12B

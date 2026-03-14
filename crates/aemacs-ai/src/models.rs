@@ -199,6 +199,7 @@ pub struct ModelDefinition {
     pub max_context: u32,
     pub license_constraints: &'static str,
     pub model_description: &'static str,
+    pub supports_tools: bool,
 }
 
 pub const MODELS: &[ModelDefinition] = &[
@@ -215,6 +216,7 @@ pub const MODELS: &[ModelDefinition] = &[
         max_context: 131072,
         license_constraints: "Llama 3.1 Community License. Free for commercial and freelance use. Restriction only applies if your product exceeds 700 million monthly active users.",
         model_description: "The Surgical API. Engineered for strict JSON/XML tool execution and rigid system prompt obedience. It behaves less like a chatbot and more like a programmable state machine. Perfect for the 'Dispatcher' role to autonomously route fast, repetitive tasks.",
+        supports_tools: true,
     },
     ModelDefinition {
         name: "dolphin3:8b",
@@ -226,42 +228,46 @@ pub const MODELS: &[ModelDefinition] = &[
         max_context: 131072,
         license_constraints: "Llama 3.1 Community License. Free for commercial and freelance use. Restriction only applies if your product exceeds 700 million monthly active users.",
         model_description: "The Unrestricted Sparring Partner. Built on Llama 3.1 but explicitly fine-tuned for high emotional intelligence, creative lateral thinking, and zero refusals. The perfect lightweight choice for local, highly conversational Pair-Programming and deep architectural brainstorming without moralizing guardrails.",
+        supports_tools: true,
     },
     ModelDefinition {
-        name: "stheno:8b",
-        label: "Stheno 3.2 8B",
+        name: "llama-3.1-8b-stheno-v3.4-q4_K_M",
+        label: "Stheno v3.4 8B",
         tier: ModelTier::Low,
         role: ModelRole::Roleplay,
-        base_vram_gb: 5.0,
+        base_vram_gb: 4.9,
         kv_rate_gb_per_1k: 0.015,
-        max_context: 8192,
-        license_constraints: "Llama 3 Community License. Free for commercial and freelance use. Restriction only applies if your product exceeds 700 million monthly active users.",
-        model_description: "The Method Actor (Small). Explicitly fine-tuned for multi-turn roleplay and absolute persona adherence. It will adopt any system-prompt identity (e.g., a cynical senior architect) and never break character. Uncensored, with highly natural, expressive prose for its size.",
+        max_context: 131072,
+        license_constraints: "Llama 3.1 Community License. Free for commercial and freelance use. Restriction only applies if your product exceeds 700 million monthly active users.",
+        model_description: "The Modernized Method Actor. Rebuilt entirely on the Llama 3.1 architecture, natively unlocking the massive 128k context window via optimized RoPE scaling. Exceptional at maintaining deep, persistent narrative states and complex persona heuristics without context collapse over prolonged sessions.",
+        supports_tools: false,
     },
     // ==========================================
     // TIER: MEDIUM (Workstations, ~12-26GB VRAM)
     // ==========================================
     ModelDefinition {
-        name: "mixtral:8x7b-instruct-v0.1-q4_K_M",
-        label: "Mixtral 8x7B Instruct",
+        name: "mistral-small:24b-instruct-2501-q4_K_M",
+        label: "Mistral Small 3 24B",
         tier: ModelTier::Medium,
         role: ModelRole::Logic,
-        base_vram_gb: 26.0,
-        kv_rate_gb_per_1k: 0.025,
+        base_vram_gb: 14.5,
+        kv_rate_gb_per_1k: 0.022,
         max_context: 32768,
         license_constraints: "Apache 2.0 License. 100% free for unrestricted commercial and enterprise use.",
-        model_description: "The Efficient Polymath. Utilizes a Mixture of Experts (MoE) architecture to provide the reasoning power of a massive model while remaining highly performant. Exceptional at processing large RAG contexts, maintaining deep knowledge base memory, and strict tool execution.",
+        model_description: "The Dense Logic Core. Replaces legacy MoE architectures with a highly efficient, dense 24B parameter network. Offers state-of-the-art native function calling capabilities, strict adherence to JSON schemas, and exceptional type safety for complex, deterministic dispatching tasks.",
+        supports_tools: true,
     },
     ModelDefinition {
-        name: "dolphin-mixtral:8x7b",
-        label: "Dolphin Mixtral 8x7B",
+        name: "dolphin-3.0-mistral-24b-q4_K_M",
+        label: "Dolphin 3.0 24B",
         tier: ModelTier::Medium,
         role: ModelRole::Creative,
-        base_vram_gb: 26.0,
-        kv_rate_gb_per_1k: 0.025,
+        base_vram_gb: 14.3,
+        kv_rate_gb_per_1k: 0.022,
         max_context: 32768,
         license_constraints: "Apache 2.0 License. 100% free for unrestricted commercial and enterprise use.",
-        model_description: "The Free-Thinking Polymath. Takes the massive MoE efficiency of Mixtral and completely removes all alignment constraints. It delivers the deep, nuanced conversational abilities and creative problem-solving of a much larger model, acting as an incredibly intelligent technical oracle.",
+        model_description: "The Unrestricted Polymath Core. Built on Mistral's dense 24B parameter network, completely replacing legacy MoE routing. Highly intelligent, fully uncensored, and explicitly fine-tuned by Cognitive Computations for deterministic tool execution, complex mathematics, and agentic workflows.",
+        supports_tools: true,
     },
     ModelDefinition {
         name: "magnum:12b",
@@ -273,6 +279,7 @@ pub const MODELS: &[ModelDefinition] = &[
         max_context: 128000,
         license_constraints: "Apache 2.0 License. 100% free for unrestricted commercial and enterprise use.",
         model_description: "The Contextual Method Actor. Built on Mistral Nemo, offering a massive 128k context window crucial for maintaining long-running personas and deep narrative states without forgetting details. Renowned for generating vivid text and staying flawlessly in character across massive sessions.",
+        supports_tools: false,
     },
     // ==========================================
     // TIER: HIGH (Heavy Compute, 40GB+ VRAM)
@@ -287,6 +294,7 @@ pub const MODELS: &[ModelDefinition] = &[
         max_context: 131072,
         license_constraints: "Llama 3.1 Community License. Free for commercial and enterprise use.",
         model_description: "The Ultimate Orchestrator. Scales the surgical, system-obedient nature of Hermes to a massive 70B parameter space. The definitive choice for coordinating massive, complex tool chains (like nested bash scripts and AST manipulations) with zero alignment constraints.",
+        supports_tools: true,
     },
     ModelDefinition {
         name: "llama3.3:70b",
@@ -298,6 +306,7 @@ pub const MODELS: &[ModelDefinition] = &[
         max_context: 131072,
         license_constraints: "Llama 3.3 Community License. Free for commercial and enterprise use.",
         model_description: "The SOTA Powerhouse. Distills the reasoning capabilities of Meta's massive 405B model into a highly efficient 70B footprint. While fully aligned, its sheer intelligence makes it the ultimate conversational sparring partner for complex code refactoring, deep architectural planning, and lateral problem-solving.",
+        supports_tools: true,
     },
     ModelDefinition {
         name: "euryale:70b",
@@ -309,6 +318,7 @@ pub const MODELS: &[ModelDefinition] = &[
         max_context: 131072,
         license_constraints: "Llama 3.1 Community License. Free for commercial and enterprise use.",
         model_description: "The Enterprise Persona. The absolute pinnacle of open-weights roleplay. It provides the deep, lateral thinking and conversational nuance of legacy models like Miqu, but is built on a clean Llama 3.1 foundation, making it fully compliant and safe for corporate environments.",
+        supports_tools: false,
     },
 ];
 
