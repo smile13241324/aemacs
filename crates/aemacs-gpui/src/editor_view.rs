@@ -98,9 +98,8 @@ pub fn render_editor_view(editor: &Editor, list_state: ListState, wrap: bool) ->
     .h_full();
 
     div()
-        .flex()
-        .when(!wrap, |this| this.size_full())
-        .when(wrap, |this| this.w_full())
+        .size_full()
+        .flex_1() // Ensure the outer div takes up the remaining space
         .bg(theme_bg)
         .when(!wrap, |this| this.pl(px(16.0)).pt(px(16.0)))
         .child(list_element)

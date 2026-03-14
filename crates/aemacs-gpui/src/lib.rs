@@ -6,6 +6,7 @@ use gpui::{
     WindowBounds, WindowOptions, div, px, rgb, size,
 };
 use log::info;
+use std::io::{self, Write};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -33,6 +34,7 @@ use std::sync::Arc;
 pub struct Workspace {
     editor: Entity<Editor>,
     editor_list_state: gpui::ListState,
+    gutter_list_state: gpui::ListState,
     ai_panel: Entity<AiPanel>,
     focus_handle: FocusHandle,
     last_key: Option<(String, Instant)>,
@@ -43,6 +45,7 @@ pub struct Workspace {
     pub kb: Arc<KnowledgeBase>,
     pub registry: Arc<ToolRegistry>,
     pub persona_registry: Arc<PersonaRegistry>,
+    last_cursor_line: usize,
 }
 
 impl Workspace {
@@ -112,6 +115,7 @@ impl Workspace {
                 available_models,
             );
             let editor_list_state = gpui::ListState::new(0, gpui::ListAlignment::Top, px(100.0));
+            let gutter_list_state = gpui::ListState::new(0, gpui::ListAlignment::Top, px(100.0));
             let focus_handle = cx.focus_handle();
 
             let mut rx = bus.subscribe();
@@ -292,6 +296,7 @@ impl Workspace {
             Workspace {
                 editor,
                 editor_list_state,
+                gutter_list_state,
                 ai_panel,
                 focus_handle,
                 last_key: None,
@@ -302,6 +307,7 @@ impl Workspace {
                 kb,
                 registry,
                 persona_registry,
+                last_cursor_line: 0,
             }
         })
     }
@@ -442,14 +448,36 @@ impl Render for Workspace {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let editor = self.editor.read(cx);
         let line_count = editor.line_count();
+        let (line, col) = editor.cursor_position();
+        let cursor_line = line.saturating_sub(1);
 
         let current_count = self.editor_list_state.item_count();
+
         if current_count != line_count {
+            // Structural change: full redraw needed
             self.editor_list_state.splice(0..current_count, line_count);
+            self.gutter_list_state.splice(0..current_count, line_count);
+        } else {
+            // Typing change: partial redraw
+            if cursor_line == self.last_cursor_line {
+                self.editor_list_state
+                    .splice(cursor_line..cursor_line + 1, 1);
+                self.gutter_list_state
+                    .splice(cursor_line..cursor_line + 1, 1);
+            } else {
+                let min_line = std::cmp::min(cursor_line, self.last_cursor_line);
+                let max_line = std::cmp::max(cursor_line, self.last_cursor_line);
+                if min_line != max_line {
+                    self.editor_list_state.splice(min_line..min_line + 1, 1);
+                    self.editor_list_state.splice(max_line..max_line + 1, 1);
+                    self.gutter_list_state.splice(min_line..min_line + 1, 1);
+                    self.gutter_list_state.splice(max_line..max_line + 1, 1);
+                }
+            }
         }
+        self.last_cursor_line = cursor_line;
 
         let is_empty = editor.buffer.len_chars() == 0;
-        let (line, col) = editor.cursor_position();
         let mode_name = format!("{:?}", editor.mode).to_uppercase();
 
         let bg_color = rgb(0x282c34);
@@ -466,10 +494,14 @@ impl Render for Workspace {
 
         // Main Editor Area
         let main_view = div()
+            .id("main_editor_area")
             .flex()
             .flex_1()
             .flex_row()
             .track_focus(&self.focus_handle)
+            .on_click(cx.listener(|this, _, window, cx| {
+                window.focus(&this.focus_handle, cx);
+            }))
             .on_key_down(cx.listener(Self::handle_keydown))
             .child(
                 div()
@@ -485,7 +517,7 @@ impl Render for Workspace {
                     .text_color(gutter_text)
                     .child(
                         gpui::list(
-                            self.editor_list_state.clone(),
+                            self.gutter_list_state.clone(),
                             move |line_idx, _window, _cx| {
                                 if is_empty {
                                     div().child("~").h(px(20.0)).into_any_element()
@@ -520,6 +552,8 @@ impl Render for Workspace {
                     .flex_row()
                     .child(
                         div()
+                            .flex()
+                            .flex_col()
                             .flex_1()
                             .when(
                                 self.show_ai && self.ai_panel.read(cx).is_maximized,

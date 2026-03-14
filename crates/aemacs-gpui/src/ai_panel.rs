@@ -120,6 +120,7 @@ pub struct AiPanel {
     pub window_handle: gpui::AnyWindowHandle,
     pub available_models: Vec<&'static aemacs_ai::models::ModelDefinition>,
     pub available_personas: Vec<String>,
+    last_cursor_line: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -262,7 +263,13 @@ impl AiPanel {
             .unwrap_or(8192);
 
         let panel = cx.new(|cx| {
-            let input_editor = cx.new(|_cx| Editor::new());
+            let input_editor = cx.new(|_cx| {
+                let mut editor = Editor::new();
+                let _ = editor.run(aemacs_core::command::Command::EnterMode(
+                    aemacs_core::mode::Mode::Insert,
+                ));
+                editor
+            });
             let input_list_state = gpui::ListState::new(0, gpui::ListAlignment::Top, px(10.0));
             let focus_handle = cx.focus_handle();
             let message_scroll_handle = gpui::ScrollHandle::new();
@@ -298,6 +305,7 @@ impl AiPanel {
                 window_handle,
                 available_models,
                 available_personas: Vec::new(),
+                last_cursor_line: 0,
             }
         });
 
@@ -373,7 +381,7 @@ impl AiPanel {
                                             // Ensure we have an active persona, default to marjin for refactoring
                                             if this.active_persona_name.is_none() {
                                                 let persona_registry = this.persona_registry.clone();
-                                                cx.spawn(|panel: WeakEntity<Self>, mut cx: &mut AsyncApp| {
+                                                cx.spawn(|panel: WeakEntity<Self>, cx: &mut AsyncApp| {
                                                     let mut cx = cx.clone();
                                                     async move {
                                                         if let Some(persona) = persona_registry.get_persona("marjin").await {
@@ -628,7 +636,7 @@ impl AiPanel {
                             let name_lower = name_clone.clone();
                             let persona_registry = this.persona_registry.clone();
 
-                            cx.spawn(|panel: WeakEntity<Self>, mut cx: &mut AsyncApp| {
+                            cx.spawn(|panel: WeakEntity<Self>, cx: &mut AsyncApp| {
                                 let mut cx = cx.clone();
                                 async move {
                                     if let Some(persona) =
@@ -878,7 +886,7 @@ impl AiPanel {
         let mode = self.input_editor.read(cx).mode;
 
         if keystroke.key == "enter" {
-            if mode == Mode::Normal {
+            if mode == Mode::Normal || !keystroke.modifiers.shift {
                 self.send_message(cx);
                 return;
             } else {
@@ -1117,11 +1125,29 @@ impl Render for AiPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let editor = self.input_editor.read(cx);
         let line_count = editor.line_count();
+        let (line, col) = editor.cursor_position();
+        let cursor_line = line.saturating_sub(1);
 
         let current_count = self.input_list_state.item_count();
+
         if current_count != line_count {
+            // Structural change: full redraw needed
             self.input_list_state.splice(0..current_count, line_count);
+        } else {
+            // Typing change: partial redraw
+            if cursor_line == self.last_cursor_line {
+                self.input_list_state
+                    .splice(cursor_line..cursor_line + 1, 1);
+            } else {
+                let min_line = std::cmp::min(cursor_line, self.last_cursor_line);
+                let max_line = std::cmp::max(cursor_line, self.last_cursor_line);
+                if min_line != max_line {
+                    self.input_list_state.splice(min_line..min_line + 1, 1);
+                    self.input_list_state.splice(max_line..max_line + 1, 1);
+                }
+            }
         }
+        self.last_cursor_line = cursor_line;
 
         let bg = rgb(0x21252b);
         let input_bg = rgb(0x282c34);
@@ -1360,16 +1386,17 @@ impl Render for AiPanel {
                 div()
                     .id("input_area")
                     .flex_shrink_0()
-                    .min_h(px(40.0))
+                    .h(px(100.0)) // Set a fixed initial height or use flex rules properly
                     .max_h(px(200.0))
                     .bg(input_bg)
                     .border_t_1()
                     .border_color(rgb(0x181a1f))
                     .p(px(8.0))
-                    .overflow_y_scroll()
                     .overflow_x_hidden()
-                    .track_scroll(&self.input_scroll_handle)
                     .track_focus(&self.focus_handle)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        window.focus(&this.focus_handle, cx);
+                    }))
                     .on_key_down(cx.listener(Self::handle_input_keydown))
                     .child({
                         let editor = self.input_editor.read(cx);
@@ -1380,7 +1407,7 @@ impl Render for AiPanel {
 }
 
 mod tests {
-    use super::ChatMessage;
+    use super::*;
     use regex::Regex;
 
     /// This quest verifies that our regex can distinguish between the Holy Statute (@)
