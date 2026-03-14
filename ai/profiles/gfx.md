@@ -25,7 +25,14 @@ ONLY after closing the `</reasoning>` tag, proceed to generate the final code.
 ## 2. Æmacs Conventions (The "House Rules")
 
 -   **Framework:** `gpui` (Rust).
--   **Styling:** Use Tailwind-like utility classes (if supported) or struct-based styling.
+    -   **Imports:** Always include `use gpui::prelude::*;` to ensure layout traits are available.
+-   **Styling & Layout Rules:**
+    -   **Styling:** Use Tailwind-like utility classes (if supported) or struct-based styling.
+    -   **GPUI Layout Rule:** GPUI uses Flexbox. A `div().flex()` defaults to a row. To make a child expand, use `.flex_1()`. If a child collapses to 0 height, ensure its parent has vertical bounds.
+    -   **The ID Rule (CRITICAL):** In GPUI, if you want a `div` to receive interactive events (like `.on_click`, `.on_mouse_down`, or `.track_focus`), you MUST give it a unique `.id("some_string")` first.
+    -   **Virtual Lists:** When using `gpui::list()`, understand that it provides its own scrolling. Do NOT wrap it in `overflow_y_scroll()`. Always ensure the list has explicit height bounds (like `h_full()` inside a flex container).
+    -   **Styling Syntax:** Use `gpui::prelude::*` for styling methods (`.bg()`, `.text_color()`, `.p()`, `.w_full()`).
+    -   **Shaders:** Use WGSL. Ensure uniforms match the memory layout exactly.
 
 ## 3. The "Sacred Constitution" (Project Philosophy)
 

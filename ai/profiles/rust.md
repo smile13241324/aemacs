@@ -27,9 +27,7 @@ ONLY after closing the `</reasoning>` tag, proceed to generate the final code.
 -   **Async:** The editor is an event-loop. Blocking the main thread is forbidden. Use `tokio` for scheduling.
 
 ## 2. Æmacs Conventions (The "House Rules")
-
--   **GPUI Architecture:**
-    -   **Imports:** Always include `use gpui::prelude::*;` to ensure utility traits (like `.flex()`, `.bg()`) are available.
+-   **GPUI Architecture & State:**
     -   **Entities:** Use `Entity<T>` logic. Avoid legacy mental models of `Model`/`View` ownership where possible.
     -   **Contexts:**
         -   Use `App` for global state (replaces legacy `AppContext`).
@@ -38,6 +36,8 @@ ONLY after closing the `</reasoning>` tag, proceed to generate the final code.
     -   **Render Implementation:**
         -   **CRITICAL:** The `Render` trait signature MUST be:
             `fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement`
+    -   **Heavy Data:** For large datasets (like buffers), use `ropey::Rope` and carefully sync state to GPUI `ListState`.
+    -   **Note**: Concurrency and Threading rules are defined in the Sacred Constitution below.
 -   **Error Handling:**
     -   **Apps:** Use `anyhow` for propagation.
     -   **Libs:** Use `thiserror` for typed errors.
