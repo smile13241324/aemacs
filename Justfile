@@ -9,6 +9,8 @@ run:
     RUST_BACKTRACE=1 RUST_LOG=DEBUG cargo run
 run_release:
     cargo run
+run_wsl:
+    WAYLAND_DISPLAY="" XDG_SESSION_TYPE=x11 WGPU_BACKEND=vulkan cargo run
 test:
     cargo test --workspace
 check:
