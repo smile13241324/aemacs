@@ -103,7 +103,7 @@ generate_modelfile_content() {
 
     # Wir nutzen single-quotes 'EOF', um Bash-Interpolation im Jinja-Template zu verhindern
     case "$OLLAMA_TAG" in
-        "dolphin-3.0-mistral-24b-q4_K_M")
+        "dolphin-3.0-mistral-24b-q4_K_M" | "dolphin3:8b")
             # ---------------------------------------------------------
             # CHATML FORMAT + XML TOOL CALLING (Cognitive Computations)
             # ---------------------------------------------------------
@@ -394,6 +394,10 @@ if [ "$TIER" == "LOW" ]; then
     echo "   ⚠️  LOW Tier detected. Pulling highly optimized 8B models..."
     pull_model "hermes3:8b-llama3.1-q4_K_M"                 # Logic / The Dispatcher
     pull_model "dolphin3:8b"                        # Creative / The Sparring Partner
+
+    # pull_model "huggingface.co/Sao10K/Llama-3.1-8B-Stheno-v3.4" # Creative / The Sparring Partner
+    # Creative Sideload: Dolphin 3.0 8B (Llama 3.1 Base)
+    load_hf_model "dolphin3:8b" "https://huggingface.co/bartowski/Dolphin3.0-Llama3.1-8B-GGUF/resolve/main/Dolphin3.0-Llama3.1-8B-Q4_K_M.gguf"
 
     # pull_model "huggingface.co/Sao10K/Llama-3.1-8B-Stheno-v3.4" # Roleplay / The Method Actor
     # Roleplay Sideload: Stheno 3.4 8B
