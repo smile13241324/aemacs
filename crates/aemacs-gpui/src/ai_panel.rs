@@ -735,14 +735,32 @@ impl AiPanel {
                         .gap_y(px(2.0))
                         .child(
                             div()
-                                .text_size(px(10.0))
-                                .text_color(rgb(0xffffff))
-                                .child(format!(
-                                    "{} | VRAM: {:.1} GB | Context: {}k",
-                                    model.label,
-                                    model.base_vram_gb,
-                                    model.max_context / 1024
-                                )),
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap_x(px(6.0))
+                                .child(
+                                    div()
+                                        .size(px(8.0))
+                                        .flex_shrink_0()
+                                        .rounded_full()
+                                        .bg(if model.supports_tools {
+                                            rgb(0x98c379) // Green (Supports Tools)
+                                        } else {
+                                            rgb(0x5c6370) // Muted Grey (No Tools)
+                                        }),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(10.0))
+                                        .text_color(rgb(0xffffff))
+                                        .child(format!(
+                                            "{} | VRAM: {:.1} GB | Context: {}k",
+                                            model.label,
+                                            model.base_vram_gb,
+                                            model.max_context / 1024
+                                        )),
+                                ),
                         )
                         .child(
                             div()
