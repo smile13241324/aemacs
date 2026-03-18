@@ -169,6 +169,26 @@ cargo check
 cargo run
 ```
 
+## ⚙️ Configuration
+Æmacs uses a centralized, globally cached configuration file located at `~/.aemacs/config.ron` (Rusty Object Notation). If this file is missing, the system will gracefully fall back to local default values.
+
+This file acts as the single source of truth for your AI infrastructure, allowing you to point Æmacs to powerful remote servers for inference.
+
+| Key | Type | Default Value | Description |
+| :--- | :--- | :--- | :--- |
+| `hardware_tier` | `Option<String>` | `"LOW"` | Defines the default model size matrix (`LOW`, `MEDIUM`, `HIGH`). Used during the setup script. |
+| `ollama_url` | `Option<String>` | `"http://127.0.0.1:11434"` | The endpoint for the Ollama inference engine. Change this to connect to a remote GPU cluster. |
+| `qdrant_url` | `Option<String>` | `"http://127.0.0.1:6334"` | The gRPC endpoint for the Qdrant Vector Database. Controls where the Sentient Memory resides. |
+
+**Example `config.ron`:**
+```ron
+UserConfig(
+    hardware_tier: Some("HIGH"),
+    ollama_url: Some("http://192.168.1.100:11434"),
+    qdrant_url: Some("http://192.168.1.100:6334"),
+)
+```
+
 ## ⚖️ License
 **AGPL-3.0**.
 The code belongs to the community. Networked freedom is guaranteed.
