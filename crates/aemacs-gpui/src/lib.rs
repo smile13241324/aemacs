@@ -55,10 +55,16 @@ impl Workspace {
         window_handle: gpui::AnyWindowHandle,
     ) -> Entity<Self> {
         cx.new(|cx| {
+            let config = aemacs_core::config::get_config();
+
             // Initialize AI Infrastructure once (ACO-036 Performance fix)
             let kb = Arc::new(
-                KnowledgeBase::new("http://localhost:6334", "http://localhost:11434")
-                    .expect("Failed to initialize KnowledgeBase"),
+                KnowledgeBase::new(
+                    config.qdrant_url.as_deref().unwrap(),
+                    config.ollama_url.as_deref().unwrap(),
+                    aemacs_ai::rag::Environment::Production,
+                )
+                .expect("Failed to initialize KnowledgeBase"),
             );
 
             let persona_registry = futures::executor::block_on(PersonaRegistry::new(
@@ -94,9 +100,8 @@ impl Workspace {
             });
 
             // --- Load Configuration & Models (ACO-019) ---
-            let config = aemacs_core::config::load_user_config();
-            let tier_str = config.hardware_tier.unwrap_or_else(|| "LOW".to_string());
-            let available_models = aemacs_ai::models::get_models_for_tier(&tier_str);
+            let tier_str = config.hardware_tier.as_deref().unwrap_or("LOW");
+            let available_models = aemacs_ai::models::get_models_for_tier(tier_str);
             log::info!(
                 "🚀 [Workspace] Hardware Tier: {} ({} models loaded)",
                 tier_str,

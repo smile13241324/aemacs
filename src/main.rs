@@ -51,11 +51,14 @@ fn main() -> Result<()> {
             // A. Core System Init
             aemacs_core::init()?;
             let bus = EventBus::new();
+            
+            let config = aemacs_core::config::get_config();
 
             // B. AI Infrastructure
             let kb = Arc::new(KnowledgeBase::new(
-                "http://localhost:6334",
-                "http://localhost:11434",
+                config.qdrant_url.as_deref().unwrap(),
+                config.ollama_url.as_deref().unwrap(),
+                aemacs_ai::rag::Environment::Production,
             )?);
             let tokio_handle = tokio::runtime::Handle::current();
             let persona_registry = PersonaRegistry::new(tokio_handle).await?;
@@ -65,7 +68,7 @@ fn main() -> Result<()> {
                 Some(bus.tx.clone()),
             ));
             let backend = Arc::new(OpenAICompatibleBackend::new(
-                "http://localhost:11434/v1",
+                &format!("{}/v1", config.ollama_url.as_deref().unwrap()),
                 None,
             ));
 

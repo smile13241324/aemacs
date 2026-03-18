@@ -324,6 +324,8 @@ mkdir -p "$CONFIG_DIR"
 cat <<EOF > "$CONFIG_FILE"
 UserConfig(
     hardware_tier: Some("$TIER"),
+    ollama_url: Some("http://127.0.0.1:11434"),
+    qdrant_url: Some("http://127.0.0.1:6334"),
 )
 EOF
 

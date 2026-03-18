@@ -73,17 +73,19 @@ async fn main() -> anyhow::Result<()> {
     println!("{}", color("🤖 Æmacs Agent CLI (MCP Proving Ground)", BOLD));
     println!("---------------------------------------");
 
-    let ollama_url = "http://localhost:11434/v1";
-    let qdrant_url = "http://localhost:6334";
+    let config = aemacs_core::config::get_config();
+    let ollama_base = config.ollama_url.as_deref().unwrap();
+    let ollama_url = format!("{}/v1", ollama_base);
+    let qdrant_url = config.qdrant_url.as_deref().unwrap();
 
-    println!("🔌 Connecting to Ollama at {}", color(ollama_url, BLUE));
-    let backend = OpenAICompatibleBackend::new(ollama_url, None);
+    println!("🔌 Connecting to Ollama at {}", color(&ollama_url, BLUE));
+    let backend = OpenAICompatibleBackend::new(&ollama_url, None);
 
     println!(
         "📚 Connecting to KnowledgeBase at {}",
         color(qdrant_url, BLUE)
     );
-    let kb = match KnowledgeBase::new(qdrant_url, ollama_url) {
+    let kb = match KnowledgeBase::new(qdrant_url, ollama_base, aemacs_ai::rag::Environment::Test) {
         Ok(kb) => Arc::new(kb),
         Err(e) => {
             eprintln!(
