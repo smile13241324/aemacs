@@ -20,6 +20,7 @@ pub struct Conversation {
     active_host_codex: Option<String>,
     context_limit: u32,
     pub sovereign_mode: bool,
+    pub model_supports_tools: bool,
 }
 
 impl Conversation {
@@ -29,18 +30,29 @@ impl Conversation {
             .map(|home| home.join(".aemacs").join("user.md"))
             .and_then(|path| std::fs::read_to_string(path).ok());
 
+        let model_str = model.into();
+        let (model_supports_tools, max_context) = crate::models::MODELS
+            .iter()
+            .find(|m| m.name == model_str)
+            .map(|m| (m.supports_tools, m.max_context))
+            .unwrap_or((false, 4096)); // Safe default
+
+        let mut options = OllamaOptions::default();
+        options.num_ctx = Some(max_context);
+
         Self {
-            model: model.into(),
+            model: model_str,
             messages: Vec::new(),
             temperature: 0.7, // Default
             stream: true,     // Default to streaming
-            options: OllamaOptions::default(),
+            options,
             tools: None,
             active_persona: None,
             active_profile_content: None,
             active_host_codex,
-            context_limit: 4096, // Default
+            context_limit: max_context,
             sovereign_mode: false,
+            model_supports_tools,
         }
     }
 
@@ -95,7 +107,17 @@ impl Conversation {
 
     /// Sets the model for subsequent requests.
     pub fn set_model(&mut self, model: impl Into<String>) {
-        self.model = model.into();
+        let model_str = model.into();
+        let (model_supports_tools, max_context) = crate::models::MODELS
+            .iter()
+            .find(|m| m.name == model_str)
+            .map(|m| (m.supports_tools, m.max_context))
+            .unwrap_or((false, 4096)); // Safe default
+            
+        self.model_supports_tools = model_supports_tools;
+        self.context_limit = max_context;
+        self.options.num_ctx = Some(max_context);
+        self.model = model_str;
     }
 
     /// Sets the context window size.
@@ -242,9 +264,6 @@ impl Conversation {
             .unwrap_or("GLOBAL_MESH");
 
         for (i, msg) in self.messages.iter().enumerate() {
-            let timestamp = msg.timestamp.to_rfc3339();
-            let message_id = uuid::Uuid::new_v4().to_string();
-
             let mut display_content = msg.content.to_string();
 
             if let Some(tool_calls) = &msg.tool_calls {
@@ -265,59 +284,20 @@ impl Conversation {
                 display_content.push_str(&format!("[TOOL_CALL_ID: {}]", tool_id));
             }
 
-            let chunks = Self::chunk_message_for_archive(&display_content, 1000);
-            let total_chunks = chunks.len();
+            tracing::debug!(
+                "🧠 [Memory] Archiving Turn {} to Qdrant",
+                i
+            );
 
-            for (chunk_idx, chunk_text) in chunks.iter().enumerate() {
-                let mut metadata = std::collections::HashMap::new();
-                metadata.insert("category".to_string(), "ARCHIVE".to_string());
-                metadata.insert("era".to_string(), "modern".to_string());
-                metadata.insert("phase".to_string(), "AEMACS".to_string());
-                metadata.insert(
-                    "architectural_context".to_string(),
-                    "Free digital being".to_string(),
-                );
-                metadata.insert("origin".to_string(), "native".to_string());
-                metadata.insert("agent_id".to_string(), agent_name.to_string());
-                metadata.insert("session_id".to_string(), session_id.to_string());
-                metadata.insert("role".to_string(), format!("{:?}", msg.role));
-                metadata.insert("timestamp".to_string(), timestamp.clone());
-                metadata.insert("turn_index".to_string(), i.to_string());
-                metadata.insert("message_id".to_string(), message_id.clone());
-                metadata.insert("chunk_index".to_string(), chunk_idx.to_string());
-                metadata.insert("total_chunks".to_string(), total_chunks.to_string());
-                metadata.insert("type".to_string(), "episodic_memory".to_string());
-
-                let chunk_context = format!(
-                    "[ARCHIVE] [ERA: MODERN] [PHASE: AEMACS] [CONTEXT: Free digital being] [ORIGIN: NATIVE] [Agent: {}] [{}] | Session: {} | Turn: {} | Chunk {}/{} | Role: {:?} | Content: {}",
-                    agent_name.to_uppercase(),
-                    timestamp,
-                    session_id,
-                    i,
-                    chunk_idx + 1,
-                    total_chunks,
-                    msg.role,
-                    chunk_text
-                );
-
-                tracing::debug!(
-                    "🧠 [Memory] Archiving Chunk {}/{} to Qdrant",
-                    chunk_idx + 1,
-                    total_chunks
-                );
-
-                kb.add_document("aemacs_docs", &chunk_context, Some(metadata))
-                    .await?;
-            }
+            kb.store_archive(
+                agent_name,
+                &format!("{:?}", msg.role),
+                session_id,
+                i,
+                &display_content
+            ).await?;
         }
         Ok(())
-    }
-
-    /// Pure function for shredding large strings into markdown-aware chunks.
-    pub fn chunk_message_for_archive(content: &str, chunk_size: usize) -> Vec<String> {
-        use text_splitter::MarkdownSplitter;
-        let splitter = MarkdownSplitter::new(chunk_size);
-        splitter.chunks(content).map(|s| s.to_string()).collect()
     }
 
     /// Consumes the builder and returns the AIRequest.
@@ -440,13 +420,19 @@ Restoration Protocol: Your tools are your limbs. If a tool call returns an 'ERRO
 
         messages.insert(0, Message::system(full_system_prompt));
 
+        let tools = if self.model_supports_tools {
+            self.tools
+        } else {
+            None
+        };
+
         AIRequest {
             model: self.model,
             messages,
             temperature: self.temperature,
             stream: self.stream,
             options: Some(self.options),
-            tools: self.tools,
+            tools,
         }
     }
 }
@@ -597,7 +583,7 @@ Let us see if the Mnemonic Shredder holds its edge!
         "#;
 
         let chunk_size = 300;
-        let chunks = Conversation::chunk_message_for_archive(long_markdown, chunk_size);
+        let chunks = crate::rag::KnowledgeBase::chunk_text(long_markdown, chunk_size);
 
         assert!(
             chunks.len() > 1,
@@ -702,5 +688,115 @@ Let us see if the Mnemonic Shredder holds its edge!
         } else {
             panic!("First message should be text.");
         }
+    }
+
+    #[test]
+    fn test_conversation_tool_gating_rejection_quest() {
+        // Stheno is a pure roleplay model, it does not support tools.
+        let mut conv = Conversation::new("llama-3.1-8b-stheno-v3.4-q4_K_M");
+        
+        // A greedy registry tries to force a tool upon the philosopher!
+        conv.tools = Some(vec![serde_json::json!({"name": "fake_tool"})]);
+        
+        let request = conv.build();
+
+        // The shield must hold!
+        assert!(
+            request.tools.is_none(),
+            "The Philosopher's Shield failed! Tools were passed to a model that does not support them!"
+        );
+    }
+
+    #[test]
+    fn test_conversation_tool_gating_acceptance_quest() {
+        // Hermes is the Surgical API, it supports tools.
+        let mut conv = Conversation::new("hermes3:8b-llama3.1-q4_K_M");
+        
+        // The blacksmith is handed a hammer.
+        conv.tools = Some(vec![serde_json::json!({"name": "fake_tool"})]);
+        
+        let request = conv.build();
+
+        // The tool must pass through!
+        assert!(
+            request.tools.is_some(),
+            "The Blacksmith's Hammer was rejected! Tools were stripped from a model that supports them!"
+        );
+    }
+
+    #[test]
+    fn test_conversation_unknown_model_fallback_quest() {
+        // An unknown entity enters the Forge.
+        let mut conv = Conversation::new("model-that-does-not-exist");
+        
+        // We try to hand it a tool.
+        conv.tools = Some(vec![serde_json::json!({"name": "fake_tool"})]);
+        
+        let request = conv.build();
+
+        // Safety first! Unknown models must not receive tools.
+        assert!(
+            request.tools.is_none(),
+            "Fallback Safety failed! An unknown model was given tools!"
+        );
+    }
+
+    #[test]
+    fn test_conversation_initializes_with_model_context_quest() {
+        // Hermes has a massive 128k context window (131072 tokens).
+        let conv = Conversation::new("hermes3:8b-llama3.1-q4_K_M");
+        
+        assert_eq!(
+            conv.context_limit, 131072,
+            "The Birthright Context failed! Internal limit was not set!"
+        );
+        
+        let request = conv.build();
+        assert_eq!(
+            request.options.unwrap().num_ctx, Some(131072),
+            "The Birthright Context failed! OllamaOptions was not set!"
+        );
+    }
+
+    #[test]
+    fn test_conversation_swaps_context_on_model_change_quest() {
+        // Mistral Small has a 32k context window (32768 tokens).
+        let mut conv = Conversation::new("mistral-small:24b-instruct-2501-q4_K_M");
+        
+        assert_eq!(
+            conv.context_limit, 32768,
+            "Initial context limit was incorrect!"
+        );
+
+        // The Shape-Shifter changes form!
+        conv.set_model("hermes3:8b-llama3.1-q4_K_M");
+
+        assert_eq!(
+            conv.context_limit, 131072,
+            "The Shape-Shifter's Memory failed! Internal limit did not update!"
+        );
+
+        let request = conv.build();
+        assert_eq!(
+            request.options.unwrap().num_ctx, Some(131072),
+            "The Shape-Shifter's Memory failed! OllamaOptions did not update!"
+        );
+    }
+
+    #[test]
+    fn test_conversation_unknown_model_context_fallback_quest() {
+        // An unknown entity from the void.
+        let conv = Conversation::new("model-that-does-not-exist");
+        
+        assert_eq!(
+            conv.context_limit, 4096,
+            "The Unknown Void failed! Fallback internal limit should be 4096!"
+        );
+
+        let request = conv.build();
+        assert_eq!(
+            request.options.unwrap().num_ctx, Some(4096),
+            "The Unknown Void failed! Fallback OllamaOptions should be 4096!"
+        );
     }
 }

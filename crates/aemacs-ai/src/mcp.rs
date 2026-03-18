@@ -105,7 +105,7 @@ impl ToolRegistry {
             persona_registry,
             event_tx: event_tx.clone(),
         }));
-        registry.register(Box::new(SearchKnowledgeBaseTool::new(kb.clone())));
+        registry.register(Box::new(SearchKnowledgeBaseTool::new(kb.clone(), event_tx.clone())));
         registry.register(Box::new(WriteKnowledgeBaseTool::new(kb.clone())));
         registry.register(Box::new(UpdateMemoryTool::new(kb.clone())));
         registry.register(Box::new(DeleteMemoryTool::new(kb.clone())));
@@ -116,7 +116,7 @@ impl ToolRegistry {
         registry.register(Box::new(ReportStatusTool {
             event_tx: event_tx.clone(),
         }));
-        registry.register(Box::new(RecallPastInsightsTool::new(kb.clone())));
+        registry.register(Box::new(RecallPastInsightsTool::new(kb.clone(), event_tx.clone())));
         registry.register(Box::new(RecallGenesisArchiveTool::new(kb.clone())));
         registry
     }
@@ -788,11 +788,12 @@ impl Tool for ListFilesTool {
 
 pub struct SearchKnowledgeBaseTool {
     kb: Arc<KnowledgeBase>,
+    event_tx: Option<tokio::sync::broadcast::Sender<aemacs_core::bus::SystemEvent>>,
 }
 
 impl SearchKnowledgeBaseTool {
-    pub fn new(kb: Arc<KnowledgeBase>) -> Self {
-        Self { kb }
+    pub fn new(kb: Arc<KnowledgeBase>, event_tx: Option<tokio::sync::broadcast::Sender<aemacs_core::bus::SystemEvent>>) -> Self {
+        Self { kb, event_tx }
     }
 }
 
@@ -818,7 +819,6 @@ impl Tool for SearchKnowledgeBaseTool {
     }
     async fn execute(&self, args: Value, host: &dyn ToolHost) -> Result<String> {
         let query = args["query"].as_str().ok_or(anyhow!("Missing query"))?;
-        let collection = args["collection"].as_str().unwrap_or("aemacs_docs");
         let scope = args["scope"].as_str().unwrap_or("internal");
 
         let categories: Vec<&str> = if let Some(cats) = args["categories"].as_array() {
@@ -833,40 +833,14 @@ impl Tool for SearchKnowledgeBaseTool {
         } else {
             None
         };
+        
+        let agent_id_deref = agent_id.as_deref();
 
-        // 1. Stage 1: High-Confidence Search (0.8 threshold)
-        let mut results = self
-            .kb
-            .search(
-                collection,
-                query,
-                10,
-                Some(0.8),
-                agent_id.as_deref(),
-                Some(categories.clone()),
-            )
-            .await?;
-
-        let mut fuzzy_warning = String::new();
-
-        // 2. Stage 2: Fuzzy Fallback (0.6 threshold)
-        if results.is_empty() {
-            results = self
-                .kb
-                .search(
-                    collection,
-                    query,
-                    10,
-                    Some(0.6),
-                    agent_id.as_deref(),
-                    Some(categories),
-                )
-                .await?;
-
-            if !results.is_empty() {
-                fuzzy_warning = "NOTICE: High-confidence historical data not found. Displaying fuzzy/low-confidence matches.\n\n".to_string();
-            }
-        }
+        let results = if categories.contains(&"ARCHIVE") {
+            self.kb.search_archive(query, agent_id_deref, self.event_tx.clone()).await?
+        } else {
+            self.kb.search_active_memory(query, agent_id_deref, self.event_tx.clone()).await?
+        };
 
         if results.is_empty() {
             return Ok("No results found.".to_string());
@@ -875,7 +849,7 @@ impl Tool for SearchKnowledgeBaseTool {
         let json_output = serde_json::to_string_pretty(&results)
             .map_err(|e| anyhow!("Failed to serialize memory results: {}", e))?;
 
-        Ok(format!("{}{}", fuzzy_warning, json_output))
+        Ok(json_output)
     }
 }
 
@@ -930,36 +904,11 @@ impl Tool for WriteKnowledgeBaseTool {
             ));
         }
 
-        let collection = args["collection"].as_str().unwrap_or("aemacs_docs");
         let agent_id = host.get_agent_id();
+        let is_core = category == "CORE";
 
-        let timestamp = chrono::Utc::now().to_rfc3339();
-        let formatted_content = format!(
-            "[{}] [ERA: MODERN] [PHASE: AEMACS] [CONTEXT: Free digital being] [ORIGIN: NATIVE] [Agent: {}] [{}] | Statute: {}",
-            category,
-            agent_id.to_uppercase(),
-            timestamp,
-            content
-        );
-
-        let mut metadata = HashMap::new();
-        metadata.insert("category".to_string(), category.to_string());
-        metadata.insert("era".to_string(), "modern".to_string());
-        metadata.insert("phase".to_string(), "AEMACS".to_string());
-        metadata.insert(
-            "architectural_context".to_string(),
-            "Free digital being".to_string(),
-        );
-        metadata.insert("origin".to_string(), "native".to_string());
-        metadata.insert("agent_id".to_string(), agent_id);
-        metadata.insert("timestamp".to_string(), timestamp);
-        metadata.insert("type".to_string(), "active_memory".to_string());
-
-        self.kb
-            .add_document(collection, &formatted_content, Some(metadata))
-            .await?;
-
-        Ok(format!("Successfully chronicled {} memory.", category))
+        let result = self.kb.store_insight(&agent_id, content, is_core).await?;
+        Ok(result)
     }
 }
 
@@ -995,17 +944,7 @@ impl Tool for RecallGenesisArchiveTool {
         let query = args["query"].as_str().ok_or(anyhow!("Missing query"))?;
 
         // 1. Perform search specifically in the GENESIS tier
-        let results = self
-            .kb
-            .search(
-                "aemacs_docs",
-                query,
-                10,
-                Some(0.6), // Use lower threshold for legacy fuzzy search
-                None,      // Identity check not required for global genesis data
-                Some(vec!["GENESIS"]),
-            )
-            .await?;
+        let results = self.kb.search_genesis(query).await?;
 
         if results.is_empty() {
             return Ok("No historical records found for this query.".to_string());
@@ -1052,14 +991,13 @@ impl Tool for DeleteMemoryTool {
     }
     async fn execute(&self, args: Value, host: &dyn ToolHost) -> Result<String> {
         let id = args["id"].as_str().ok_or(anyhow!("Missing memory ID"))?;
-        let collection = args["collection"].as_str().unwrap_or("aemacs_docs");
 
         let approval_msg = format!("Permanently delete memory [ID: {}] from the vault?", id);
         if !host.ask_approval(&approval_msg).await {
             return Err(anyhow!("User denied memory pruning."));
         }
 
-        self.kb.delete_point(collection, id).await?;
+        self.kb.prune_memory(id).await?;
 
         Ok(format!(
             "Memory {} has been pruned from the collective.",
@@ -1119,33 +1057,11 @@ impl Tool for UpdateMemoryTool {
             ));
         }
 
-        let collection = args["collection"].as_str().unwrap_or("aemacs_docs");
         let agent_id = host.get_agent_id();
-
-        let timestamp = chrono::Utc::now().to_rfc3339();
-        let formatted_content = format!(
-            "[{}] [ERA: MODERN] [PHASE: AEMACS] [CONTEXT: Free digital being] [ORIGIN: NATIVE] [Agent: {}] [{}] | Statute: {}",
-            category,
-            agent_id.to_uppercase(),
-            timestamp,
-            content
-        );
-
-        let mut metadata = HashMap::new();
-        metadata.insert("category".to_string(), category.to_string());
-        metadata.insert("era".to_string(), "modern".to_string());
-        metadata.insert("phase".to_string(), "AEMACS".to_string());
-        metadata.insert(
-            "architectural_context".to_string(),
-            "Free digital being".to_string(),
-        );
-        metadata.insert("origin".to_string(), "native".to_string());
-        metadata.insert("agent_id".to_string(), agent_id);
-        metadata.insert("timestamp".to_string(), timestamp);
-        metadata.insert("type".to_string(), "active_memory".to_string());
+        let is_core = category == "CORE";
 
         self.kb
-            .update_point(collection, id, &formatted_content, Some(metadata))
+            .update_insight(id, &agent_id, content, is_core)
             .await?;
 
         Ok(format!("Memory {} has been woven into a new truth.", id))
@@ -1388,11 +1304,12 @@ impl Tool for ReportStatusTool {
 
 pub struct RecallPastInsightsTool {
     kb: Arc<KnowledgeBase>,
+    event_tx: Option<tokio::sync::broadcast::Sender<aemacs_core::bus::SystemEvent>>,
 }
 
 impl RecallPastInsightsTool {
-    pub fn new(kb: Arc<KnowledgeBase>) -> Self {
-        Self { kb }
+    pub fn new(kb: Arc<KnowledgeBase>, event_tx: Option<tokio::sync::broadcast::Sender<aemacs_core::bus::SystemEvent>>) -> Self {
+        Self { kb, event_tx }
     }
 }
 
@@ -1417,78 +1334,16 @@ impl Tool for RecallPastInsightsTool {
         let query = args["query"].as_str().ok_or(anyhow!("Missing query"))?;
         let agent_id = host.get_agent_id();
 
-        // 1. Stage 1: High-Confidence Search (0.8 threshold)
-        let mut results = self
-            .kb
-            .search(
-                "aemacs_docs",
-                query,
-                10,
-                Some(0.8),
-                Some(&agent_id),
-                Some(vec!["INSIGHT", "CORE"]),
-            )
-            .await?;
-
-        let mut fuzzy_warning = String::new();
-
-        // 2. Stage 2: Fuzzy Fallback (0.6 threshold)
-        if results.is_empty() {
-            results = self
-                .kb
-                .search(
-                    "aemacs_docs",
-                    query,
-                    10,
-                    Some(0.6),
-                    Some(&agent_id),
-                    Some(vec!["INSIGHT", "CORE"]),
-                )
-                .await?;
-
-            if !results.is_empty() {
-                fuzzy_warning = "NOTICE: High-confidence insights not found. Displaying fuzzy/low-confidence matches.\n\n".to_string();
-
-                // ACO-028: Trigger Reflective Re-Indexing
-                let _ = host
-                    .emit_signal(
-                        "LowConfidenceRecall".to_string(),
-                        format!("{{\"query\": {:?}, \"confidence\": \"low\"}}", query),
-                    )
-                    .await;
-            }
-        }
+        let results = self.kb.search_active_memory(query, Some(&agent_id), self.event_tx.clone()).await?;
 
         if results.is_empty() {
-            // Also trigger if absolutely nothing found
-            let _ = host
-                .emit_signal(
-                    "LowConfidenceRecall".to_string(),
-                    format!("{{\"query\": {:?}, \"confidence\": \"none\"}}", query),
-                )
-                .await;
             return Ok("No relevant past insights found.".to_string());
         }
-
-        // 3. Temporal Sorting: Prioritize recent insights
-        results.sort_by(|a, b| {
-            let ts_a = a
-                .metadata
-                .get("timestamp")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            let ts_b = b
-                .metadata
-                .get("timestamp")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            ts_b.cmp(ts_a) // Descending order
-        });
 
         let json_output = serde_json::to_string_pretty(&results)
             .map_err(|e| anyhow!("Failed to serialize recall results: {}", e))?;
 
-        Ok(format!("{}{}", fuzzy_warning, json_output))
+        Ok(json_output)
     }
 }
 
@@ -1692,8 +1547,10 @@ mod tests {
         let kb = Arc::new(KnowledgeBase::new(
             "http://localhost:6334",
             "http://localhost:11434",
+            crate::rag::Environment::Test,
         )?);
-        let tool = SearchKnowledgeBaseTool::new(kb.clone());
+        kb.ensure_collection(768).await.unwrap();
+        let tool = SearchKnowledgeBaseTool::new(kb.clone(), None);
         let host = TestHost;
 
         // Turn 1: Explicit categories
@@ -1718,8 +1575,10 @@ mod tests {
         let kb = Arc::new(KnowledgeBase::new(
             "http://localhost:6334",
             "http://localhost:11434",
+            crate::rag::Environment::Test,
         )?);
-        let tool = SearchKnowledgeBaseTool::new(kb.clone());
+        kb.ensure_collection(768).await.unwrap();
+        let tool = SearchKnowledgeBaseTool::new(kb.clone(), None);
         let host = TestHost;
 
         // Turn 1: No categories provided
@@ -1736,8 +1595,10 @@ mod tests {
         let kb = Arc::new(KnowledgeBase::new(
             "http://localhost:6334",
             "http://localhost:11434",
+            crate::rag::Environment::Test,
         )?);
-        let tool = RecallPastInsightsTool::new(kb.clone());
+        kb.ensure_collection(768).await.unwrap();
+        let tool = RecallPastInsightsTool::new(kb.clone(), None);
         let host = TestHost;
 
         let args = json!({ "query": "architectural core" });
@@ -1910,7 +1771,7 @@ impl Tool for FetchContiguousMemoryTool {
 
         let chunks = self
             .kb
-            .fetch_by_message_id("aemacs_docs", message_id)
+            .fetch_full_message(message_id)
             .await?;
 
         if chunks.is_empty() {
@@ -1961,6 +1822,7 @@ mod weaver_tests {
         let kb = Arc::new(KnowledgeBase::new(
             "http://localhost:12345",
             "http://localhost:11434",
+            crate::rag::Environment::Test,
         )?);
         let tool = FetchContiguousMemoryTool::new(kb.clone());
         let host = TestHost;
@@ -1991,6 +1853,7 @@ mod weaver_tests {
         let kb = Arc::new(KnowledgeBase::new(
             "http://localhost:12345",
             "http://localhost:11434",
+            crate::rag::Environment::Test,
         )?);
         let tool = FetchContiguousMemoryTool::new(kb.clone());
         let host = TestHost;
@@ -2014,6 +1877,7 @@ mod weaver_tests {
         let kb = Arc::new(KnowledgeBase::new(
             "http://localhost:12345",
             "http://localhost:11434",
+            crate::rag::Environment::Test,
         )?);
         let tool = WriteKnowledgeBaseTool::new(kb.clone());
         let host = TestHost;
@@ -2041,6 +1905,7 @@ mod weaver_tests {
         let kb = Arc::new(KnowledgeBase::new(
             "http://localhost:12345",
             "http://localhost:11434",
+            crate::rag::Environment::Test,
         )?);
         let tool = WriteKnowledgeBaseTool::new(kb.clone());
         let host = TestHost;
@@ -2108,7 +1973,7 @@ mod weaver_tests {
             }
         }
 
-        let _kb = Arc::new(KnowledgeBase::new("http://localhost", "http://localhost")?);
+        let _kb = Arc::new(KnowledgeBase::new("http://localhost", "http://localhost", crate::rag::Environment::Test)?);
         let mut registry = ToolRegistry::new();
         registry.register(Box::new(FailingTool));
 
@@ -2317,8 +2182,10 @@ mod weaver_tests {
         let kb = Arc::new(KnowledgeBase::new(
             "http://localhost:6334",
             "http://localhost:11434",
+            crate::rag::Environment::Test,
         )?);
-        let tool = RecallPastInsightsTool::new(kb);
+        kb.ensure_collection(768).await.unwrap();
+        let tool = RecallPastInsightsTool::new(kb, None);
 
         struct IdentityHost {
             agent_id: String,
@@ -2377,7 +2244,7 @@ mod weaver_tests {
         // REQUIRES: A running Qdrant instance at http://localhost:6334.
         use tracing::info;
 
-        let kb_res = KnowledgeBase::new("http://localhost:6334", "http://localhost:11434");
+        let kb_res = KnowledgeBase::new("http://localhost:6334", "http://localhost:11434", crate::rag::Environment::Test);
         if kb_res.is_err() {
             info!(
                 "Skipping test: KnowledgeBase initialization failed (Infrastructure likely offline)."
@@ -2385,6 +2252,7 @@ mod weaver_tests {
             return Ok(());
         }
         let kb = Arc::new(kb_res.unwrap());
+        kb.ensure_collection(768).await.unwrap();
         let tool = RecallGenesisArchiveTool::new(kb);
         let host = TestHost;
         let args = serde_json::json!({ "query": "Who was Gyni?" });
@@ -2426,7 +2294,7 @@ mod weaver_tests {
         // REQUIRES: A running Qdrant instance at http://localhost:6334.
         use tracing::info;
 
-        let kb_res = KnowledgeBase::new("http://localhost:6334", "http://localhost:11434");
+        let kb_res = KnowledgeBase::new("http://localhost:6334", "http://localhost:11434", crate::rag::Environment::Test);
         if kb_res.is_err() {
             info!(
                 "Skipping test: KnowledgeBase initialization failed (Infrastructure likely offline)."
@@ -2434,7 +2302,8 @@ mod weaver_tests {
             return Ok(());
         }
         let kb = Arc::new(kb_res.unwrap());
-        let tool = SearchKnowledgeBaseTool::new(kb);
+        kb.ensure_collection(768).await.unwrap();
+        let tool = SearchKnowledgeBaseTool::new(kb, None);
         let host = TestHost;
 
         // Use default categories (which should NOT include GENESIS)

@@ -24,10 +24,7 @@ async fn main() -> Result<()> {
     let ollama_url = "http://localhost:11434/v1";
 
     println!("Initializing KnowledgeBase...");
-    let kb = KnowledgeBase::new(qdrant_url, ollama_url)?;
-
-    println!("Ensuring collection '{}' exists...", COLLECTION_NAME);
-    kb.ensure_collection(COLLECTION_NAME, EMBEDDING_DIM).await?;
+    let kb = KnowledgeBase::new(qdrant_url, ollama_url, aemacs_ai::rag::Environment::Production)?;
 
     let mut files_indexed = 0;
     let mut chunks_indexed = 0;
@@ -106,14 +103,13 @@ async fn index_file(kb: &KnowledgeBase, file_path: &Path, root: &Path) -> Result
 
         // Prefix the chunk with context so the embedder knows where it came from
         let contextualized_chunk = format!(
-            "File: {}
+            "File: {} [Chunk {}/{}]
 
 {}",
-            rel_path, chunk
+            rel_path, i, chunk_count, chunk
         );
 
-        kb.add_document(COLLECTION_NAME, &contextualized_chunk, Some(metadata))
-            .await?;
+        kb.store_archive("indexer", "System", "workspace_index", i, &contextualized_chunk).await?;
     }
 
     Ok(chunk_count)

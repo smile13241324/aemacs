@@ -65,7 +65,7 @@ fn format_mnemic_reflection(directives: &[String]) -> String {
 
 /// Aggregates recent insights and core truths into a system prompt injection.
 async fn perform_mnemic_reflection(kb: &KnowledgeBase) -> String {
-    match kb.get_core_directives("aemacs_docs").await {
+    match kb.get_core_directives().await {
         Ok(directives) => format_mnemic_reflection(&directives),
         Err(_) => "Operate based on default persona.".to_string(),
     }
@@ -175,14 +175,8 @@ impl AutonomousService {
                 } => {
                     if event_type == "LowConfidenceRecall" {
                         warn!(
-                            "🧠 [AUTONOMOUS] Low confidence recall detected. Triggering background maintenance..."
+                            "🧠 [AUTONOMOUS] Low confidence recall detected. Background maintenance handled by RAG Core."
                         );
-                        let kb = self.kb.clone();
-                        tokio::spawn(async move {
-                            if let Err(e) = kb.optimize_collection("aemacs_docs").await {
-                                warn!("⚠️ [AUTONOMOUS] Background optimization failed: {}", e);
-                            }
-                        });
                     }
 
                     let trigger_message = if event_type == "AutonomousIntent" {
@@ -285,6 +279,7 @@ mod tests {
         let kb = Arc::new(KnowledgeBase::new(
             "http://localhost:6334",
             "http://localhost:11434",
+            crate::rag::Environment::Test,
         )?);
         let registry = Arc::new(ToolRegistry::new());
         let backend = Arc::new(OpenAICompatibleBackend::new(
@@ -338,6 +333,7 @@ mod tests {
         let kb = Arc::new(KnowledgeBase::new(
             "http://localhost:6334",
             "http://localhost:11434",
+            crate::rag::Environment::Test,
         )?);
         let registry = Arc::new(ToolRegistry::new());
         let backend = Arc::new(OpenAICompatibleBackend::new(

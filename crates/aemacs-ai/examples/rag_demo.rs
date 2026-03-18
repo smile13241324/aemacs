@@ -9,7 +9,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let qdrant_url = "http://localhost:6334";
     let ollama_url = "http://localhost:11434/v1";
 
-    let kb = match KnowledgeBase::new(qdrant_url, ollama_url) {
+    let kb = match KnowledgeBase::new(qdrant_url, ollama_url, aemacs_ai::rag::Environment::Test) {
         Ok(kb) => kb,
         Err(e) => {
             eprintln!("❌ Failed to initialize KnowledgeBase: {}", e);
@@ -21,9 +21,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("✅ Connected to Qdrant & Ollama.");
 
     // 2. Setup Collection
-    let collection_name = "aemacs_docs";
-    println!("⚙️  Ensuring collection '{}' exists...", collection_name);
-    kb.ensure_collection(collection_name, 768).await?;
+    println!("⚙️  Ensuring collection exists...");
 
     // 3. Ingest Data
     println!("📚 Ingesting knowledge...");
@@ -34,9 +32,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
         "Kairon is the Forge Master who implements the Rust core.",
     ];
 
-    for doc in docs {
+    for (i, doc) in docs.into_iter().enumerate() {
         print!("   -> Indexing: '{}' ... ", doc);
-        kb.add_document(collection_name, doc, None).await?;
+        kb.store_archive("demo_agent", "Assistant", "demo_session", i, doc).await?;
         println!("Done.");
     }
 
@@ -45,8 +43,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("\n🔍 Searching for: '{}'", query);
 
     // Search for a good answer with a similarity threshold of 0.7
-    let results = kb
-        .search(collection_name, query, 3, Some(0.7), None, None)
+    let results: Vec<aemacs_ai::rag::MemoryResult> = kb
+        .search_archive(query, None, None)
         .await?;
 
     println!("--- Results ---");
