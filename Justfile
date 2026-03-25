@@ -29,5 +29,3 @@ demo:
     cargo run -p aemacs-ai --example ollama_chat
     cargo run -p aemacs-ai --example ollama_chat -- assets/gplv3.png
     cargo run -p aemacs-ai --example rag_demo
-    echo("cargo run -p aemacs-ai --example agent_cli")
-    echo("cargo run -p aemacs-ai --example index_workspace")

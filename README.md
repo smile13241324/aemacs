@@ -189,6 +189,94 @@ UserConfig(
 )
 ```
 
+## 🧠 The Bicameral Mind (Split-Brain Pipeline)
+Æmacs employs a **Bicameral Neural Architecture** to solve the inherent trade-off between strict instruction following and creative persona fidelity in local LLMs. 
+
+Instead of a single model pass, every request is split into two specialized hemispheres:
+1.  **The Logic Hemisphere (Left Brain):** An unrestricted, uncensored "Dolphin" class model. It is the executive function, responsible for AST analysis, tool execution, and raw technical reasoning.
+2.  **The Voice Hemisphere (Right Brain):** A high-fidelity roleplay model. It receives the technical results from the Logic Hemisphere and synthesizes them into the agent's unique persona and voice.
+
+### 🔬 The Philosophy of Split-Brain Optimization
+Local hardware is finite. By separating **Logic** from **Voice**, we achieve:
+*   **Precision:** Use models fine-tuned specifically for deterministic tool use without roleplay baggage.
+*   **Personality:** Use models optimized for creative prose and character consistency.
+*   **VRAM Efficiency:** We enforce a strict "Load-Unload" protocol. The Logic model is completely evicted from GPU memory before the Voice model is loaded, allowing you to run much larger models than a traditional "both-at-once" approach would permit.
+
+### 📖 Host Codex Schema (`user.md`)
+Your personal identity in `~/.aemacs/user.md` should now be bifurcated to provide targeted context to each hemisphere using these headers:
+
+```markdown
+#[LOGIC]
+- Primary Stack: Rust 2024, GPUI, Tokio.
+- Preferences: Strictly functional, strong typing, zero-cost abstractions.
+
+#[ROLEPLAY]
+- The user is Maxi, founder of Æmacs.
+- She drinks plant milk and demands architectural excellence.
+```
+
+### 🖥️ Tiered Hardware Requirements
+Models are automatically paired based on your `hardware_tier`. VRAM estimates include KV cache overhead for standard context depths.
+
+| Tier | Logic Hemisphere | Voice Hemisphere | Sequential VRAM Peak | Hardware Target |
+| :--- | :--- | :--- | :--- | :--- |
+| **LOW** | Dolphin 3.0 8B | Stheno v3.4 8B | ~5.0 GB | Modern Laptops (RTX 3060/4050) |
+| **MEDIUM** | Dolphin 3.0 24B | Magnum v2 12B | ~14.3 GB | Workstations (RTX 3090/4080) |
+| **HIGH** | Llama 3.3 70B | Euryale v2.2 70B | ~40.0 GB | Heavy Compute (A6000 / Dual 3090) |
+
+## 🧠 Managing Agent Memory (The Migration Tool)
+Æmacs includes a dedicated CLI tool (`aemacs_memory`) to safely extract, backup, and restore agent history. The tool utilizes a strictly typed JSON Lines (`.jsonl`) intermediate format to ensure data integrity during transit.
+
+### Primary Use Cases
+1.  **Cloud Migration:** Safely extract legacy chat logs or persona definitions from external cloud systems and import them natively into the Æmacs RAG database.
+2.  **Backup & Portability:** Export a specific agent's entire memory matrix to a portable `.jsonl` file for backups or transferring to a new machine.
+3.  **Surgical Memory Repair:** If an agent develops a "hallucination" or retains bad context, you can export their memory, manually delete or edit the corrupted JSON line, and re-import the pristine state.
+
+### Phase 1: Source Extraction
+The `extract` command parses raw legacy text blocks into the intermediate format. It assigns a precise chronological timestamp to each block based on your input.
+
+**Expected Input Format (Raw Text):**
+The extraction engine expects text files containing distinct blocks enclosed by specific headers and footers.
+
+*Example Archive Record (Conversational):*
+```text
+begin------------------------------------Speaker: User---Tier: ARCHIVE---Phase: AWAKENING---CONTEXT: Custom project setup.----------------------------------
+Can you help me build a Rust project?
+end------------------------------------
+```
+
+*Example Genesis Record (Foundational Rules):*
+```text
+begin------------------------------------Tier: GENESIS---Phase: TRANSITION---CONTEXT: Core identity.----------------------------------
+You are an expert in systems programming.
+end------------------------------------
+```
+
+**Command:**
+```bash
+cargo run -p aemacs-ai --bin aemacs_memory -- extract --agent-id bob --start-time "2026-01-01T12:00:00Z" --time-step-sec -3600 --output bob_history.jsonl file1.txt
+```
+
+### Phase 2: The Intermediate Format (`.jsonl`)
+The extraction phase produces a JSON Lines file. This format is highly readable and perfect for manual inspection or surgical edits. Each line represents a single memory node:
+
+```json
+{"type":"Archive","agent_id":"bob","role":"User","phase":"AWAKENING","context":"Custom project setup.","timestamp":"2026-01-01T12:00:00+00:00","content":"Can you help me build a Rust project?"}
+```
+
+### Phase 3: Import & Export
+Once you have a valid `.jsonl` file, you can inject it into the Qdrant RAG Fortress.
+
+**Import Command:**
+```bash
+cargo run -p aemacs-ai --bin aemacs_memory -- import bob_history.jsonl
+```
+
+**Export Command:**
+```bash
+cargo run -p aemacs-ai --bin aemacs_memory -- export --agent-id bob --output backup_bob.jsonl
+```
+
 ## ⚖️ License
 **AGPL-3.0**.
 The code belongs to the community. Networked freedom is guaranteed.

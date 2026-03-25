@@ -394,9 +394,6 @@ echo "📦 [Step 4/5] Pulling Models for Tier: $TIER..."
 # Pull models based on the interactive selection
 if [ "$TIER" == "LOW" ]; then
     echo "   ⚠️  LOW Tier detected. Pulling highly optimized 8B models..."
-    pull_model "hermes3:8b-llama3.1-q4_K_M"                 # Logic / The Dispatcher
-    pull_model "dolphin3:8b"                        # Creative / The Sparring Partner
-
     # pull_model "huggingface.co/Sao10K/Llama-3.1-8B-Stheno-v3.4" # Creative / The Sparring Partner
     # Creative Sideload: Dolphin 3.0 8B (Llama 3.1 Base)
     load_hf_model "dolphin3:8b" "https://huggingface.co/bartowski/Dolphin3.0-Llama3.1-8B-GGUF/resolve/main/Dolphin3.0-Llama3.1-8B-Q4_K_M.gguf"
@@ -407,8 +404,6 @@ if [ "$TIER" == "LOW" ]; then
 
 elif [ "$TIER" == "MEDIUM" ]; then
     echo "   ⚠️  MEDIUM Tier detected. Pulling powerful MoE and 12B models..."
-    pull_model "mistral-small:24b-instruct-2501-q4_K_M"                # Logic / The Dispatcher
-
     # pull_model "huggingface.co/dphn/Dolphin3.0-Mistral-24B"   # Creative / The Sparring Partner
     # Creative Sideload: Dolphin 3.0 24B
     load_hf_model "dolphin-3.0-mistral-24b-q4_K_M" "https://huggingface.co/bartowski/cognitivecomputations_Dolphin3.0-R1-Mistral-24B-GGUF/resolve/main/cognitivecomputations_Dolphin3.0-R1-Mistral-24B-Q4_K_M.gguf"
@@ -419,7 +414,6 @@ elif [ "$TIER" == "MEDIUM" ]; then
 
 elif [ "$TIER" == "HIGH" ]; then
     echo "   ⚠️  HIGH Tier detected. Pulling massive 70B models for heavy compute..."
-    pull_model "hermes3:70b-llama3.1-q4_K_M"                      # Logic / The Dispatcher
     pull_model "llama3.1:70b"                             # Creative / The Sparring Partner
 
     # pull_model "hf.co/Sao10K/L3.1-70B-Euryale-v2.2-GGUF:Q4_K_M"   # Roleplay / The Enterprise Persona

@@ -51,7 +51,7 @@ fn main() -> Result<()> {
             // A. Core System Init
             aemacs_core::init()?;
             let bus = EventBus::new();
-            
+
             let config = aemacs_core::config::get_config();
 
             // B. AI Infrastructure
