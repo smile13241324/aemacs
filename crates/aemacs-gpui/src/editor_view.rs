@@ -1,7 +1,13 @@
 use aemacs_core::{Editor, mode::Mode};
 use gpui::prelude::*;
 use gpui::{IntoElement, ListState, div, list, px, rgb, rgba};
-
+/// Renders the core editor text area, including line gutters, text content, and cursor styling.
+/// It uses a high-performance virtualized list to efficiently display extremely large buffers.
+///
+/// # Parameters
+/// * `editor`: A reference to the active Editor engine state.
+/// * `list_state`: The GPUI ListState controlling the scroll position and item rendering.
+/// * `wrap`: Whether text lines should soft-wrap at the view boundary.
 pub fn render_editor_view(editor: &Editor, list_state: ListState, wrap: bool) -> impl IntoElement {
     let theme_bg = rgb(0x282c34);
     let text_color = rgb(0xabb2bf);

@@ -1,11 +1,11 @@
 use aemacs_core::{command::Command, mode::Mode};
 use gpui::Keystroke;
-
-/// Maps a GPUI keystroke to an abstract Editor Command.
+/// Translates a raw GPUI keystroke into a high-level editor command.
+/// This function implements the primary modal editing logic, distinguishing between
+/// movement, editing, and mode switching based on the current state of the editor.
 ///
-/// This handles standard Vim-like navigation and mode switching.
-/// Note: 'Enter' is explicitly NOT handled here, as it is context-dependent
-/// (e.g. Newline in Editor vs Send in Chat).
+/// Note: Standard keys like 'Enter' are handled at the view level to allow for
+/// context-sensitive behavior (e.g., newline in editor vs send in chat).
 pub fn resolve_key_command(keystroke: &Keystroke, mode: Mode) -> Option<Command> {
     if keystroke.key == "backspace" {
         return Some(Command::Backspace);
@@ -51,4 +51,71 @@ pub fn resolve_key_command(keystroke: &Keystroke, mode: Mode) -> Option<Command>
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::Modifiers;
+
+    #[test]
+    fn test_input_handler_handshake_quest() {
+        // --- 1. Mode Switching ---
+        let i_key = Keystroke {
+            modifiers: Modifiers::default(),
+            key: "i".to_string(),
+            key_char: Some("i".to_string()),
+        };
+        assert_eq!(
+            resolve_key_command(&i_key, Mode::Normal),
+            Some(Command::EnterMode(Mode::Insert))
+        );
+
+        let esc_key = Keystroke {
+            modifiers: Modifiers::default(),
+            key: "escape".to_string(),
+            key_char: None,
+        };
+        assert_eq!(
+            resolve_key_command(&esc_key, Mode::Insert),
+            Some(Command::EnterMode(Mode::Normal))
+        );
+
+        // --- 2. Navigation ---
+        let left_key = Keystroke {
+            modifiers: Modifiers::default(),
+            key: "left".to_string(),
+            key_char: None,
+        };
+        assert_eq!(
+            resolve_key_command(&left_key, Mode::Normal),
+            Some(Command::MoveLeft)
+        );
+
+        // --- 3. Text Insertion ---
+        let a_key = Keystroke {
+            modifiers: Modifiers::default(),
+            key: "a".to_string(),
+            key_char: Some("a".to_string()),
+        };
+        // In Normal mode, 'a' doesn't have a command yet (it's not 'i')
+        assert_eq!(resolve_key_command(&a_key, Mode::Normal), None);
+        // In Insert mode, 'a' should be inserted
+        assert_eq!(
+            resolve_key_command(&a_key, Mode::Insert),
+            Some(Command::Insert("a".to_string()))
+        );
+
+        // --- 4. Modifiers (Safety Check) ---
+        let ctrl_i = Keystroke {
+            modifiers: Modifiers {
+                control: true,
+                ..Default::default()
+            },
+            key: "i".to_string(),
+            key_char: Some("i".to_string()),
+        };
+        // Ctrl-i should NOT trigger Insert mode
+        assert_eq!(resolve_key_command(&ctrl_i, Mode::Normal), None);
+    }
 }

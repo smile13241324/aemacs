@@ -21,25 +21,39 @@ use crate::input_handler::resolve_key_command;
 
 use aemacs_ai::rag::KnowledgeBase;
 
+/// Represents a request from the AI Mesh to the host UI environment.
+/// This is used to prompt the user for approvals or additional information.
 pub enum HostRequest {
+    /// Requests explicit user approval for a tool action.
     Approval {
+        /// Description of the action requiring approval.
         description: String,
+        /// Channel to send the user's decision back to the agent.
         responder: futures::channel::oneshot::Sender<bool>,
     },
+    /// Prompts the user for a textual response to a question.
     UserPrompt {
+        /// The question being asked by the agent.
         question: String,
+        /// Channel to send the user's response back to the agent.
         responder: futures::channel::oneshot::Sender<String>,
     },
 }
 
+/// Implements the `ToolHost` trait for the graphical interface.
+/// It bridges the asynchronous agent execution with the synchronous GPUI windowing system.
 pub struct GuiHost {
+    /// Channel for sending requests to the UI thread.
     pub request_tx: async_channel::Sender<HostRequest>,
+    /// The system event bus for emitting telemetry signals.
     pub event_tx: tokio::sync::broadcast::Sender<aemacs_core::bus::SystemEvent>,
+    /// The unique identifier of the agent being hosted.
     pub agent_id: String,
 }
 
 #[async_trait]
 impl ToolHost for GuiHost {
+    /// Displays a warning prompt to the user requesting approval for a specific action.
     async fn ask_approval(&self, description: &str) -> bool {
         let (tx, rx) = futures::channel::oneshot::channel();
         let _ = self
@@ -52,6 +66,7 @@ impl ToolHost for GuiHost {
         rx.await.unwrap_or(false)
     }
 
+    /// Displays an informational prompt to the user requesting textual input.
     async fn ask_user(&self, question: &str) -> String {
         let (tx, rx) = futures::channel::oneshot::channel();
         let _ = self
@@ -64,10 +79,12 @@ impl ToolHost for GuiHost {
         rx.await.unwrap_or_default()
     }
 
+    /// Retrieves the ID of the agent associated with this host.
     fn get_agent_id(&self) -> String {
         self.agent_id.clone()
     }
 
+    /// Emits a progress signal to the event bus, typically used to update the "Currently Executing" UI.
     fn report_progress(&self, tool_name: String, is_running: bool) {
         let signal = aemacs_core::signals::ToolProgressSignal {
             tool_name,
@@ -82,6 +99,7 @@ impl ToolHost for GuiHost {
         }
     }
 
+    /// Emits a generic signal from the agent to the system event bus.
     async fn emit_signal(&self, event_type: String, payload: String) -> anyhow::Result<()> {
         let event = aemacs_core::bus::SystemEvent::Signal {
             source: format!("Agent:{}", self.agent_id),
@@ -93,55 +111,96 @@ impl ToolHost for GuiHost {
     }
 }
 
+/// The AiPanel is the primary interactive interface for the Æmacs Mesh.
+/// It handles model selection, agent switching, message history, and the integrated chat interface.
 pub struct AiPanel {
+    /// The editor entity used for the user's chat input.
     pub input_editor: Entity<Editor>,
+    /// State for the chat input's list view.
     pub input_list_state: gpui::ListState,
+    /// Manages focus for the AI panel.
     pub focus_handle: FocusHandle,
+    /// Controls scrolling for the message history area.
     pub message_scroll_handle: gpui::ScrollHandle,
+    /// Controls scrolling for the chat input area.
     pub input_scroll_handle: gpui::ScrollHandle,
+    /// The chronological list of messages displayed in the panel.
     messages: Vec<ChatMessage>,
+    /// The primary AI backend for the panel.
     backend: OpenAICompatibleBackend,
-    host_tx: async_channel::Sender<HostRequest>, // Store TX for later ToolRegistry integration
+    /// Channel for sending requests to the UI.
+    host_tx: async_channel::Sender<HostRequest>,
+    /// The system event bus for signal emission.
     event_tx: tokio::sync::broadcast::Sender<aemacs_core::bus::SystemEvent>,
-    tasks: Vec<aemacs_core::task::Task>, // Store current plan (ACO-034)
-    selected_model_index: usize,
+    /// The active project roadmap tasks.
+    tasks: Vec<aemacs_core::task::Task>,
+    /// The currently selected hardware tier.
+    selected_tier: aemacs_ai::models::ModelTier,
+    /// The currently selected context window size.
     selected_context: u32,
+    /// Reference to the RAG memory system.
     pub kb: Arc<KnowledgeBase>,
+    /// Reference to the global tool registry.
     pub registry: Arc<ToolRegistry>,
+    /// Reference to the agent persona registry.
     pub persona_registry: Arc<PersonaRegistry>,
+    /// The name of the currently active agent persona.
     pub active_persona_name: Option<String>,
+    /// The underlying conversation state machine.
     pub conversation: Conversation,
+    /// Whether the panel automatically reacts to environment changes.
     pub proactive_mode: bool,
+    /// The current physical width of the panel.
     pub width: f32,
+    /// Whether the panel is expanded to fill the entire window.
     pub is_maximized: bool,
+    /// Description of the agent's current background action.
     pub current_action: Option<String>,
+    /// The internal cognitive state of the agent mesh.
     pub status: CognitiveStatus,
+    /// Animation offset for the cognition pulse visual effect.
     pub shimmer_offset: f32,
+    /// Handle to the parent window.
     pub window_handle: gpui::AnyWindowHandle,
+    /// List of models available for the current hardware tier.
     pub available_models: Vec<&'static aemacs_ai::models::ModelDefinition>,
+    /// List of all agent personas available in the registry.
     pub available_personas: Vec<String>,
+    /// Tracks the previous line index of the input cursor.
     last_cursor_line: usize,
 }
 
+/// Defines the possible states of agent activity, determining the appearance of the cognition pulse.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CognitiveStatus {
+    /// The agent is inactive and waiting for input.
     Idle,
+    /// The logic hemisphere is performing analysis or tool execution.
     Thinking,
-    #[allow(dead_code)]
+    /// The voice hemisphere is actively generating output text.
     Streaming,
+    /// An error occurred during the last operation.
     Errored(String),
 }
 
+/// Represents a single message in the chat UI, with support for markdown rendering.
 struct ChatMessage {
+    /// The role of the sender (e.g., "AI", "User", "System").
     role: String,
+    /// The raw content of the message.
     content: String,
+    /// Pre-parsed markdown blocks for efficient rendering.
     parsed_blocks: Vec<MarkdownBlock>,
 }
 
+/// Defines the supported block types for the internal markdown renderer.
 #[derive(Clone, Debug)]
 enum MarkdownBlock {
+    /// A standard paragraph of text.
     Paragraph(String),
+    /// a syntax-highlighted code block.
     Code { language: String, content: String },
+    /// A markdown header at a specific level.
     Header { level: usize, content: String },
 }
 
@@ -253,14 +312,16 @@ impl AiPanel {
         available_models: Vec<&'static aemacs_ai::models::ModelDefinition>,
     ) -> Entity<Self> {
         let backend = OpenAICompatibleBackend::new("http://localhost:11434/v1", None);
-        let model_name = available_models
-            .first()
-            .map(|m| m.name)
-            .unwrap_or("hermes3:8b-llama3.1-q4_K_M");
-        let initial_context = available_models
-            .first()
-            .map(|m| m.max_context)
-            .unwrap_or(8192);
+
+        let initial_tier = aemacs_ai::models::ModelTier::Low;
+
+        let logic_model = available_models
+            .iter()
+            .find(|m| m.tier == initial_tier && m.role == aemacs_ai::models::ModelRole::Logic)
+            .or_else(|| available_models.first())
+            .expect("No models available in registry");
+
+        let initial_context = logic_model.max_context;
 
         let panel = cx.new(|cx| {
             let input_editor = cx.new(|_cx| {
@@ -283,19 +344,19 @@ impl AiPanel {
                 input_scroll_handle,
                 messages: vec![ChatMessage::new(
                     "System",
-                    "AI System Online. Waiting for input...",
+                    "Bicameral AI System Online. Select your hardware tier to ignite the Forge.",
                 )],
                 backend: backend.clone(),
                 host_tx,
                 event_tx: bus.tx.clone(),
                 tasks: Vec::new(),
-                selected_model_index: 0,
+                selected_tier: initial_tier,
                 selected_context: initial_context,
                 kb,
                 registry,
                 persona_registry,
                 active_persona_name: None,
-                conversation: Conversation::new(model_name),
+                conversation: Conversation::new(logic_model.name),
                 proactive_mode: true,
                 width: 400.0,
                 is_maximized: false,
@@ -660,8 +721,8 @@ impl AiPanel {
             ))
     }
 
-    fn render_model_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let selected_index = self.selected_model_index;
+    fn render_tier_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let selected_tier = self.selected_tier;
 
         div()
             .flex()
@@ -671,116 +732,146 @@ impl AiPanel {
                 div()
                     .text_size(px(10.0))
                     .text_color(rgb(0x5c6370))
-                    .child("MODEL MATRIX"),
+                    .child("HARDWARE TIER (BICAMERAL LOCK)"),
             )
-            .child(div().flex().flex_wrap().gap(px(4.0)).children(
-                self.available_models.iter().enumerate().map(|(i, model)| {
-                    let is_selected = i == selected_index;
+            .child(
+                div().flex().flex_wrap().gap(px(4.0)).children(
+                    [
+                        aemacs_ai::models::ModelTier::Low,
+                        aemacs_ai::models::ModelTier::Medium,
+                        aemacs_ai::models::ModelTier::High,
+                    ]
+                    .iter()
+                    .map(|&tier| {
+                        let is_selected = tier == selected_tier;
+                        let label = match tier {
+                            aemacs_ai::models::ModelTier::Low => "LOW",
+                            aemacs_ai::models::ModelTier::Medium => "MEDIUM",
+                            aemacs_ai::models::ModelTier::High => "HIGH",
+                        };
 
-                    // Role colors (Sacred Palette)
-                    let role_color = match model.role {
-                        aemacs_ai::models::ModelRole::Logic => rgb(0x61afef), // Sapphire
-                        aemacs_ai::models::ModelRole::Creative => rgb(0xd19a66), // Amber
-                        aemacs_ai::models::ModelRole::Roleplay => rgb(0x98c379), // Emerald
-                    };
+                        div()
+                            .id(label)
+                            .px(px(10.0))
+                            .py(px(4.0))
+                            .rounded_md()
+                            .border_1()
+                            .border_color(if is_selected {
+                                rgb(0xbd93f9)
+                            } else {
+                                rgb(0x3e4451)
+                            })
+                            .bg(if is_selected {
+                                rgb(0x282c34)
+                            } else {
+                                rgb(0x21252b)
+                            })
+                            .text_color(if is_selected {
+                                rgb(0xffffff)
+                            } else {
+                                rgb(0xabb2bf)
+                            })
+                            .text_size(px(11.0))
+                            .cursor_pointer()
+                            .on_click(cx.listener(move |this, _, _window, cx| {
+                                this.selected_tier = tier;
+                                // Update conversation with the LOGIC model of the new tier
+                                if let Some(m) = this.available_models.iter().find(|m| {
+                                    m.tier == tier && m.role == aemacs_ai::models::ModelRole::Logic
+                                }) {
+                                    this.conversation.set_model(m.name);
+                                    this.selected_context = m.max_context;
+                                    this.conversation.set_context_window(this.selected_context);
+                                }
+                                cx.notify();
+                            }))
+                            .child(label)
+                    }),
+                ),
+            )
+            .child(self.render_bicameral_info())
+    }
 
-                    div()
-                        .id(("model", i))
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap_x(px(4.0))
-                        .px(px(6.0))
-                        .py(px(2.0))
-                        .rounded_md()
-                        .border_1()
-                        .border_color(if is_selected {
-                            rgb(0xbd93f9)
-                        } else {
-                            rgb(0x3e4451)
-                        })
-                        .bg(if is_selected {
-                            rgb(0x282c34)
-                        } else {
-                            rgb(0x21252b)
-                        })
-                        .text_color(if is_selected {
-                            rgb(0xffffff)
-                        } else {
-                            rgb(0xabb2bf)
-                        })
-                        .text_size(px(11.0))
-                        .cursor_pointer()
-                        .on_click(cx.listener(move |this, _, _window, cx| {
-                            this.selected_model_index = i;
-                            if let Some(m) = this.available_models.get(i) {
-                                this.conversation.set_model(m.name);
-                                this.selected_context = m.max_context;
-                                this.conversation.set_context_window(this.selected_context);
-                            }
-                            cx.notify();
-                        }))
-                        .child(div().size(px(6.0)).rounded_full().bg(role_color))
-                        .child(model.label)
-                }),
-            ))
-            .child({
-                let model = self.available_models.get(selected_index);
-                div().when_some(model, |this, model| {
-                    this.p(px(8.0))
-                        .bg(rgb(0x181a1f))
-                        .rounded_md()
-                        .mt(px(4.0))
-                        .flex_col()
-                        .gap_y(px(2.0))
-                        .child(
-                            div()
-                                .flex()
-                                .flex_row()
-                                .items_center()
-                                .gap_x(px(6.0))
-                                .child(
-                                    div()
-                                        .size(px(8.0))
-                                        .flex_shrink_0()
-                                        .rounded_full()
-                                        .bg(if model.supports_tools {
-                                            rgb(0x98c379) // Green (Supports Tools)
-                                        } else {
-                                            rgb(0x5c6370) // Muted Grey (No Tools)
-                                        }),
-                                )
-                                .child(
-                                    div()
-                                        .text_size(px(10.0))
-                                        .text_color(rgb(0xffffff))
-                                        .child(format!(
-                                            "{} | VRAM: {:.1} GB | Context: {}k",
-                                            model.label,
-                                            model.base_vram_gb,
-                                            model.max_context / 1024
-                                        )),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .text_size(px(11.0))
-                                .text_color(rgb(0xabb2bf))
-                                .child(model.model_description),
-                        )
-                        .child(
-                            div()
-                                .text_size(px(9.0))
-                                .italic()
-                                .text_color(rgb(0x5c6370))
-                                .child(model.license_constraints),
-                        )
-                })
-            })
+    fn render_bicameral_info(&self) -> impl IntoElement {
+        let tier = self.selected_tier;
+        let logic_model = self
+            .available_models
+            .iter()
+            .find(|m| m.tier == tier && m.role == aemacs_ai::models::ModelRole::Logic);
+        let voice_model = self
+            .available_models
+            .iter()
+            .find(|m| m.tier == tier && m.role == aemacs_ai::models::ModelRole::Roleplay);
+
+        div()
+            .mt(px(8.0))
+            .p(px(8.0))
+            .bg(rgb(0x181a1f))
+            .rounded_md()
+            .flex()
+            .flex_col()
+            .gap_y(px(6.0))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .justify_between()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .child(
+                                div()
+                                    .text_size(px(9.0))
+                                    .text_color(rgb(0x5c6370))
+                                    .child("LOGIC HEMISPHERE"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(11.0))
+                                    .text_color(rgb(0x61afef))
+                                    .child(logic_model.map(|m| m.label).unwrap_or("Unknown")),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .items_end()
+                            .child(
+                                div()
+                                    .text_size(px(9.0))
+                                    .text_color(rgb(0x5c6370))
+                                    .child("VOICE HEMISPHERE"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(11.0))
+                                    .text_color(rgb(0x98c379))
+                                    .child(voice_model.map(|m| m.label).unwrap_or("Unknown")),
+                            ),
+                    ),
+            )
+            .child(div().h_px().bg(rgb(0x3e4451)).w_full())
+            .child(
+                div()
+                    .text_size(px(10.0))
+                    .text_color(rgb(0xabb2bf))
+                    .child(logic_model.map(|m| m.model_description).unwrap_or("")),
+            )
+            .child(
+                div()
+                    .text_size(px(9.0))
+                    .italic()
+                    .text_color(rgb(0x5c6370))
+                    .child(logic_model.map(|m| m.license_constraints).unwrap_or("")),
+            )
     }
 
     fn render_context_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let selected_model = &aemacs_ai::models::MODELS[self.selected_model_index];
+        let logic_model = self.available_models.iter().find(|m| {
+            m.tier == self.selected_tier && m.role == aemacs_ai::models::ModelRole::Logic
+        });
         let current_context = self.selected_context;
 
         div()
@@ -791,13 +882,13 @@ impl AiPanel {
                 div()
                     .text_size(px(10.0))
                     .text_color(rgb(0x5c6370))
-                    .child("CONTEXT WINDOW"),
+                    .child("MAX CONTEXT DEPTH"),
             )
             .child(
                 div().flex().flex_wrap().gap(px(4.0)).children(
                     aemacs_ai::models::CONTEXT_OPTIONS
                         .iter()
-                        .filter(|&&opt| opt <= selected_model.max_context)
+                        .filter(|&&opt| logic_model.map(|m| opt <= m.max_context).unwrap_or(false))
                         .map(|&opt| {
                             let is_selected = opt == current_context;
                             div()
@@ -839,15 +930,34 @@ impl AiPanel {
     }
 
     fn render_vram_estimate(&self) -> impl IntoElement {
-        let model = &aemacs_ai::models::MODELS[self.selected_model_index];
-        let estimate =
-            model.base_vram_gb + (self.selected_context as f32 / 1024.0) * model.kv_rate_gb_per_1k;
+        let tier = self.selected_tier;
+        let logic_model = self
+            .available_models
+            .iter()
+            .find(|m| m.tier == tier && m.role == aemacs_ai::models::ModelRole::Logic);
+        let voice_model = self
+            .available_models
+            .iter()
+            .find(|m| m.tier == tier && m.role == aemacs_ai::models::ModelRole::Roleplay);
+
+        let logic_est = logic_model
+            .map(|m| m.base_vram_gb + (self.selected_context as f32 / 1024.0) * m.kv_rate_gb_per_1k)
+            .unwrap_or(0.0);
+        let voice_est = voice_model
+            .map(|m| m.base_vram_gb + (self.selected_context as f32 / 1024.0) * m.kv_rate_gb_per_1k)
+            .unwrap_or(0.0);
+
+        let total_est = if logic_est > voice_est {
+            logic_est
+        } else {
+            voice_est
+        }; // Max because we unload Logic before loading Voice
 
         div()
             .text_size(px(10.0))
             .text_color(rgb(0xbd93f9))
             .italic()
-            .child(format!("Estimated VRAM: {:.2} GB", estimate))
+            .child(format!("Sequential VRAM Peak: {:.2} GB", total_est))
     }
 
     fn render_cognition_pulse(&self, _cx: &mut Context<Self>) -> impl IntoElement {
@@ -1143,7 +1253,7 @@ impl Render for AiPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let editor = self.input_editor.read(cx);
         let line_count = editor.line_count();
-        let (line, col) = editor.cursor_position();
+        let (line, _col) = editor.cursor_position();
         let cursor_line = line.saturating_sub(1);
 
         let current_count = self.input_list_state.item_count();
@@ -1220,7 +1330,7 @@ impl Render for AiPanel {
                             ),
                     )
                     .child(self.render_agent_selector(cx))
-                    .child(self.render_model_selector(cx))
+                    .child(self.render_tier_selector(cx))
                     .child(self.render_context_selector(cx))
                     .child(self.render_vram_estimate()),
             )

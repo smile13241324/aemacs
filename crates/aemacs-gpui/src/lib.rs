@@ -31,24 +31,43 @@ use aemacs_ai::mcp::ToolRegistry;
 use aemacs_ai::rag::KnowledgeBase;
 use std::sync::Arc;
 
+/// The primary visual container for the editor.
+/// It manages the coordination between the text editor, the AI side panel,
+/// and the global system event bus.
 pub struct Workspace {
+    /// The main text editor engine.
     editor: Entity<Editor>,
+    /// State for the high-performance editor list view.
     editor_list_state: gpui::ListState,
+    /// State for the line number gutter.
     gutter_list_state: gpui::ListState,
+    /// The integrated AI assistant panel.
     ai_panel: Entity<AiPanel>,
+    /// Manages keyboard focus within the workspace.
     focus_handle: FocusHandle,
+    /// Tracks the last key pressed for chord detection (e.g., 'fd' to escape).
     last_key: Option<(String, Instant)>,
+    /// Controls the visibility of the AI panel.
     show_ai: bool,
+    /// Stores the active system notification message.
     notification: Option<String>,
+    /// The active project plan/roadmap.
     tasks: Vec<aemacs_core::task::Task>,
+    /// Handle to the current window.
     window_handle: gpui::AnyWindowHandle,
+    /// Reference to the RAG memory system.
     pub kb: Arc<KnowledgeBase>,
+    /// Reference to the global tool registry.
     pub registry: Arc<ToolRegistry>,
+    /// Reference to the agent persona registry.
     pub persona_registry: Arc<PersonaRegistry>,
+    /// Tracks the previous line position of the cursor for optimized rendering.
     last_cursor_line: usize,
 }
 
 impl Workspace {
+    /// Orchestrates the construction of a new Workspace.
+    /// It initializes the AI mesh, loads agent personas, and configures the editor buffer.
     pub fn build(
         cx: &mut App,
         file_path: Option<PathBuf>,
@@ -629,6 +648,8 @@ impl Render for Workspace {
     }
 }
 
+/// The main entry point for the Æmacs graphical application.
+/// It initializes the asynchronous runtime, boots the core systems, and starts the GPUI event loop.
 pub fn run_app(file_to_open: Option<PathBuf>) {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
