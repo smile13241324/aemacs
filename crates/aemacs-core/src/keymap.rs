@@ -9,13 +9,14 @@ pub struct KeymapRegistry {
 }
 
 impl KeymapRegistry {
+    /// Initializes a new KeymapRegistry populated with default Vim-like bindings.
     pub fn new() -> Self {
         let mut registry = Self::default();
         registry.register_defaults();
         registry
     }
 
-    /// Registers the standard Vim-like bindings.
+    /// Registers the standard Vim-like bindings for Normal and Insert modes.
     fn register_defaults(&mut self) {
         // --- NORMAL MODE ---
         // Navigation
@@ -41,13 +42,67 @@ impl KeymapRegistry {
         self.bind(Mode::Insert, "enter", Command::InsertNewline);
     }
 
+    /// Maps a specific key sequence to an architectural command within a given mode.
     pub fn bind(&mut self, mode: Mode, key: &str, cmd: Command) {
         self.maps.insert((mode, key.to_string()), cmd);
     }
 
-    /// Resolves an input to a command.
-    /// Returns None if no binding exists (which usually means: insert literal char if in insert mode).
+    /// Attempts to translate a raw input string into a structured editor command based on the current mode.
+    ///
+    /// Returns `Some(Command)` if a match is found in the registry.
+    /// Returns `None` if no binding exists, which the input handler typically interprets as a signal
+    /// to insert the character literally (if in Insert mode) or ignore it (if in Normal mode).
     pub fn resolve(&self, mode: Mode, input: &str) -> Option<Command> {
         self.maps.get(&(mode, input.to_string())).cloned()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::command::Command;
+    use crate::mode::Mode;
+
+    #[test]
+    fn test_keymap_resolution_quest() {
+        // QUEST: Verify that default and custom keys resolve correctly.
+        let mut registry = KeymapRegistry::new();
+
+        // 1. Check Default (Normal Mode)
+        assert_eq!(registry.resolve(Mode::Normal, "h"), Some(Command::MoveLeft));
+        assert_eq!(
+            registry.resolve(Mode::Normal, "i"),
+            Some(Command::EnterMode(Mode::Insert))
+        );
+
+        // 2. Check Default (Insert Mode)
+        assert_eq!(
+            registry.resolve(Mode::Insert, "esc"),
+            Some(Command::EnterMode(Mode::Normal))
+        );
+
+        // 3. Custom Chord Binding
+        // Even if we don't have a sequence state machine yet, we can bind "fd" as a single string.
+        registry.bind(Mode::Insert, "fd", Command::EnterMode(Mode::Normal));
+        assert_eq!(
+            registry.resolve(Mode::Insert, "fd"),
+            Some(Command::EnterMode(Mode::Normal))
+        );
+
+        // 4. Modal Overlap Check
+        // Bind 'x' in Insert mode to something else
+        registry.bind(Mode::Insert, "x", Command::Backspace);
+        assert_eq!(registry.resolve(Mode::Normal, "x"), Some(Command::Delete));
+        assert_eq!(
+            registry.resolve(Mode::Insert, "x"),
+            Some(Command::Backspace)
+        );
+
+        // 5. Shadow Check (Unbound keys)
+        assert_eq!(
+            registry.resolve(Mode::Normal, "z"),
+            None,
+            "The 'Shadow-Check' failed! Unbound key returned a command!"
+        );
     }
 }

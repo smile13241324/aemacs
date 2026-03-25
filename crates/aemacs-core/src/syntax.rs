@@ -3,7 +3,8 @@ use std::fs;
 use std::path::Path;
 use tree_sitter::{Parser, Query, QueryCursor, StreamingIterator};
 
-/// Supported languages for AST extraction.
+/// Defines the set of programming languages supported by the Æmacs syntax analysis engine.
+/// This enum is used to select the correct Tree-sitter grammar and query definitions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SupportedLanguage {
     Rust,
@@ -16,7 +17,10 @@ pub enum SupportedLanguage {
 }
 
 impl SupportedLanguage {
-    /// Detects the language from a file extension.
+    /// Infers the programming language from the file extension of the provided path.
+    ///
+    /// # Errors
+    /// Returns an error if the path has no extension or if the extension is not recognized.
     pub fn from_path(path: &Path) -> Result<Self> {
         let ext = path
             .extension()
@@ -35,7 +39,8 @@ impl SupportedLanguage {
         }
     }
 
-    /// Returns the tree-sitter language and the query string for the specific language.
+    /// Retrieves the Tree-sitter language grammar and the corresponding S-expression query
+    /// used to identify significant symbols (functions, structs, classes, etc.) for this language.
     pub fn get_config(&self) -> (tree_sitter::Language, &'static str) {
         match self {
             Self::Rust => (
@@ -100,8 +105,12 @@ impl SupportedLanguage {
     }
 }
 
-/// Extracts the source code of a specific symbol from a file using Tree-sitter.
-/// Supports Rust, Python, Go, Haskell, C, C++, Clojure, and JavaScript.
+/// Locates and extracts the source code block corresponding to a named symbol within a file.
+/// It uses Tree-sitter to perform semantic analysis, allowing it to correctly identify
+/// symbols even in complex or multi-lingual files.
+///
+/// # Errors
+/// Returns an error if the file cannot be read, if parsing fails, or if the symbol is not found.
 pub fn extract_symbol(
     path: &Path,
     symbol_name: &str,

@@ -9,14 +9,20 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time::Instant;
 
-/// ACO-029: The Triage Router pre-processes signals and filters noise.
+/// The TriageRouter acts as a semantic filter and debouncer for system signals.
+/// It prevents the Neural Engine from being overwhelmed by rapid events and translates
+/// raw system signals into high-level autonomous intents.
 pub struct TriageRouter {
+    /// The system event bus for listening and emitting enriched events.
     bus: EventBus,
+    /// The duration to wait before processing a burst of signals.
     debounce_duration: Duration,
+    /// An optional list of authorized source strings to filter out untrusted signals.
     authorized_sources: Option<Vec<String>>,
 }
 
 impl TriageRouter {
+    /// Initializes a new TriageRouter with the specified debounce window.
     pub fn new(bus: EventBus, debounce_duration: Duration) -> Self {
         Self {
             bus,
@@ -25,13 +31,14 @@ impl TriageRouter {
         }
     }
 
-    /// Configures the authorized sources for the triage engine.
+    /// Configures the authorized sources for the triage engine, enabling signal filtering.
     pub fn with_authorized_sources(mut self, sources: Vec<String>) -> Self {
         self.authorized_sources = Some(sources);
         self
     }
 
-    /// Starts the triage engine, which listens to the bus and emits enriched intents.
+    /// Starts the triage engine loop.
+    /// This method blocks while it listens to the event bus and manages the dampening field.
     pub async fn run(&self) -> Result<()> {
         info!(
             "🧠 [TRIAGE] Neural Bridge active. Debounce: {:?}",
@@ -117,11 +124,12 @@ impl TriageRouter {
         Ok(())
     }
 
-    /// ACO-029-02: Maps raw events to high-level intents.
+    /// Evaluates a system event and attempts to map it to a high-level intent.
     pub fn triage_event(&self, event: SystemEvent) -> Option<SignalContext> {
         Self::triage_event_internal(&self.authorized_sources, event)
     }
 
+    /// Internal logic for mapping raw signals to semantic intents, applying authorization filters.
     fn triage_event_internal(
         authorized_sources: &Option<Vec<String>>,
         event: SystemEvent,

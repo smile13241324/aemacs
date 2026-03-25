@@ -18,7 +18,15 @@ pub struct Buffer {
 }
 
 impl Buffer {
-    /// Creates a new, empty scratch buffer.
+    /// Creates a new, empty scratch buffer with no associated physical path.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use aemacs_core::buffer::Buffer;
+    /// let buf = Buffer::new();
+    /// assert_eq!(buf.len_chars(), 0);
+    /// ```
     pub fn new() -> Self {
         Self {
             content: Rope::new(),
@@ -27,10 +35,11 @@ impl Buffer {
         }
     }
 
-    /// Loads a buffer from a file on disk.
+    /// Loads a buffer from a file on disk at the specified path.
+    /// It uses a buffered reader for efficient I/O performance on large files.
     ///
     /// # Errors
-    /// Returns an error if the file cannot be opened or read.
+    /// Returns an error if the file cannot be opened, read, or if the content is not valid UTF-8.
     pub fn from_file(path: PathBuf) -> Result<Self> {
         // Reasoning: Use BufReader for better I/O performance on large files.
         let file =
@@ -48,7 +57,11 @@ impl Buffer {
         })
     }
 
-    /// Reloads the buffer from disk if it has a path.
+    /// Reloads the buffer content directly from disk, effectively discarding any unsaved changes.
+    /// Does nothing if the buffer has no associated path.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying file has been removed or is no longer accessible.
     pub fn reload(&mut self) -> Result<()> {
         if let Some(path) = &self.path {
             let file =
@@ -60,20 +73,25 @@ impl Buffer {
         Ok(())
     }
 
-    /// Returns the length of the buffer in characters (graphemes).
+    /// Returns the total number of characters (Unicode scalar values) currently in the buffer.
     pub fn len_chars(&self) -> usize {
         self.content.len_chars()
     }
 
-    /// Debug helper: Returns the full content as a String.
-    /// WARNING: Allocates memory. Do not use for huge files in hot paths.
+    /// Returns the entire content of the buffer as a standard Rust String.
+    ///
+    /// # Warning
+    /// This method clones and allocates the entire buffer into memory.
+    /// It should be avoided for extremely large files in performance-critical paths.
     pub fn text(&self) -> String {
         self.content.to_string()
     }
 
-    /// Saves the buffer content to disk atomically.
-    /// 1. Writes to a temporary file.
-    /// 2. Renames temporary file to target file.
+    /// Saves the current buffer content to its physical file on disk.
+    /// The operation is performed atomically by writing to a temporary file and then renaming it.
+    ///
+    /// # Errors
+    /// Returns an error if the buffer has no path, or if disk I/O fails during writing or renaming.
     pub fn save(&mut self) -> Result<()> {
         let path = self
             .path

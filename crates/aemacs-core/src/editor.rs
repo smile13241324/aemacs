@@ -5,23 +5,33 @@ use crate::selection::Selection;
 use ropey::Rope;
 
 /// A snapshot of the editor state at a specific point in time.
+/// This is used to implement undo and redo functionality by storing full state transitions.
 #[derive(Debug, Clone)]
 struct Snapshot {
+    /// The state of the text buffer at the time of the snapshot.
     content: Rope,
+    /// The state of all active selections at the time of the snapshot.
     selections: Vec<Selection>,
 }
 
-/// The engine that manages the interaction between the buffer and the user.
+/// The main editor engine that coordinates text buffers, user selections, and modal editing logic.
+/// It acts as the central state machine for all text manipulation within the Iron Core.
 #[derive(Debug)]
 pub struct Editor {
+    /// The underlying text buffer being edited.
     pub buffer: Buffer,
+    /// A list of active selections (cursors). Multi-cursor is supported.
     pub selections: Vec<Selection>,
+    /// The current operational mode (Normal, Insert, etc.).
     pub mode: Mode,
+    /// A stack of past states for undo operations.
     undo_stack: Vec<Snapshot>,
+    /// A stack of future states for redo operations.
     redo_stack: Vec<Snapshot>,
 }
 
 impl Editor {
+    /// Initializes a new, empty Editor instance with a single cursor at the start.
     pub fn new() -> Self {
         Self {
             buffer: Buffer::new(),
@@ -32,6 +42,7 @@ impl Editor {
         }
     }
 
+    /// Loads a file from disk into a new Editor instance.
     pub fn from_file(path: std::path::PathBuf) -> anyhow::Result<Self> {
         let buffer = Buffer::from_file(path)?;
         Ok(Self {
@@ -43,7 +54,8 @@ impl Editor {
         })
     }
 
-    /// Reloads the editor buffer from disk. Clears undo/redo stacks to prevent invalid history.
+    /// Reloads the current buffer from disk, effectively discarding unsaved changes.
+    /// This also clears the undo/redo stacks to ensure consistency with the new disk state.
     pub fn reload(&mut self) -> anyhow::Result<()> {
         self.buffer.reload()?;
         self.undo_stack.clear();
@@ -51,8 +63,8 @@ impl Editor {
         Ok(())
     }
 
-    /// Saves the current state to the undo history.
-    /// MUST be called before any modification (insert/delete).
+    /// Captures the current state and pushes it onto the undo stack.
+    /// This should be called immediately before any operation that modifies the buffer.
     fn save_snapshot(&mut self) {
         let snapshot = Snapshot {
             content: self.buffer.content.clone(),
@@ -64,7 +76,7 @@ impl Editor {
         self.redo_stack.clear();
     }
 
-    /// Reverts the last action.
+    /// Reverts the editor to the state stored in the top of the undo stack.
     pub fn undo(&mut self) {
         if let Some(snapshot) = self.undo_stack.pop() {
             // 1. Save current state to redo stack (so we can go back to the future)
@@ -78,13 +90,12 @@ impl Editor {
             self.buffer.content = snapshot.content;
             self.selections = snapshot.selections;
 
-            // Dirty state handling is complex (we might have undone to a clean state),
-            // but for now, let's keep it simple.
+            // Simple simplification for dirty state handling.
             self.buffer.dirty = true;
         }
     }
 
-    /// Re-applies the last undone action.
+    /// Advances the editor to the state stored in the top of the redo stack.
     pub fn redo(&mut self) {
         if let Some(snapshot) = self.redo_stack.pop() {
             // 1. Save current state to undo stack
@@ -100,16 +111,13 @@ impl Editor {
         }
     }
 
-    /// Inserts a character (or string) at all cursor positions.
-    /// Handles Multi-Cursor logic by processing usually from right to left (simulated here simpler).
+    /// Inserts the given text at all active cursor positions.
+    /// If a range is selected, it is replaced by the new text.
     pub fn insert(&mut self, text: &str) {
         self.save_snapshot();
         let text_len = text.chars().count(); // Grapheme count approximation
 
-        // 1. We must sort selections to process from back to front?
-        // Actually, for a naive implementation, let's process them and track the offset shift.
-        // BUT: The safest standard way is: Sort descending by start index.
-        // This prevents index invalidation for subsequent edits.
+        // Sort descending to process from back to front, preventing index invalidation.
         self.selections.sort_by(|a, b| b.start().cmp(&a.start()));
 
         for selection in &mut self.selections {
@@ -125,57 +133,50 @@ impl Editor {
             self.buffer.content.insert(start, text);
             self.buffer.dirty = true;
 
-            // Step C: Update the cursor to be at the end of inserted text.
-            // Anchor moves to new head usually, or stays?
-            // Standard behavior: Cursor is collapsed to end of insertion.
+            // Step C: Update the cursor to be collapsed at the end of the insertion.
             let new_pos = start + text_len;
             *selection = Selection::point(new_pos);
         }
     }
 
-    /// Moves all cursors one character to the right.
-    /// If a selection exists, it collapses the cursor to the end of the selection.
+    /// Moves all cursors one character to the right, clamping at the end of the buffer.
     pub fn move_right(&mut self) {
         let max_len = self.buffer.len_chars();
 
         for selection in &mut self.selections {
             if !selection.is_empty() {
-                // Case A: Collapse selection to the right end
+                // Collapse selection to the right end
                 *selection = Selection::point(selection.end());
             } else {
-                // Case B: Move cursor right (clamp at EOF)
+                // Move cursor right
                 let new_pos = std::cmp::min(selection.head + 1, max_len);
                 *selection = Selection::point(new_pos);
             }
-            // Memory clear, as user explicitly moves horizontally
             selection.wanted_column = None;
         }
     }
 
-    /// Moves all cursors one character to the left.
-    /// If a selection exists, it collapses the cursor to the start of the selection.
+    /// Moves all cursors one character to the left, clamping at the start of the buffer.
     pub fn move_left(&mut self) {
         for selection in &mut self.selections {
             if !selection.is_empty() {
-                // Case A: Collapse selection to the left start
+                // Collapse selection to the left start
                 *selection = Selection::point(selection.start());
             } else {
-                // Case B: Move cursor left (clamp at 0)
+                // Move cursor left
                 let new_pos = selection.head.saturating_sub(1);
                 *selection = Selection::point(new_pos);
             }
-            // Memory clear, as user explicitly moves horizontally
             selection.wanted_column = None;
         }
     }
 
-    /// Deletes the character before the cursor (Backspace) or the active selection.
+    /// Deletes the character before each cursor (backspace behavior).
+    /// If a range is selected, the entire selection is deleted.
     pub fn backspace(&mut self) {
         self.save_snapshot();
 
-        // CRITICAL: Sort descending!
-        // If we delete at index 10, index 50 shifts to 49.
-        // If we delete at index 50 first, index 10 stays at 10.
+        // Sort descending to prevent shifting indices during multi-cursor deletion.
         self.selections.sort_by(|a, b| b.start().cmp(&a.start()));
 
         for selection in &mut self.selections {
@@ -188,32 +189,31 @@ impl Editor {
                 *selection = Selection::point(start);
                 self.buffer.dirty = true;
             } else if start > 0 {
-                // Case B: Simple Backspace (delete char before)
+                // Case B: Simple Backspace
                 self.buffer.content.remove(start - 1..start);
                 *selection = Selection::point(start - 1);
                 self.buffer.dirty = true;
             }
-            // Case C: Start == 0 -> Do nothing (can't backspace at start of file)
         }
     }
 
-    /// Saves the current buffer to disk.
+    /// Synchronizes the current buffer state with its physical file on disk.
     pub fn save(&mut self) -> anyhow::Result<()> {
         self.buffer.save()
     }
 
-    /// Sets the file path for the current buffer (e.g. "Save As").
+    /// Updates the physical path where the buffer should be saved.
     pub fn set_path(&mut self, path: std::path::PathBuf) {
         self.buffer.path = Some(path);
     }
 
-    /// Returns the primary cursor (usually the last one added or the "main" one).
+    /// Returns the primary selection, which is usually the first one in the list.
     pub fn primary_cursor(&self) -> Selection {
         *self.selections.first().unwrap_or(&Selection::point(0))
     }
 
-    /// Executes a single abstract command.
-    /// This is the main entry point for Keybindings and AI Agents.
+    /// The primary dispatch point for executing editor commands.
+    /// This method is invoked by keybindings, agents, and other system signals.
     pub fn run(&mut self, cmd: Command) -> anyhow::Result<()> {
         match cmd {
             // Navigation
@@ -239,8 +239,8 @@ impl Editor {
         Ok(())
     }
 
-    /// Moves cursors vertically (lines).
-    /// dir: -1 for Up, +1 for Down.
+    /// Internal helper to move cursors up or down across lines.
+    /// It maintains the "wanted column" to preserve cursor alignment when moving across lines of varying lengths.
     fn move_vertical(&mut self, dir: i32) {
         for selection in &mut self.selections {
             // 1. Where are we?
@@ -251,13 +251,13 @@ impl Editor {
             let target_line_idx = if dir < 0 {
                 if current_line_idx == 0 {
                     continue;
-                } // At top nothing to do
+                }
                 current_line_idx - 1
             } else {
                 let last_line = self.buffer.content.len_lines() - 1;
                 if current_line_idx >= last_line {
                     continue;
-                } // At bottom nothing to do
+                }
                 current_line_idx + 1
             };
 
@@ -266,7 +266,6 @@ impl Editor {
             let column = if let Some(wanted) = selection.wanted_column {
                 wanted
             } else {
-                // We remember the column for future moves
                 let col = current_char_idx - current_line_start;
                 selection.wanted_column = Some(col);
                 col
@@ -276,12 +275,9 @@ impl Editor {
             let target_line_start = self.buffer.content.line_to_char(target_line_idx);
             let target_line_end = self.buffer.content.line_to_char(target_line_idx + 1);
 
-            // The length of the target line (excluding the newline at the end, if present)
-            // Ropey counts \n as part of the line. We don't want to jump PAST the \n.
             let target_line_len = target_line_end - target_line_start;
 
-            // Small hack: If line is not empty and ends with \n, subtract one.
-            // (For a real implementation we need more precise grapheme checks, but for core it's enough).
+            // Avoid jumping past the newline.
             let clamp_limit = if target_line_len > 0 {
                 target_line_len - 1
             } else {
@@ -292,12 +288,12 @@ impl Editor {
             let new_pos = target_line_start + new_col;
 
             *selection = Selection::point(new_pos);
-            // IMPORTANT: Keep the memory!
             selection.wanted_column = Some(column);
         }
     }
 
-    /// Forward delete (Delete key).
+    /// Deletes the character immediately after each cursor.
+    /// If a range is selected, the entire selection is deleted.
     pub fn delete(&mut self) {
         self.save_snapshot();
         self.selections.sort_by(|a, b| b.start().cmp(&a.start()));
@@ -314,23 +310,20 @@ impl Editor {
                 *selection = Selection::point(start);
                 self.buffer.dirty = true;
             } else if start < max_len {
-                // Case B: Simple Delete (delete char at cursor)
+                // Case B: Simple Delete
                 self.buffer.content.remove(start..start + 1);
-                // Cursor stays where it is (text shifts left)
                 *selection = Selection::point(start);
                 self.buffer.dirty = true;
             }
         }
     }
 
-    /// Inserts a newline at all cursor positions.
+    /// Collapses all cursors and inserts a newline character.
     pub fn insert_newline(&mut self) {
-        // Platform independent internal representation is \n.
-        // GPUI handles rendering properly.
         self.insert("\n");
     }
 
-    /// Returns the current cursor position as (1-based Line, 1-based Column).
+    /// Returns the current position of the primary cursor as (1-based Line, 1-based Column).
     pub fn cursor_position(&self) -> (usize, usize) {
         let max_chars = self.buffer.len_chars();
         let head = std::cmp::min(self.primary_cursor().head, max_chars);
@@ -339,11 +332,10 @@ impl Editor {
         let line_start = self.buffer.content.line_to_char(line_idx);
         let col_idx = head - line_start;
 
-        // Return 1-based for UI
         (line_idx + 1, col_idx + 1)
     }
 
-    /// Safely clears the editor buffer and resets all selections to the start.
+    /// Clears the entire buffer and resets the cursor to the origin.
     pub fn clear(&mut self) {
         self.save_snapshot();
         self.buffer.content = Rope::new();
@@ -351,7 +343,7 @@ impl Editor {
         self.buffer.dirty = true;
     }
 
-    /// Returns the total number of lines
+    /// Returns the number of lines currently in the buffer.
     pub fn line_count(&self) -> usize {
         self.buffer.content.len_lines()
     }

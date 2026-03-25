@@ -3,10 +3,15 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
+/// Represents the global configuration for the Æmacs system.
+/// This structure is typically loaded from `~/.aemacs/config.ron`.
 #[derive(Debug, Deserialize, Clone)]
 pub struct UserConfig {
+    /// The hardware tier (LOW, MEDIUM, HIGH) determining model selection.
     pub hardware_tier: Option<String>,
+    /// The URL of the Ollama server.
     pub ollama_url: Option<String>,
+    /// The URL of the Qdrant vector database.
     pub qdrant_url: Option<String>,
 }
 
@@ -20,12 +25,15 @@ impl Default for UserConfig {
     }
 }
 
+/// Thread-safe singleton for global configuration access.
 static GLOBAL_CONFIG: OnceLock<UserConfig> = OnceLock::new();
 
+/// Retrieves the global configuration singleton, initializing it if necessary.
+/// It automatically applies default values for missing fields.
 pub fn get_config() -> &'static UserConfig {
     GLOBAL_CONFIG.get_or_init(|| {
         let mut config = load_user_config();
-        
+
         // Ensure defaults are populated if missing in the ron file
         if config.ollama_url.is_none() {
             config.ollama_url = Some("http://localhost:11434".to_string());
@@ -33,11 +41,12 @@ pub fn get_config() -> &'static UserConfig {
         if config.qdrant_url.is_none() {
             config.qdrant_url = Some("http://localhost:6334".to_string());
         }
-        
+
         config
     })
 }
 
+/// Returns the standard physical path to the configuration file.
 pub fn get_config_path() -> Option<PathBuf> {
     dirs::home_dir().map(|mut path| {
         path.push(".aemacs");
@@ -46,6 +55,7 @@ pub fn get_config_path() -> Option<PathBuf> {
     })
 }
 
+/// Loads the user configuration from the default path.
 pub fn load_user_config() -> UserConfig {
     let path = match get_config_path() {
         Some(p) => p,
@@ -58,7 +68,8 @@ pub fn load_user_config() -> UserConfig {
     load_config_from_path(&path)
 }
 
-/// Internal helper to load config from a specific path, used for testing.
+/// Loads the configuration from a specific physical path.
+/// It handles file missing, read errors, and format corruption by falling back to defaults.
 pub fn load_config_from_path(path: &PathBuf) -> UserConfig {
     if !path.exists() {
         log::info!("No config file found at {:?}. Using default config.", path);
@@ -109,7 +120,7 @@ mod tests {
         writeln!(file, "UserConfig(hardware_tier: Some(\"MEDIUM\"))").unwrap();
 
         let mut config = load_config_from_path(&file.path().to_path_buf());
-        
+
         // Emulate the get_config() fallback logic since testing OnceLock directly is flaky
         if config.ollama_url.is_none() {
             config.ollama_url = Some("http://localhost:11434".to_string());
@@ -119,15 +130,23 @@ mod tests {
         }
 
         assert_eq!(config.hardware_tier.unwrap(), "MEDIUM");
-        assert_eq!(config.ollama_url.unwrap(), "http://localhost:11434", "Ollama URL failed to fall back!");
-        assert_eq!(config.qdrant_url.unwrap(), "http://localhost:6334", "Qdrant URL failed to fall back!");
+        assert_eq!(
+            config.ollama_url.unwrap(),
+            "http://localhost:11434",
+            "Ollama URL failed to fall back!"
+        );
+        assert_eq!(
+            config.qdrant_url.unwrap(),
+            "http://localhost:6334",
+            "Qdrant URL failed to fall back!"
+        );
     }
 
     #[test]
     fn test_load_config_fallback_on_missing() {
         let path = PathBuf::from("/non/existent/path/to/config.ron");
         let config = load_config_from_path(&path);
-        
+
         // A missing file returns UserConfig::default() directly
         assert_eq!(config.hardware_tier.unwrap(), "LOW");
         assert_eq!(config.ollama_url.unwrap(), "http://localhost:11434");
@@ -141,7 +160,7 @@ mod tests {
         writeln!(file, "Invalid(format: !![[").unwrap();
 
         let config = load_config_from_path(&file.path().to_path_buf());
-        
+
         // An invalid file returns UserConfig::default() directly
         assert_eq!(config.hardware_tier.unwrap(), "LOW");
         assert_eq!(config.ollama_url.unwrap(), "http://localhost:11434");
