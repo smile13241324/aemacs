@@ -9,11 +9,15 @@ use crate::error::{AIError, AIResult};
 use crate::models::{AIRequest, Message, Role};
 use crate::{AIBackend, AIResponseStream};
 
+/// An AI backend implementation that executes a local binary to generate responses.
+/// This is used for integration with local models or custom scripting.
 pub struct LocalBackend {
+    /// The physical path to the executable binary.
     pub bin_path: String,
 }
 
 impl LocalBackend {
+    /// Initializes a new LocalBackend.
     pub fn new(binary: impl Into<String>) -> Self {
         Self {
             bin_path: binary.into(),
@@ -23,10 +27,12 @@ impl LocalBackend {
 
 #[async_trait]
 impl AIBackend for LocalBackend {
+    /// Returns the descriptive name of this backend (the binary path).
     fn name(&self) -> &str {
         &self.bin_path
     }
 
+    /// Checks if the binary is present and executable by calling it with '--version'.
     #[instrument(skip(self))]
     async fn health_check(&self) -> AIResult<()> {
         // Lets call the binary with "--version" to check if it's available.
@@ -49,6 +55,7 @@ impl AIBackend for LocalBackend {
         }
     }
 
+    /// Executes the binary with the content of the last message as an argument.
     #[instrument(skip(self, request))]
     async fn complete(&self, request: AIRequest) -> AIResult<Message> {
         let last_message = request
@@ -77,6 +84,7 @@ impl AIBackend for LocalBackend {
         Ok(Message::new(Role::Assistant, response.trim().to_string()))
     }
 
+    /// Spawns the binary and streams its standard output line-by-line.
     async fn stream(&self, request: AIRequest) -> AIResult<AIResponseStream> {
         let last_message = request
             .messages

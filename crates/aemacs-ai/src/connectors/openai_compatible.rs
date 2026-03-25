@@ -10,14 +10,20 @@ use tracing::{info, instrument};
 
 use crate::{AIBackend, AIError, AIRequest, AIResponseStream, AIResult, Message};
 
+/// An AI backend implementation that communicates with OpenAI-compatible REST APIs.
+/// This is used to connect to services like Ollama, vLLM, or OpenAI itself.
 #[derive(Clone)]
 pub struct OpenAICompatibleBackend {
+    /// The underlying HTTP client.
     client: Client,
+    /// The base URL of the API (e.g., http://localhost:11434/v1).
     base_url: String,
+    /// Optional API key for authenticated requests.
     _api_key: Option<String>,
 }
 
 impl OpenAICompatibleBackend {
+    /// Initializes a new OpenAICompatibleBackend.
     pub fn new(base_url: impl Into<String>, api_key: Option<String>) -> Self {
         let mut headers = header::HeaderMap::new();
 
@@ -42,6 +48,7 @@ impl OpenAICompatibleBackend {
         }
     }
 
+    /// Internal helper to construct the full completion URL.
     fn chat_url(&self) -> String {
         format!("{}/chat/completions", self.base_url.trim_end_matches('/'))
     }
@@ -77,10 +84,12 @@ struct OpenAIDelta {
 
 #[async_trait]
 impl AIBackend for OpenAICompatibleBackend {
+    /// Returns the descriptive name of this backend.
     fn name(&self) -> &str {
         "OpenAI Compatible REST"
     }
 
+    /// Performs a connectivity and health check against the API endpoint.
     async fn health_check(&self) -> AIResult<()> {
         let url = format!("{}/models", self.base_url.trim_end_matches('/'));
 
@@ -102,6 +111,7 @@ impl AIBackend for OpenAICompatibleBackend {
         }
     }
 
+    /// Sends a non-streaming request to the backend and awaits the full response.
     #[instrument(skip(self, request))]
     async fn complete(&self, request: AIRequest) -> AIResult<Message> {
         info!(
@@ -146,6 +156,7 @@ impl AIBackend for OpenAICompatibleBackend {
             .ok_or(AIError::ParseError("No choices in response".to_string()))
     }
 
+    /// Sends a streaming request to the backend and returns a stream of tokens/events.
     async fn stream(&self, request: AIRequest) -> AIResult<AIResponseStream> {
         info!(
             "🤖 [Ollama] Requesting stream from model: {}",
@@ -218,5 +229,67 @@ impl AIBackend for OpenAICompatibleBackend {
             .flat_map(futures::stream::iter);
 
         Ok(Box::pin(event_stream))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::AIRequest;
+    use tokio::io::AsyncWriteExt;
+    use tokio::net::TcpListener;
+
+    #[tokio::test]
+    async fn test_streaming_hydra_cage_quest() -> anyhow::Result<()> {
+        // QUEST: Verify the connector handles fragmented JSON streams correctly.
+
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let addr = listener.local_addr()?;
+        let base_url = format!("http://{}", addr);
+
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = [0; 1024];
+            let _ = tokio::io::AsyncReadExt::read(&mut socket, &mut buf).await;
+
+            // Send a standard HTTP response
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n")
+                .await
+                .unwrap();
+
+            // Part 1: Start of the line
+            socket.write_all(b"data: {\"choices\":[{\"d").await.unwrap();
+            tokio::time::sleep(Duration::from_millis(50)).await;
+
+            // Part 2: Rest of the line + [DONE] signal
+            socket
+                .write_all(b"elta\":{\"content\":\"Hello \"}}]}\n\ndata: [DONE]\n\n")
+                .await
+                .unwrap();
+        });
+
+        let backend = OpenAICompatibleBackend::new(base_url, None);
+        let request = AIRequest::default();
+        let mut stream = backend.stream(request).await?;
+
+        let mut chunks = Vec::new();
+        while let Some(event) = stream.next().await {
+            if let Ok(crate::StreamEvent::Content(c)) = event {
+                chunks.push(c);
+            }
+        }
+
+        assert_eq!(
+            chunks.len(),
+            1,
+            "The 'Streaming-Hydra' failed! Expected 1 content chunk."
+        );
+        assert_eq!(
+            chunks[0], "Hello ",
+            "Fragmented JSON was not correctly reassembled!"
+        );
+
+        Ok(())
     }
 }

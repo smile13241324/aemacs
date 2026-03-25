@@ -11,15 +11,24 @@ pub struct Persona {
     /// A short description of the agent's role or purpose for the UI.
     pub description: String,
 
-    /// The core system prompt that defines the agent's behavior and identity.
+    /// Deprecated: The core system prompt that defines the agent's behavior and identity.
+    /// Use `rules` and `personality` instead for the Bicameral Mind architecture.
     pub system_prompt: String,
+
+    /// ACO-045: Explicit operational rules for the Logic Hemisphere.
+    #[serde(default)]
+    pub rules: Option<String>,
+
+    /// ACO-045: Character traits and voice for the Roleplay Hemisphere.
+    #[serde(default)]
+    pub personality: Option<String>,
 
     /// An optional path to a technical profile (rulebook) for this agent.
     pub profile_path: Option<String>,
 }
 
 impl Persona {
-    /// Create a new Persona manually.
+    /// Create a new Persona manually using the legacy single-prompt format.
     pub fn new(
         name: impl Into<String>,
         description: impl Into<String>,
@@ -30,17 +39,40 @@ impl Persona {
             name: name.into(),
             description: description.into(),
             system_prompt: system_prompt.into(),
+            rules: None,
+            personality: None,
             profile_path,
         }
     }
 
-    /// Load a persona from a YAML string.
+    /// ACO-045: Creates a new Bicameral Persona with explicit rules for logic and personality for voice.
+    /// This is the preferred method for the dual-hemisphere architecture.
+    pub fn new_bicameral(
+        name: impl Into<String>,
+        description: impl Into<String>,
+        rules: impl Into<String>,
+        personality: impl Into<String>,
+        profile_path: Option<String>,
+    ) -> Self {
+        let r = rules.into();
+        let p = personality.into();
+        Self {
+            name: name.into(),
+            description: description.into(),
+            system_prompt: format!("{}\n\n{}", r, p), // Backward compatibility fallback
+            rules: Some(r),
+            personality: Some(p),
+            profile_path,
+        }
+    }
+
+    /// Decodes a persona from a YAML-formatted string.
     pub fn from_yaml(yaml: &str) -> Result<Self, AIError> {
         serde_yaml::from_str(yaml)
             .map_err(|e| AIError::Persona(format!("Failed to parse Persona YAML: {}", e)))
     }
 
-    /// Serialize the persona back to a YAML string.
+    /// Encodes the persona into a YAML-formatted string.
     pub fn to_yaml(&self) -> Result<String, AIError> {
         serde_yaml::to_string(self)
             .map_err(|e| AIError::Persona(format!("Failed to serialize Persona to YAML: {}", e)))

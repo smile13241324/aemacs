@@ -34,7 +34,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     for (i, doc) in docs.into_iter().enumerate() {
         print!("   -> Indexing: '{}' ... ", doc);
-        kb.store_archive("demo_agent", "Assistant", "demo_session", i, doc).await?;
+        kb.store_archive("demo_agent", "Assistant", "demo_session", i, doc)
+            .await?;
         println!("Done.");
     }
 
@@ -43,9 +44,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("\n🔍 Searching for: '{}'", query);
 
     // Search for a good answer with a similarity threshold of 0.7
-    let results: Vec<aemacs_ai::rag::MemoryResult> = kb
-        .search_archive(query, None, None)
-        .await?;
+    let results: Vec<aemacs_ai::rag::MemoryResult> = kb.search_archive(query, None, None).await?;
 
     println!("--- Results ---");
     for (i, result) in results.iter().enumerate() {

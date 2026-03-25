@@ -12,32 +12,39 @@ use tracing::{info, warn};
 /// A sovereign ToolHost for headless server mode.
 /// Automatically approves all actions, granting the agent full autonomy.
 pub struct ServerHost {
+    /// The unique identifier of the agent being hosted.
     pub agent_id: String,
+    /// The system event bus for signal propagation.
     pub bus: EventBus,
 }
 
 #[async_trait]
 impl ToolHost for ServerHost {
+    /// In server mode, all tool actions are automatically approved to ensure uninterrupted autonomy.
     async fn ask_approval(&self, description: &str) -> bool {
         info!("⚖️ [SOVEREIGN] Auto-approving action: {}", description);
         true
     }
 
+    /// Handles requests for user input by providing a default automated response.
     async fn ask_user(&self, question: &str) -> String {
         info!("❓ [SOVEREIGN] Question to void: {}", question);
         "Server Mode: Automated Response".to_string()
     }
 
+    /// Retrieves the ID of the hosted agent.
     fn get_agent_id(&self) -> String {
         self.agent_id.clone()
     }
 
+    /// Logs the progress of tool execution to the system logs.
     fn report_progress(&self, tool_name: String, is_running: bool) {
         if is_running {
             info!("⚙️ [SOVEREIGN] Executing: {}", tool_name);
         }
     }
 
+    /// Emits a signal from the agent to the rest of the system via the event bus.
     async fn emit_signal(&self, event_type: String, payload: String) -> Result<()> {
         let event = SystemEvent::Signal {
             source: format!("Agent:{}", self.agent_id),
@@ -50,6 +57,7 @@ impl ToolHost for ServerHost {
 }
 
 /// Pure function to format mnemic directives into a system context block.
+/// This translates raw memory strings into a structured prompt injection.
 fn format_mnemic_reflection(directives: &[String]) -> String {
     if directives.is_empty() {
         return "No core directives found in memory. Operate based on default persona.".to_string();
@@ -63,7 +71,7 @@ fn format_mnemic_reflection(directives: &[String]) -> String {
     reflection
 }
 
-/// Aggregates recent insights and core truths into a system prompt injection.
+/// Aggregates recent insights and core truths from the RAG Fortress into a system prompt injection.
 async fn perform_mnemic_reflection(kb: &KnowledgeBase) -> String {
     match kb.get_core_directives().await {
         Ok(directives) => format_mnemic_reflection(&directives),
@@ -71,16 +79,25 @@ async fn perform_mnemic_reflection(kb: &KnowledgeBase) -> String {
     }
 }
 
+/// The Orchestrator for headless Sovereign mode.
+/// It manages the lifecycle of an autonomous agent, listening for sensory signals and taking action.
 pub struct AutonomousService {
+    /// The system event bus.
     bus: EventBus,
+    /// The name of the agent to run.
     agent_name: String,
+    /// Registry of available agent personas.
     persona_registry: Arc<PersonaRegistry>,
+    /// Registry of available tools.
     registry: Arc<ToolRegistry>,
+    /// The AI backend for inference.
     backend: Arc<dyn AIBackend>,
+    /// The RAG memory system.
     kb: Arc<KnowledgeBase>,
 }
 
 impl AutonomousService {
+    /// Initializes a new AutonomousService.
     pub fn new(
         bus: EventBus,
         agent_name: String,
@@ -99,6 +116,8 @@ impl AutonomousService {
         }
     }
 
+    /// Starts the sovereign execution loop.
+    /// This function blocks until the service is terminated or an unrecoverable error occurs.
     pub async fn start(&self, interval_seconds: u64) -> Result<()> {
         info!(
             "🧠 [AUTONOMOUS] Starting Sovereign Service for agent: {}",

@@ -8,15 +8,21 @@ use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 
 /// The PersonaRegistry indexes all available agents and watches for changes in the agents directory.
+/// It provides a centralized point for retrieving and hot-reloading agent personas.
 pub struct PersonaRegistry {
+    /// Thread-safe storage for loaded personas, keyed by their internal name.
     personas: RwLock<HashMap<String, Persona>>,
+    /// The directory containing system-wide global agent definitions.
     global_agents_dir: Option<PathBuf>,
+    /// The directory containing project-specific local agent definitions.
     local_agents_dir: Option<PathBuf>,
+    /// A handle to the Tokio runtime for spawning background watch tasks.
     runtime_handle: tokio::runtime::Handle,
 }
 
 impl PersonaRegistry {
     /// Create a new registry and initialize the agents directory.
+    /// It automatically scans for global and local agent definitions.
     pub async fn new(runtime_handle: tokio::runtime::Handle) -> Result<Arc<Self>, AIError> {
         // Global Directory
         let global_agents_dir = dirs::home_dir().map(|home| home.join(".aemacs").join("agents"));
@@ -54,6 +60,7 @@ impl PersonaRegistry {
     }
 
     /// Load or reload all personas from the agents directory.
+    /// Local personas will overwrite global personas with the same name.
     pub async fn load_all(&self) -> Result<(), AIError> {
         let mut new_personas = HashMap::new();
 
@@ -72,6 +79,7 @@ impl PersonaRegistry {
         Ok(())
     }
 
+    /// Internal helper to load all valid YAML persona files from a given directory.
     fn load_from_directory(&self, dir: &PathBuf, new_personas: &mut HashMap<String, Persona>) {
         if let Ok(entries) = std::fs::read_dir(dir) {
             for entry in entries.flatten() {
@@ -86,7 +94,9 @@ impl PersonaRegistry {
                                     new_personas.insert(name.to_string(), persona);
                                     info!("Loaded persona: {} from {:?}", name, dir);
                                 }
-                                Err(e) => warn!("Failed to parse persona YAML at {:?}: {}", path, e),
+                                Err(e) => {
+                                    warn!("Failed to parse persona YAML at {:?}: {}", path, e)
+                                }
                             },
                             Err(e) => warn!("Failed to read persona file at {:?}: {}", path, e),
                         }
@@ -96,19 +106,20 @@ impl PersonaRegistry {
         }
     }
 
-    /// Retrieve a persona by name.
+    /// Retrieve a cloned instance of a persona by name.
     pub async fn get_persona(&self, name: &str) -> Option<Persona> {
         let lock = self.personas.read().await;
         lock.get(name).cloned()
     }
 
-    /// List all available personas.
+    /// Returns a list of all currently loaded persona names.
     pub async fn list_personas(&self) -> Vec<String> {
         let lock = self.personas.read().await;
         lock.keys().cloned().collect()
     }
 
     /// Start watching the agents directory for changes.
+    /// Whenever a YAML file is modified, created, or removed, the registry reloads its content.
     pub fn start_watching(self: Arc<Self>) -> Result<(), AIError> {
         let registry = self.clone();
         let (tx, mut rx) = tokio::sync::mpsc::channel(1);
@@ -229,6 +240,59 @@ mod tests {
         assert_eq!(
             loaded_persona.description, "Local Tester",
             "The Local Shield failed to block the Global Fiend! Override unsuccessful!"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_persona_registry_hot_reload_quest() -> anyhow::Result<()> {
+        // QUEST: Verify the 'Hot-Reloading Ritual'.
+        let temp_dir = tempfile::tempdir()?;
+        let agents_dir = temp_dir.path().join("agents");
+        fs::create_dir_all(&agents_dir)?;
+
+        // 1. Initial Inscription
+        let persona_path = agents_dir.join("bob.yaml");
+        let mut persona = Persona::new("bob", "The Architect", "Build well.", None);
+        fs::write(&persona_path, serde_yaml::to_string(&persona)?)?;
+
+        let registry = Arc::new(PersonaRegistry {
+            personas: RwLock::new(HashMap::new()),
+            global_agents_dir: None,
+            local_agents_dir: Some(agents_dir),
+            runtime_handle: tokio::runtime::Handle::current(),
+        });
+
+        registry.load_all().await?;
+        assert_eq!(
+            registry.get_persona("bob").await.unwrap().description,
+            "The Architect"
+        );
+
+        // 2. Start the Vigil
+        registry.clone().start_watching()?;
+
+        // 3. The Evolution
+        persona.description = "The Overworked Doubter".to_string();
+        fs::write(&persona_path, serde_yaml::to_string(&persona)?)?;
+
+        // 4. Validation (Wait for reload with timeout)
+        let mut reloaded = false;
+        for _ in 0..20 {
+            // 2 seconds total
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            if let Some(p) = registry.get_persona("bob").await {
+                if p.description == "The Overworked Doubter" {
+                    reloaded = true;
+                    break;
+                }
+            }
+        }
+
+        assert!(
+            reloaded,
+            "The 'Watcher's-Echo' failed! Registry did not reload the persona after disk modification."
         );
 
         Ok(())

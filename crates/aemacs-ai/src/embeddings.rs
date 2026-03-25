@@ -2,10 +2,14 @@ use crate::{AIError, AIResult};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
+/// Provides a client for generating vector embeddings using the Ollama API.
 #[derive(Clone)]
 pub struct OllamaEmbedder {
+    /// The underlying HTTP client.
     client: Client,
+    /// The base URL of the Ollama server.
     base_url: String,
+    /// The specific embedding model to use.
     model: String,
 }
 
@@ -21,6 +25,7 @@ struct EmbeddingResponse {
 }
 
 impl OllamaEmbedder {
+    /// Initializes a new OllamaEmbedder.
     pub fn new(base_url: impl Into<String>, model: impl Into<String>) -> Self {
         Self {
             client: Client::new(),
@@ -29,6 +34,8 @@ impl OllamaEmbedder {
         }
     }
 
+    /// Translates a block of text into a vector of floating-point numbers.
+    /// This is used for semantic search and memory retrieval.
     pub async fn embed(&self, text: &str) -> AIResult<Vec<f32>> {
         let url = format!("{}/api/embeddings", self.base_url.trim_end_matches('/'));
 

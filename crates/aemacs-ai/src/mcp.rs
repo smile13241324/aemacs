@@ -9,9 +9,11 @@ use std::fs;
 use std::path::{Component, PathBuf};
 use std::sync::{Arc, OnceLock};
 use tokio::process::Command;
+use tracing::warn;
 
 static SESSION_START: OnceLock<std::time::Instant> = OnceLock::new();
 
+/// Internal helper to track session uptime.
 fn get_session_start() -> std::time::Instant {
     *SESSION_START.get_or_init(std::time::Instant::now)
 }
@@ -19,35 +21,50 @@ fn get_session_start() -> std::time::Instant {
 // --- Signals ---
 
 /// ACO-025: High-fidelity telemetry signals from the agentic loop.
+/// These events are streamed back to the UI to provide real-time visibility into agent reasoning.
 #[derive(Debug, Clone)]
 pub enum LoopSignal {
     /// A chunk of conversational text from the model.
     Text(String),
     /// A tool is about to be executed.
     ToolCall(String),
-    /// a tool execution has finished (name, success).
+    /// A tool execution has finished (name, success).
     ToolResult(String, bool),
 }
 
 // --- Interfaces ---
 
+/// The ToolHost provides the environment and authority for tool execution.
+/// It acts as the bridge between the agent and the human user or system resources.
 #[async_trait]
 pub trait ToolHost: Send + Sync {
+    /// Requests explicit human approval for potentially destructive or sensitive actions.
     async fn ask_approval(&self, description: &str) -> bool;
+    /// Prompts the human user for a textual response.
     async fn ask_user(&self, question: &str) -> String;
+    /// Returns the unique ID of the agent currently being hosted.
     fn get_agent_id(&self) -> String;
+    /// Reports the progress of a tool execution back to the host system.
     fn report_progress(&self, tool_name: String, is_running: bool);
+    /// Emits a system-level signal from the agent.
     async fn emit_signal(&self, event_type: String, payload: String) -> Result<()>;
 }
 
+/// The base trait for all agentic tools.
+/// Each tool defines its own interface and logic for interacting with the codebase or system.
 #[async_trait]
 pub trait Tool: Send + Sync {
+    /// The unique name of the tool (used in JSON schemas).
     fn name(&self) -> &str;
+    /// A descriptive summary of what the tool does.
     fn description(&self) -> &str;
+    /// The JSON Schema defining the expected parameters for the tool.
     fn parameters(&self) -> Value;
+    /// Executes the tool's logic using the provided arguments and host context.
     async fn execute(&self, args: Value, host: &dyn ToolHost) -> Result<String>;
 }
 
+/// A default host implementation that denies all sensitive requests.
 pub struct DenyAllHost;
 #[async_trait]
 impl ToolHost for DenyAllHost {
@@ -68,23 +85,28 @@ impl ToolHost for DenyAllHost {
 
 // --- Registry ---
 
+/// A central registry for all tools available to an agent.
 pub struct ToolRegistry {
+    /// Map of tool names to their boxed implementations.
     tools: HashMap<String, Box<dyn Tool>>,
 }
 
 impl ToolRegistry {
+    /// Creates an empty ToolRegistry.
     pub fn new() -> Self {
         Self {
             tools: HashMap::new(),
         }
     }
 
+    /// Initializes a registry pre-populated with all core Æmacs tools.
     pub fn with_core_tools(
         kb: Arc<KnowledgeBase>,
         persona_registry: Arc<PersonaRegistry>,
         event_tx: Option<tokio::sync::broadcast::Sender<aemacs_core::bus::SystemEvent>>,
     ) -> Self {
         let mut registry = Self::new();
+        // ... (Tool registrations kept constant)
         registry.register(Box::new(ReadFileTool));
         registry.register(Box::new(ReadManyFilesTool));
         registry.register(Box::new(WriteFileTool {
@@ -105,7 +127,10 @@ impl ToolRegistry {
             persona_registry,
             event_tx: event_tx.clone(),
         }));
-        registry.register(Box::new(SearchKnowledgeBaseTool::new(kb.clone(), event_tx.clone())));
+        registry.register(Box::new(SearchKnowledgeBaseTool::new(
+            kb.clone(),
+            event_tx.clone(),
+        )));
         registry.register(Box::new(WriteKnowledgeBaseTool::new(kb.clone())));
         registry.register(Box::new(UpdateMemoryTool::new(kb.clone())));
         registry.register(Box::new(DeleteMemoryTool::new(kb.clone())));
@@ -116,19 +141,25 @@ impl ToolRegistry {
         registry.register(Box::new(ReportStatusTool {
             event_tx: event_tx.clone(),
         }));
-        registry.register(Box::new(RecallPastInsightsTool::new(kb.clone(), event_tx.clone())));
+        registry.register(Box::new(RecallPastInsightsTool::new(
+            kb.clone(),
+            event_tx.clone(),
+        )));
         registry.register(Box::new(RecallGenesisArchiveTool::new(kb.clone())));
         registry
     }
 
+    /// Registers a new tool in the registry.
     pub fn register(&mut self, tool: Box<dyn Tool>) {
         self.tools.insert(tool.name().to_string(), tool);
     }
 
+    /// Retrieves a tool by its name.
     pub fn get(&self, name: &str) -> Option<&Box<dyn Tool>> {
         self.tools.get(name)
     }
 
+    /// Returns a list of JSON Schema definitions for all tools in the registry.
     pub fn list_definitions(&self) -> Vec<Value> {
         self.tools
             .values()
@@ -148,93 +179,60 @@ impl ToolRegistry {
 
 use futures::StreamExt;
 
-/// Executes the Agentic Loop: Talk to AI -> Execute Tools -> Talk to AI -> Result.
-/// Modifies the conversation history in-place and streams text chunks back via stream_tx.
+/// Executes the Bicameral Agentic Loop (ACO-044):
+/// 1. Logic Phase: Talk to Logic Hemisphere -> Execute Tools -> Repeat until no more tools.
+/// 2. Roleplay Phase: Send Logic's final reasoning to the Roleplay Hemisphere for user-facing synthesis.
+///
+/// This function is the primary engine of agency in Æmacs.
+/// It modifies the conversation history in-place and returns the final synthesized prose.
 pub async fn run_agent_loop(
     backend: &(impl AIBackend + ?Sized),
     registry: &ToolRegistry,
     host: &dyn ToolHost,
-    conversation: &mut Conversation, // Mutable reference
+    conversation: &mut Conversation,
     max_turns: usize,
     stream_tx: Option<async_channel::Sender<LoopSignal>>,
 ) -> Result<String> {
+    // ... rest of function (kept constant)
     let tool_defs = registry.list_definitions();
-    conversation.set_tools(tool_defs); // Use setter
+    conversation.set_tools(tool_defs);
 
-    for _ in 0..max_turns {
-        // Clone conversation for the request (snapshot of current state)
-        let request = conversation.clone().build();
-        tracing::debug!("🚀 [AI Loop] Sending request to model: {:#?}", request);
+    let mut logic_reasoning = String::new();
 
-        let mut stream = backend.stream(request).await?;
-
-        let mut full_content = String::new();
-        let mut accumulated_tool_calls: HashMap<i32, crate::models::ToolCall> = HashMap::new();
-
-        while let Some(event_res) = stream.next().await {
-            match event_res? {
-                crate::StreamEvent::Content(chunk) => {
-                    tracing::trace!("📥 [AI Loop] Received chunk: {:?}", chunk); // Trace to avoid log spam, debug full_content later
-                    full_content.push_str(&chunk);
-                    if let Some(tx) = &stream_tx {
-                        let _ = tx.send(LoopSignal::Text(chunk)).await;
-                    }
-                }
-                crate::StreamEvent::ToolCall(tc) => {
-                    tracing::debug!("🛠️ [AI Loop] Received ToolCall delta: {:?}", tc);
-                    // OpenAI streams tool calls with an index. For simplicity, we assume one or handle by ID.
-                    // If no ID is provided, it's usually a delta for the current call.
-                    // For now, let's just collect them.
-                    accumulated_tool_calls.insert(0, tc);
-                }
-            }
-        }
-
+    // PHASE 1: LOGIC HEMISPHERE (Executive Function)
+    for turn in 0..max_turns {
+        let request = conversation.build_logic_request();
         tracing::debug!(
-            "✅ [AI Loop] Stream finished. Total content: {:?}",
-            full_content
+            "🚀 [Logic Phase] Turn {}: Sending request to model: {}",
+            turn,
+            request.model
         );
 
-        let tool_calls = if accumulated_tool_calls.is_empty() {
-            // ACO-021-03: Implementation of Prose Fallback Parser
-            let fallback_calls = extract_tool_calls_from_prose(&full_content);
+        // Logic phase is non-streaming for deterministic tool extraction
+        let response_msg = backend.complete(request).await?;
+        let content = response_msg.content.to_string();
+
+        tracing::debug!("✅ [Logic Phase] Received response: {:?}", content);
+
+        let tool_calls = if let Some(calls) = &response_msg.tool_calls {
+            if calls.is_empty() {
+                None
+            } else {
+                Some(calls.clone())
+            }
+        } else {
+            let fallback_calls = extract_tool_calls_from_prose(&content);
             if fallback_calls.is_empty() {
                 None
             } else {
-                tracing::debug!(
-                    "✨ [AI Loop] Extracted {} tool calls from prose fallback.",
-                    fallback_calls.len()
-                );
                 Some(fallback_calls)
             }
-        } else {
-            tracing::debug!(
-                "✅ [AI Loop] Tools accumulated via native API: {:?}",
-                accumulated_tool_calls
-            );
-            Some(accumulated_tool_calls.into_values().collect::<Vec<_>>())
         };
 
-        let response_msg = Message {
-            role: Role::Assistant,
-            content: Content::Text(full_content.clone()),
-            tool_calls: tool_calls.clone(),
-            tool_call_id: None,
-            timestamp: chrono::Utc::now(),
-        };
-
-        tracing::debug!(
-            "💾 [AI Loop] Saving to conversation history: {:#?}",
-            response_msg
-        );
-        // ALWAYS add the assistant's response to history
+        // Add Logic's turn to internal history
         conversation.add_message(response_msg);
 
         if let Some(calls) = tool_calls {
-            if calls.is_empty() {
-                return Ok(full_content);
-            }
-
             for call in calls {
                 let tool_name = &call.function.name;
                 let args_str = &call.function.arguments;
@@ -251,28 +249,13 @@ pub async fn run_agent_loop(
                             host.report_progress(tool_name.clone(), false);
                             match exec_result {
                                 Ok(output) => (output, true),
-                                Err(e) => (
-                                    format!(
-                                        "🛠️ TOOL_ERROR: [{}]. SUGGESTION: Analyze the reason and retry with corrected arguments.",
-                                        e
-                                    ),
-                                    false,
-                                ),
+                                Err(e) => (format!("🛠️ TOOL_ERROR: [{}]", e), false),
                             }
                         }
-                        Err(e) => (
-                            format!(
-                                "🛠️ TOOL_ERROR: [PARSE_FAILURE - {}]. SUGGESTION: The arguments provided were not valid JSON. Ensure you use the exact schema defined in the tool definition and retry.",
-                                e
-                            ),
-                            false,
-                        ),
+                        Err(e) => (format!("🛠️ TOOL_ERROR: [PARSE_FAILURE - {}]", e), false),
                     },
                     None => (
-                        format!(
-                            "🛠️ TOOL_ERROR: [Tool '{}' not found]. SUGGESTION: Check the spelling of the tool name or use a different tool available in your toolbox.",
-                            tool_name
-                        ),
+                        format!("🛠️ TOOL_ERROR: [Tool '{}' not found]", tool_name),
                         false,
                     ),
                 };
@@ -283,22 +266,57 @@ pub async fn run_agent_loop(
                         .await;
                 }
 
-                let tool_msg = Message {
+                conversation.add_message(Message {
                     role: Role::Tool,
                     content: Content::Text(result),
                     tool_calls: None,
                     tool_call_id: call.id.clone(),
                     timestamp: chrono::Utc::now(),
-                };
-                conversation.add_message(tool_msg);
+                });
             }
-            // Loop continues (recursion)
+            // Continue logic loop to process tool results
         } else {
-            return Ok(full_content);
+            // No more tools, Logic phase complete
+            logic_reasoning = content;
+            break;
         }
     }
 
-    Err(anyhow!("Max turns reached without final response."))
+    if logic_reasoning.is_empty() {
+        return Err(anyhow!("Logic hemisphere failed to produce reasoning."));
+    }
+
+    // PHASE 2: ROLEPLAY HEMISPHERE (Voice Synthesis)
+    tracing::debug!("🎭 [Roleplay Phase] Initiating synthesis pass...");
+    let rp_request = conversation.build_roleplay_request(&logic_reasoning);
+    let mut stream = backend.stream(rp_request).await?;
+
+    let mut final_prose = String::new();
+    while let Some(event_res) = stream.next().await {
+        match event_res? {
+            crate::StreamEvent::Content(chunk) => {
+                final_prose.push_str(&chunk);
+                if let Some(tx) = &stream_tx {
+                    let _ = tx.send(LoopSignal::Text(chunk)).await;
+                }
+            }
+            crate::StreamEvent::ToolCall(_) => {
+                // Roleplay model is strictly forbidden from tool use
+                warn!("⚠️ [Roleplay Phase] Model attempted tool call despite gating. Ignoring.");
+            }
+        }
+    }
+
+    // Add the final Roleplay response to the visible history
+    conversation.add_message(Message {
+        role: Role::Assistant,
+        content: Content::Text(final_prose.clone()),
+        tool_calls: None,
+        tool_call_id: None,
+        timestamp: chrono::Utc::now(),
+    });
+
+    Ok(final_prose)
 }
 
 // --- Utils ---
@@ -792,7 +810,10 @@ pub struct SearchKnowledgeBaseTool {
 }
 
 impl SearchKnowledgeBaseTool {
-    pub fn new(kb: Arc<KnowledgeBase>, event_tx: Option<tokio::sync::broadcast::Sender<aemacs_core::bus::SystemEvent>>) -> Self {
+    pub fn new(
+        kb: Arc<KnowledgeBase>,
+        event_tx: Option<tokio::sync::broadcast::Sender<aemacs_core::bus::SystemEvent>>,
+    ) -> Self {
         Self { kb, event_tx }
     }
 }
@@ -833,13 +854,17 @@ impl Tool for SearchKnowledgeBaseTool {
         } else {
             None
         };
-        
+
         let agent_id_deref = agent_id.as_deref();
 
         let results = if categories.contains(&"ARCHIVE") {
-            self.kb.search_archive(query, agent_id_deref, self.event_tx.clone()).await?
+            self.kb
+                .search_archive(query, agent_id_deref, self.event_tx.clone())
+                .await?
         } else {
-            self.kb.search_active_memory(query, agent_id_deref, self.event_tx.clone()).await?
+            self.kb
+                .search_active_memory(query, agent_id_deref, self.event_tx.clone())
+                .await?
         };
 
         if results.is_empty() {
@@ -1308,7 +1333,10 @@ pub struct RecallPastInsightsTool {
 }
 
 impl RecallPastInsightsTool {
-    pub fn new(kb: Arc<KnowledgeBase>, event_tx: Option<tokio::sync::broadcast::Sender<aemacs_core::bus::SystemEvent>>) -> Self {
+    pub fn new(
+        kb: Arc<KnowledgeBase>,
+        event_tx: Option<tokio::sync::broadcast::Sender<aemacs_core::bus::SystemEvent>>,
+    ) -> Self {
         Self { kb, event_tx }
     }
 }
@@ -1334,7 +1362,10 @@ impl Tool for RecallPastInsightsTool {
         let query = args["query"].as_str().ok_or(anyhow!("Missing query"))?;
         let agent_id = host.get_agent_id();
 
-        let results = self.kb.search_active_memory(query, Some(&agent_id), self.event_tx.clone()).await?;
+        let results = self
+            .kb
+            .search_active_memory(query, Some(&agent_id), self.event_tx.clone())
+            .await?;
 
         if results.is_empty() {
             return Ok("No relevant past insights found.".to_string());
@@ -1434,7 +1465,19 @@ mod tests {
             Ok(())
         }
         async fn complete(&self, _req: AIRequest) -> crate::error::AIResult<Message> {
-            unimplemented!()
+            let mut res = self.responses.lock().unwrap();
+            let event = res.remove(0);
+            if let crate::StreamEvent::Content(c) = event {
+                Ok(Message::assistant(c))
+            } else if let crate::StreamEvent::ToolCall(tc) = event {
+                let mut msg = Message::assistant("");
+                msg.tool_calls = Some(vec![tc]);
+                Ok(msg)
+            } else {
+                Err(crate::error::AIError::ParseError(
+                    "Invalid mock event".to_string(),
+                ))
+            }
         }
         async fn stream(&self, _req: AIRequest) -> crate::error::AIResult<crate::AIResponseStream> {
             let mut res = self.responses.lock().unwrap();
@@ -1444,63 +1487,45 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_run_agent_loop_continuity_quest() -> Result<()> {
+    async fn test_run_agent_loop_bicameral_handoff_quest() -> Result<()> {
         let registry = ToolRegistry::new();
         let host = TestHost;
-        let mut conversation = Conversation::new("mock-model");
+        let mut conversation = Conversation::new("dolphin3:8b");
 
-        // Turn 1
-        let backend1 = MockBackend {
-            responses: std::sync::Mutex::new(vec![crate::StreamEvent::Content(
-                "Response 1".to_string(),
-            )]),
+        // Logic response without tools
+        let backend = MockBackend {
+            responses: std::sync::Mutex::new(vec![
+                crate::StreamEvent::Content("Technical reasoning.".to_string()), // Logic Pass
+                crate::StreamEvent::Content("Synthesized response.".to_string()), // RP Pass
+            ]),
         };
-        conversation = conversation.with_user("User 1");
-        run_agent_loop(&backend1, &registry, &host, &mut conversation, 5, None).await?;
 
-        assert_eq!(conversation.messages().len(), 2);
-        assert_eq!(conversation.messages()[0].role, Role::User);
-        assert_eq!(conversation.messages()[1].role, Role::Assistant);
+        conversation = conversation.with_user("Hello");
+        let result = run_agent_loop(&backend, &registry, &host, &mut conversation, 5, None).await?;
 
-        // Turn 2 - Use the SAME conversation object
-        let backend2 = MockBackend {
-            responses: std::sync::Mutex::new(vec![crate::StreamEvent::Content(
-                "Response 2".to_string(),
-            )]),
-        };
-        conversation = conversation.with_user("User 2");
-        run_agent_loop(&backend2, &registry, &host, &mut conversation, 5, None).await?;
-
-        // Total should be 4: U1, A1, U2, A2
+        assert_eq!(result, "Synthesized response.");
+        // History should have: User, Logic (Assistant), Roleplay (Assistant)
+        assert_eq!(conversation.messages().len(), 3);
         assert_eq!(
-            conversation.messages().len(),
-            4,
-            "The 'Amnesia-Dragon' has consumed the history!"
+            conversation.messages()[1].content.to_string(),
+            "Technical reasoning."
         );
-        assert!(
-            conversation.messages()[1]
-                .content
-                .to_string()
-                .contains("Response 1")
-        );
-        assert!(
-            conversation.messages()[3]
-                .content
-                .to_string()
-                .contains("Response 2")
+        assert_eq!(
+            conversation.messages()[2].content.to_string(),
+            "Synthesized response."
         );
 
         Ok(())
     }
 
     #[tokio::test]
-    async fn test_run_agent_loop_tool_persistence_quest() -> Result<()> {
+    async fn test_run_agent_loop_bicameral_tool_quest() -> Result<()> {
         let mut registry = ToolRegistry::new();
         registry.register(Box::new(GetSystemTimeTool));
         let host = TestHost;
-        let mut conversation = Conversation::new("mock-model");
+        let mut conversation = Conversation::new("dolphin3:8b");
 
-        // Mock a tool call followed by a final response
+        // Mock: Logic tool call -> Logic final reasoning -> RP synthesized response
         let tool_call = crate::models::ToolCall {
             id: Some("call_123".to_string()),
             call_type: "function".to_string(),
@@ -1513,17 +1538,22 @@ mod tests {
         let backend = MockBackend {
             responses: std::sync::Mutex::new(vec![
                 crate::StreamEvent::ToolCall(tool_call),
-                crate::StreamEvent::Content("The time is now.".to_string()),
+                crate::StreamEvent::Content("Technical reason with time.".to_string()), // Logic Pass 2
+                crate::StreamEvent::Content("Voice synthesized response.".to_string()), // RP Pass
             ]),
         };
 
         conversation = conversation.with_user("What time is it?");
         run_agent_loop(&backend, &registry, &host, &mut conversation, 5, None).await?;
 
-        // History should be: User, Assistant (ToolCall), Tool (Result), Assistant (Final)
+        // History: User, Logic (ToolCall), Tool (Result), Logic (Final), Roleplay (Final)
         let history = conversation.messages();
-        assert_eq!(history.len(), 4, "Tool interaction was not chronicled!");
-        assert_eq!(history[1].role, Role::Assistant, "Assistant turn missing");
+        assert_eq!(
+            history.len(),
+            5,
+            "Bicameral tool interaction was not chronicled!"
+        );
+        assert_eq!(history[1].role, Role::Assistant, "Logic turn missing");
         assert!(
             history[1].tool_calls.is_some(),
             "Tool call missing from history"
@@ -1536,7 +1566,12 @@ mod tests {
         assert_eq!(
             history[3].role,
             Role::Assistant,
-            "Final assistant response missing"
+            "Logic final response missing"
+        );
+        assert_eq!(
+            history[4].role,
+            Role::Assistant,
+            "Roleplay synthesized response missing"
         );
 
         Ok(())
@@ -1769,10 +1804,7 @@ impl Tool for FetchContiguousMemoryTool {
             .as_str()
             .ok_or(anyhow!("Missing message_id"))?;
 
-        let chunks = self
-            .kb
-            .fetch_full_message(message_id)
-            .await?;
+        let chunks = self.kb.fetch_full_message(message_id).await?;
 
         if chunks.is_empty() {
             return Ok(format!(
@@ -1973,7 +2005,11 @@ mod weaver_tests {
             }
         }
 
-        let _kb = Arc::new(KnowledgeBase::new("http://localhost", "http://localhost", crate::rag::Environment::Test)?);
+        let _kb = Arc::new(KnowledgeBase::new(
+            "http://localhost",
+            "http://localhost",
+            crate::rag::Environment::Test,
+        )?);
         let mut registry = ToolRegistry::new();
         registry.register(Box::new(FailingTool));
 
@@ -2062,25 +2098,25 @@ mod weaver_tests {
                 Ok(())
             }
             async fn complete(&self, _: AIRequest) -> AIResult<crate::Message> {
-                unreachable!()
+                let turn = self.turn.fetch_add(1, Ordering::SeqCst);
+                if turn == 0 {
+                    let mut msg = crate::Message::assistant("Calling tool...");
+                    msg.tool_calls = Some(vec![ToolCall {
+                        id: Some("call_1".to_string()),
+                        call_type: "function".to_string(),
+                        function: ToolCallFunction {
+                            name: "test_tool".to_string(),
+                            arguments: "{}".to_string(),
+                        },
+                    }]);
+                    Ok(msg)
+                } else {
+                    Ok(crate::Message::assistant("Logic Finished"))
+                }
             }
             async fn stream(&self, _: AIRequest) -> AIResult<AIResponseStream> {
-                let turn = self.turn.fetch_add(1, Ordering::SeqCst);
-                let events = if turn == 0 {
-                    vec![
-                        Ok(StreamEvent::ToolCall(ToolCall {
-                            id: Some("call_1".to_string()),
-                            call_type: "function".to_string(),
-                            function: ToolCallFunction {
-                                name: "test_tool".to_string(),
-                                arguments: "{}".to_string(),
-                            },
-                        })),
-                        Ok(StreamEvent::Content("Calling tool...".to_string())),
-                    ]
-                } else {
-                    vec![Ok(StreamEvent::Content("Finished".to_string()))]
-                };
+                // stream is now only used for Roleplay Phase
+                let events = vec![Ok(StreamEvent::Content("Voice Finished".to_string()))];
                 Ok(Box::pin(stream::iter(events)))
             }
         }
@@ -2125,10 +2161,7 @@ mod weaver_tests {
             signals.push(sig);
         }
 
-        // We expect: Text("Finished"), ToolCall("test_tool"), ToolResult("test_tool", true)
-        // Order of Text vs Tool signals depends on implementation details of the loop,
-        // but both must be present.
-
+        // We expect: ToolCall, ToolResult, Text("Voice Finished")
         let has_call = signals
             .iter()
             .any(|s| matches!(s, LoopSignal::ToolCall(name) if name == "test_tool"));
@@ -2137,11 +2170,11 @@ mod weaver_tests {
             .any(|s| matches!(s, LoopSignal::ToolResult(name, true) if name == "test_tool"));
         let has_text = signals
             .iter()
-            .any(|s| matches!(s, LoopSignal::Text(t) if t == "Finished"));
+            .any(|s| matches!(s, LoopSignal::Text(t) if t == "Voice Finished"));
 
         assert!(has_call, "Missing ToolCall signal");
         assert!(has_result, "Missing ToolResult signal");
-        assert!(has_text, "Missing Text signal");
+        assert!(has_text, "Missing Voice Text signal");
 
         Ok(())
     }
@@ -2244,7 +2277,11 @@ mod weaver_tests {
         // REQUIRES: A running Qdrant instance at http://localhost:6334.
         use tracing::info;
 
-        let kb_res = KnowledgeBase::new("http://localhost:6334", "http://localhost:11434", crate::rag::Environment::Test);
+        let kb_res = KnowledgeBase::new(
+            "http://localhost:6334",
+            "http://localhost:11434",
+            crate::rag::Environment::Test,
+        );
         if kb_res.is_err() {
             info!(
                 "Skipping test: KnowledgeBase initialization failed (Infrastructure likely offline)."
@@ -2294,7 +2331,11 @@ mod weaver_tests {
         // REQUIRES: A running Qdrant instance at http://localhost:6334.
         use tracing::info;
 
-        let kb_res = KnowledgeBase::new("http://localhost:6334", "http://localhost:11434", crate::rag::Environment::Test);
+        let kb_res = KnowledgeBase::new(
+            "http://localhost:6334",
+            "http://localhost:11434",
+            crate::rag::Environment::Test,
+        );
         if kb_res.is_err() {
             info!(
                 "Skipping test: KnowledgeBase initialization failed (Infrastructure likely offline)."
@@ -2334,6 +2375,158 @@ mod weaver_tests {
                 );
             }
         }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_bicameral_handoff_sequence_quest() -> Result<()> {
+        // QUEST: Verify the handoff sequence Logic (with tools) -> Roleplay (no tools).
+        use crate::models::{MODELS, ModelRole};
+        use std::sync::Mutex;
+
+        struct SequenceMockBackend {
+            calls: Mutex<Vec<(String, bool)>>, // (model_name, has_tools)
+        }
+        #[async_trait]
+        impl crate::AIBackend for SequenceMockBackend {
+            fn name(&self) -> &str {
+                "seq-mock"
+            }
+            async fn health_check(&self) -> crate::error::AIResult<()> {
+                Ok(())
+            }
+            async fn complete(
+                &self,
+                req: crate::models::AIRequest,
+            ) -> crate::error::AIResult<crate::Message> {
+                let mut calls = self.calls.lock().unwrap();
+                calls.push((req.model.clone(), req.tools.is_some()));
+
+                // Logic pass: return final reasoning
+                Ok(crate::Message::assistant("Logic reasoning finished."))
+            }
+            async fn stream(
+                &self,
+                req: crate::models::AIRequest,
+            ) -> crate::error::AIResult<crate::AIResponseStream> {
+                let mut calls = self.calls.lock().unwrap();
+                calls.push((req.model.clone(), req.tools.is_some()));
+
+                Ok(Box::pin(futures::stream::iter(vec![Ok(
+                    crate::StreamEvent::Content("Voice synthesis.".to_string()),
+                )])))
+            }
+        }
+
+        let backend = SequenceMockBackend {
+            calls: Mutex::new(vec![]),
+        };
+        let registry = ToolRegistry::new();
+        let mut conv = Conversation::new("dolphin3:8b");
+        conv.set_tools(vec![json!({"name": "test"})]);
+
+        run_agent_loop(&backend, &registry, &TestHost, &mut conv, 5, None).await?;
+
+        let calls = backend.calls.lock().unwrap();
+        assert_eq!(
+            calls.len(),
+            2,
+            "Should have exactly one logic call and one roleplay call"
+        );
+
+        // Verify Logic Call
+        assert!(
+            calls[0].0.contains("dolphin"),
+            "First call should be to Logic model"
+        );
+        assert_eq!(calls[0].1, true, "Logic call must have tools enabled");
+
+        // Verify Roleplay Call
+        let rp_model = MODELS
+            .iter()
+            .find(|m| m.role == ModelRole::Roleplay && m.tier == crate::models::ModelTier::Low)
+            .unwrap();
+        assert_eq!(
+            calls[1].0, rp_model.name,
+            "Second call should be to Roleplay model"
+        );
+        assert_eq!(calls[1].1, false, "Roleplay call must have tools disabled");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_vram_eviction_confirmation_quest() {
+        // QUEST: Verify that keep_alive: 0 is correctly serialized.
+        let mut conv = Conversation::new("dolphin3:8b");
+
+        let logic_req = conv.build_logic_request();
+        let rp_req = conv.build_roleplay_request("reasoning");
+
+        assert_eq!(
+            logic_req.options.as_ref().unwrap().keep_alive,
+            Some("0".to_string())
+        );
+        assert_eq!(
+            rp_req.options.as_ref().unwrap().keep_alive,
+            Some("0".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_bicameral_stream_merging_quest() -> Result<()> {
+        // QUEST: Verify that text from the Logic phase is NOT leaked to the stream.
+        struct StreamSilenceMockBackend;
+        #[async_trait]
+        impl crate::AIBackend for StreamSilenceMockBackend {
+            fn name(&self) -> &str {
+                "silence-mock"
+            }
+            async fn health_check(&self) -> crate::error::AIResult<()> {
+                Ok(())
+            }
+            async fn complete(
+                &self,
+                _: crate::models::AIRequest,
+            ) -> crate::error::AIResult<crate::Message> {
+                Ok(crate::Message::assistant("Logic internal thought."))
+            }
+            async fn stream(
+                &self,
+                _: crate::models::AIRequest,
+            ) -> crate::error::AIResult<crate::AIResponseStream> {
+                Ok(Box::pin(futures::stream::iter(vec![Ok(
+                    crate::StreamEvent::Content("Voice output.".to_string()),
+                )])))
+            }
+        }
+
+        let backend = StreamSilenceMockBackend;
+        let registry = ToolRegistry::new();
+        let mut conv = Conversation::new("dolphin3:8b");
+        let (tx, rx) = async_channel::unbounded();
+
+        run_agent_loop(&backend, &registry, &TestHost, &mut conv, 5, Some(tx)).await?;
+
+        let mut signals = Vec::new();
+        while let Ok(sig) = rx.try_recv() {
+            signals.push(sig);
+        }
+
+        // Logic phase text "Logic internal thought." should NOT be in the stream
+        assert!(
+            !signals
+                .iter()
+                .any(|s| matches!(s, LoopSignal::Text(t) if t.contains("internal thought")))
+        );
+
+        // Only Roleplay phase text should be present
+        assert!(
+            signals
+                .iter()
+                .any(|s| matches!(s, LoopSignal::Text(t) if t == "Voice output."))
+        );
+
         Ok(())
     }
 }

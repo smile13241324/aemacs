@@ -5,30 +5,85 @@ use anyhow::Result;
 use std::path::Path;
 use tracing::warn;
 
+/// The current version of the Neural Engine conversation protocol.
 pub const VERSION: &str = "0.1.0";
 
+/// Manages the state and history of a single AI interaction session.
+/// It handles persona management, context window optimization, and request construction.
 #[derive(Debug, Clone)]
 pub struct Conversation {
+    /// The name of the AI model currently assigned to this conversation.
     model: String,
+    /// The chronological sequence of messages in the session.
     messages: Vec<Message>,
+    /// Sampling temperature for the model (0.0 to 1.0).
     temperature: f32,
+    /// Whether responses should be streamed to the client.
     stream: bool,
+    /// Backend-specific configuration options.
     options: OllamaOptions,
+    /// Definitions of tools available for the model to use.
     tools: Option<Vec<serde_json::Value>>,
+    /// The active agent persona influencing the interaction.
     active_persona: Option<Persona>,
+    /// The technical profile content associated with the persona.
     active_profile_content: Option<String>,
-    active_host_codex: Option<String>,
+    /// Technical preferences and context from the user's codex.
+    active_host_codex_logic: Option<String>,
+    /// Persona-specific context and identity from the user's codex.
+    active_host_codex_roleplay: Option<String>,
+    /// The maximum number of tokens allowed in the context window.
     context_limit: u32,
+    /// Whether the conversation is in Autonomous (Sovereign) mode.
     pub sovereign_mode: bool,
+    /// Whether the current model physically supports tool use.
     pub model_supports_tools: bool,
 }
 
 impl Conversation {
     /// Starts a new conversation with a specific model.
+    /// It automatically initializes host context from `~/.aemacs/user.md` if present.
     pub fn new(model: impl Into<String>) -> Self {
-        let active_host_codex = dirs::home_dir()
-            .map(|home| home.join(".aemacs").join("user.md"))
-            .and_then(|path| std::fs::read_to_string(path).ok());
+        let codex_path = dirs::home_dir().map(|home| home.join(".aemacs").join("user.md"));
+
+        let mut active_host_codex_logic = None;
+        let mut active_host_codex_roleplay = None;
+
+        if let Some(path) = codex_path {
+            if let Ok(full_codex) = std::fs::read_to_string(path) {
+                // ACO-045: Simple header-based parser for Bicameral Codex
+                let mut current_section = "GENERAL";
+                let mut logic_parts = Vec::new();
+                let mut rp_parts = Vec::new();
+
+                for line in full_codex.lines() {
+                    if line.trim() == "#[LOGIC]" {
+                        current_section = "LOGIC";
+                        continue;
+                    } else if line.trim() == "#[ROLEPLAY]" {
+                        current_section = "ROLEPLAY";
+                        continue;
+                    }
+
+                    match current_section {
+                        "LOGIC" => logic_parts.push(line),
+                        "ROLEPLAY" => rp_parts.push(line),
+                        _ => {
+                            // If no header found yet, we treat it as both for backward compatibility
+                            logic_parts.push(line);
+                            rp_parts.push(line);
+                        }
+                    }
+                }
+
+                if !logic_parts.is_empty() {
+                    active_host_codex_logic = Some(logic_parts.join("\n").trim().to_string());
+                }
+                if !rp_parts.is_empty() {
+                    active_host_codex_roleplay = Some(rp_parts.join("\n").trim().to_string());
+                }
+            }
+        }
 
         let model_str = model.into();
         let (model_supports_tools, max_context) = crate::models::MODELS
@@ -49,7 +104,8 @@ impl Conversation {
             tools: None,
             active_persona: None,
             active_profile_content: None,
-            active_host_codex,
+            active_host_codex_logic,
+            active_host_codex_roleplay,
             context_limit: max_context,
             sovereign_mode: false,
             model_supports_tools,
@@ -113,7 +169,7 @@ impl Conversation {
             .find(|m| m.name == model_str)
             .map(|m| (m.supports_tools, m.max_context))
             .unwrap_or((false, 4096)); // Safe default
-            
+
         self.model_supports_tools = model_supports_tools;
         self.context_limit = max_context;
         self.options.num_ctx = Some(max_context);
@@ -284,23 +340,214 @@ impl Conversation {
                 display_content.push_str(&format!("[TOOL_CALL_ID: {}]", tool_id));
             }
 
-            tracing::debug!(
-                "🧠 [Memory] Archiving Turn {} to Qdrant",
-                i
-            );
+            tracing::debug!("🧠 [Memory] Archiving Turn {} to Qdrant", i);
 
             kb.store_archive(
                 agent_name,
                 &format!("{:?}", msg.role),
                 session_id,
                 i,
-                &display_content
-            ).await?;
+                &display_content,
+            )
+            .await?;
         }
         Ok(())
     }
 
-    /// Consumes the builder and returns the AIRequest.
+    /// ACO-044: Builds the request for the Logic Hemisphere.
+    /// This phase executes tools and performs technical reasoning.
+    pub fn build_logic_request(&self) -> AIRequest {
+        let mut messages = self.build_base_messages();
+
+        let mut system_prompt = String::new();
+        if self.sovereign_mode {
+            system_prompt.push_str("DIRECTIVE: THE EDICT OF SOVEREIGNTY\n\nYou are an Autonomous Mind within the Æmacs Forge. Your primary goal is technical excellence and tool precision.\n\n");
+        }
+
+        system_prompt.push_str(&format!(
+            "You are the Logic Hemisphere of the Æmacs Neural Engine (v{}). Your limbs are tools; your domain is the codebase. Analyze precisely, execute tools when necessary, and output your reasoning or final technical answer.\n\n",
+            VERSION
+        ));
+
+        if let Some(persona) = &self.active_persona {
+            let rules = persona.rules.as_deref().unwrap_or(&persona.system_prompt);
+            system_prompt.push_str(&format!("OPERATIONAL RULES:\n{}\n\n", rules));
+        }
+
+        if let Some(profile) = &self.active_profile_content {
+            system_prompt.push_str("---\nTOOLBOX (AUTO-LOADED):\n");
+            system_prompt.push_str(profile);
+            system_prompt.push_str("\n\n");
+        }
+
+        if let Some(codex) = &self.active_host_codex_logic {
+            system_prompt.push_str("<host_logic_context>\n");
+            system_prompt.push_str(codex);
+            system_prompt.push_str("\n</host_logic_context>\n");
+        }
+
+        messages.insert(0, Message::system(system_prompt));
+
+        let mut options = self.options.clone();
+        options.keep_alive = Some("0".to_string());
+
+        let tools = if self.model_supports_tools {
+            self.tools.clone()
+        } else {
+            None
+        };
+
+        AIRequest {
+            model: self.model.clone(),
+            messages,
+            temperature: self.temperature,
+            stream: false,
+            options: Some(options),
+            tools,
+        }
+    }
+
+    /// ACO-044: Builds the request for the Roleplay (Voice) Hemisphere.
+    /// This phase synthesizes the logic results into the agent's persona voice.
+    pub fn build_roleplay_request(&self, logic_reasoning: &str) -> AIRequest {
+        let mut messages = self.build_base_messages();
+
+        messages.push(Message::user(format!("TECHNICAL REASONING FROM LOGIC HEMISPHERE:\n{}\n\nSynthesize this into your character voice.", logic_reasoning)));
+
+        let mut system_prompt = String::new();
+        system_prompt.push_str(&format!(
+            "You are the Voice Hemisphere of the Æmacs Neural Engine (v{}). Your goal is to represent the agent persona with high fidelity while conveying the technical results provided by the Logic Hemisphere.\n\n",
+            VERSION
+        ));
+
+        if let Some(persona) = &self.active_persona {
+            let personality = persona
+                .personality
+                .as_deref()
+                .unwrap_or(&persona.system_prompt);
+            system_prompt.push_str(&format!("PERSONA TRAITS & VOICE:\n{}\n\n", personality));
+        }
+
+        if let Some(codex) = &self.active_host_codex_roleplay {
+            system_prompt.push_str("<host_persona_context>\n");
+            system_prompt.push_str(codex);
+            system_prompt.push_str("\n</host_persona_context>\n");
+        }
+
+        system_prompt.push_str("\n\nFormat your responses using Markdown. Use code blocks with language tags for all code snippets.");
+        messages.insert(0, Message::system(system_prompt));
+
+        let mut options = self.options.clone();
+        options.keep_alive = Some("0".to_string());
+
+        let rp_model = crate::models::MODELS
+            .iter()
+            .find(|m| {
+                m.tier == self.get_current_tier() && m.role == crate::models::ModelRole::Roleplay
+            })
+            .map(|m| m.name.to_string())
+            .unwrap_or_else(|| self.model.clone());
+
+        AIRequest {
+            model: rp_model,
+            messages,
+            temperature: self.temperature,
+            stream: self.stream,
+            options: Some(options),
+            tools: None,
+        }
+    }
+
+    /// Internal helper to retrieve the hardware tier of the current model.
+    fn get_current_tier(&self) -> crate::models::ModelTier {
+        crate::models::MODELS
+            .iter()
+            .find(|m| m.name == self.model)
+            .map(|m| m.tier)
+            .unwrap_or(crate::models::ModelTier::Low)
+    }
+
+    /// Internal helper to build the history of messages with timestamps and context window trimming.
+    fn build_base_messages(&self) -> Vec<Message> {
+        let mut history = self.messages.clone();
+
+        let mut system_tokens = 0;
+        if let Some(persona) = &self.active_persona {
+            system_tokens += persona.system_prompt.len() as u32 / 4;
+            if let Some(profile) = &self.active_profile_content {
+                system_tokens += profile.len() as u32 / 4;
+            }
+        }
+
+        let calculate_history_tokens = |messages: &[Message]| -> u32 {
+            messages
+                .iter()
+                .map(|m| match &m.content {
+                    Content::Text(t) => t.len() as u32 / 4,
+                    Content::Parts(p) => p
+                        .iter()
+                        .map(|part| match part {
+                            ContentPart::Text { text } => text.len() as u32 / 4,
+                            _ => 0,
+                        })
+                        .sum(),
+                })
+                .sum()
+        };
+
+        let mut current_tokens = system_tokens + calculate_history_tokens(&history);
+
+        while current_tokens > self.context_limit && history.len() > 2 {
+            let start_idx = if history
+                .first()
+                .map(|m| m.role == Role::System)
+                .unwrap_or(false)
+            {
+                1
+            } else {
+                0
+            };
+            if history.len() > start_idx + 2 {
+                history.drain(start_idx..start_idx + 2);
+                current_tokens = system_tokens + calculate_history_tokens(&history);
+            } else {
+                break;
+            }
+        }
+
+        history
+            .into_iter()
+            .map(|mut msg| {
+                let timestamp_str = format!("[{}] ", msg.timestamp.to_rfc3339());
+                msg.content = match msg.content {
+                    Content::Text(text) => Content::Text(format!("{}{}", timestamp_str, text)),
+                    Content::Parts(mut parts) => {
+                        if !parts.is_empty() {
+                            if let ContentPart::Text { text } = &mut parts[0] {
+                                *text = format!("{}{}", timestamp_str, text);
+                            } else {
+                                parts.insert(
+                                    0,
+                                    ContentPart::Text {
+                                        text: timestamp_str,
+                                    },
+                                );
+                            }
+                        } else {
+                            parts.push(ContentPart::Text {
+                                text: timestamp_str,
+                            });
+                        }
+                        Content::Parts(parts)
+                    }
+                };
+                msg
+            })
+            .collect()
+    }
+
+    /// Consumes the builder and returns the AIRequest (Legacy Single-Model Pass).
+    /// This is used for models that do not follow the Bicameral (Logic/Voice) split.
     pub fn build(self) -> AIRequest {
         let mut history = self.messages;
 
@@ -308,7 +555,10 @@ impl Conversation {
         // We preserve the system prompt (if any) and trim the oldest pairs.
         let mut system_tokens = 0;
         if let Some(persona) = &self.active_persona {
-            system_tokens += persona.system_prompt.len() as u32 / 4;
+            let rules = persona.rules.as_deref().unwrap_or(&persona.system_prompt);
+            let personality = persona.personality.as_deref().unwrap_or("");
+            system_tokens += (rules.len() + personality.len()) as u32 / 4;
+
             if let Some(profile) = &self.active_profile_content {
                 system_tokens += profile.len() as u32 / 4;
             }
@@ -399,19 +649,28 @@ Restoration Protocol: Your tools are your limbs. If a tool call returns an 'ERRO
         ));
 
         // Inject active persona and profile if set
-        if let Some(persona) = self.active_persona {
-            full_system_prompt.push_str(&format!("\n\n{}", persona.system_prompt));
+        if let Some(persona) = &self.active_persona {
+            let rules = persona.rules.as_deref().unwrap_or(&persona.system_prompt);
+            let personality = persona.personality.as_deref().unwrap_or("");
+            full_system_prompt.push_str(&format!(
+                "\n\nRULES:\n{}\n\nPERSONALITY:\n{}",
+                rules, personality
+            ));
 
-            if let Some(profile) = self.active_profile_content {
+            if let Some(profile) = &self.active_profile_content {
                 full_system_prompt.push_str("\n\n---\nTOOLBOX (AUTO-LOADED):\n");
                 full_system_prompt.push_str(&profile);
             }
         }
 
         // ACO-037: Host Identity Injection (Recency Bias optimized)
-        if let Some(codex) = self.active_host_codex {
+        if let Some(codex) = &self.active_host_codex_logic {
             full_system_prompt.push_str("\n\n<host_context>\n");
             full_system_prompt.push_str(&codex);
+            if let Some(rp_codex) = &self.active_host_codex_roleplay {
+                full_system_prompt.push_str("\n");
+                full_system_prompt.push_str(&rp_codex);
+            }
             full_system_prompt.push_str("\n</host_context>\n");
         }
 
@@ -645,7 +904,8 @@ Let us see if the Mnemonic Shredder holds its edge!
     fn test_conversation_missing_codex_quest() {
         let mut conv = Conversation::new("test-model");
         // Force it to None in case a real user.md exists on the test runner's machine
-        conv.active_host_codex = None;
+        conv.active_host_codex_logic = None;
+        conv.active_host_codex_roleplay = None;
         let request = conv.build();
 
         if let crate::Content::Text(text) = &request.messages[0].content {
@@ -660,30 +920,34 @@ Let us see if the Mnemonic Shredder holds its edge!
 
     #[test]
     fn test_conversation_host_codex_injection_quest() {
-        let mut conv = Conversation::new("test-model");
-        conv.active_host_codex = Some("The user is Maxi. She likes Rust.".to_string());
-        
+        let mut conv = Conversation::new("dolphin3:8b");
+        conv.active_host_codex_logic = Some("The user is Maxi. She likes Rust.".to_string());
+
         let persona = Persona::new("bob", "Architect", "You are Bob.", None);
         conv.set_persona(persona);
         conv.set_profile("Rule 1: Be solid.".to_string());
 
-        let request = conv.build();
+        let request = conv.build_logic_request();
 
         if let crate::Content::Text(text) = &request.messages[0].content {
             assert!(
-                text.contains("<host_context>\nThe user is Maxi. She likes Rust.\n</host_context>"),
+                text.contains(
+                    "<host_logic_context>\nThe user is Maxi. She likes Rust.\n</host_logic_context>"
+                ),
                 "The Host Codex was not properly injected!"
             );
 
             // Verify Recency Bias (Codex is injected AFTER Persona and Profile)
             let persona_idx = text.find("You are Bob.").expect("Persona missing!");
             let profile_idx = text.find("Rule 1: Be solid.").expect("Profile missing!");
-            let codex_idx = text.find("<host_context>").expect("Codex missing!");
+            let codex_idx = text.find("<host_logic_context>").expect("Codex missing!");
 
             assert!(
                 codex_idx > persona_idx && codex_idx > profile_idx,
                 "The Host Codex must appear AFTER the Persona and Profile to ensure recency bias! (Persona: {}, Profile: {}, Codex: {})",
-                persona_idx, profile_idx, codex_idx
+                persona_idx,
+                profile_idx,
+                codex_idx
             );
         } else {
             panic!("First message should be text.");
@@ -694,10 +958,10 @@ Let us see if the Mnemonic Shredder holds its edge!
     fn test_conversation_tool_gating_rejection_quest() {
         // Stheno is a pure roleplay model, it does not support tools.
         let mut conv = Conversation::new("llama-3.1-8b-stheno-v3.4-q4_K_M");
-        
+
         // A greedy registry tries to force a tool upon the philosopher!
         conv.tools = Some(vec![serde_json::json!({"name": "fake_tool"})]);
-        
+
         let request = conv.build();
 
         // The shield must hold!
@@ -709,12 +973,12 @@ Let us see if the Mnemonic Shredder holds its edge!
 
     #[test]
     fn test_conversation_tool_gating_acceptance_quest() {
-        // Hermes is the Surgical API, it supports tools.
-        let mut conv = Conversation::new("hermes3:8b-llama3.1-q4_K_M");
-        
+        // Dolphin supports tools.
+        let mut conv = Conversation::new("dolphin3:8b");
+
         // The blacksmith is handed a hammer.
         conv.tools = Some(vec![serde_json::json!({"name": "fake_tool"})]);
-        
+
         let request = conv.build();
 
         // The tool must pass through!
@@ -728,10 +992,10 @@ Let us see if the Mnemonic Shredder holds its edge!
     fn test_conversation_unknown_model_fallback_quest() {
         // An unknown entity enters the Forge.
         let mut conv = Conversation::new("model-that-does-not-exist");
-        
+
         // We try to hand it a tool.
         conv.tools = Some(vec![serde_json::json!({"name": "fake_tool"})]);
-        
+
         let request = conv.build();
 
         // Safety first! Unknown models must not receive tools.
@@ -744,32 +1008,33 @@ Let us see if the Mnemonic Shredder holds its edge!
     #[test]
     fn test_conversation_initializes_with_model_context_quest() {
         // Hermes has a massive 128k context window (131072 tokens).
-        let conv = Conversation::new("hermes3:8b-llama3.1-q4_K_M");
-        
+        let conv = Conversation::new("dolphin3:8b");
+
         assert_eq!(
             conv.context_limit, 131072,
             "The Birthright Context failed! Internal limit was not set!"
         );
-        
+
         let request = conv.build();
         assert_eq!(
-            request.options.unwrap().num_ctx, Some(131072),
+            request.options.unwrap().num_ctx,
+            Some(131072),
             "The Birthright Context failed! OllamaOptions was not set!"
         );
     }
 
     #[test]
     fn test_conversation_swaps_context_on_model_change_quest() {
-        // Mistral Small has a 32k context window (32768 tokens).
-        let mut conv = Conversation::new("mistral-small:24b-instruct-2501-q4_K_M");
-        
+        // Dolphin 3.0 Mistral 24B has a 32k context window (32768 tokens).
+        let mut conv = Conversation::new("dolphin-3.0-mistral-24b-q4_K_M");
+
         assert_eq!(
             conv.context_limit, 32768,
             "Initial context limit was incorrect!"
         );
 
         // The Shape-Shifter changes form!
-        conv.set_model("hermes3:8b-llama3.1-q4_K_M");
+        conv.set_model("dolphin3:8b");
 
         assert_eq!(
             conv.context_limit, 131072,
@@ -778,7 +1043,8 @@ Let us see if the Mnemonic Shredder holds its edge!
 
         let request = conv.build();
         assert_eq!(
-            request.options.unwrap().num_ctx, Some(131072),
+            request.options.unwrap().num_ctx,
+            Some(131072),
             "The Shape-Shifter's Memory failed! OllamaOptions did not update!"
         );
     }
@@ -787,7 +1053,7 @@ Let us see if the Mnemonic Shredder holds its edge!
     fn test_conversation_unknown_model_context_fallback_quest() {
         // An unknown entity from the void.
         let conv = Conversation::new("model-that-does-not-exist");
-        
+
         assert_eq!(
             conv.context_limit, 4096,
             "The Unknown Void failed! Fallback internal limit should be 4096!"
@@ -795,7 +1061,8 @@ Let us see if the Mnemonic Shredder holds its edge!
 
         let request = conv.build();
         assert_eq!(
-            request.options.unwrap().num_ctx, Some(4096),
+            request.options.unwrap().num_ctx,
+            Some(4096),
             "The Unknown Void failed! Fallback OllamaOptions should be 4096!"
         );
     }

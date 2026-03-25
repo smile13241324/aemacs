@@ -5,6 +5,7 @@ pub mod embeddings;
 pub mod error;
 pub mod loader;
 pub mod mcp;
+pub mod migration; // Added for ACO-060
 pub mod models;
 pub mod persona;
 pub mod rag;
