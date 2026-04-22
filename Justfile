@@ -13,6 +13,8 @@ run_wsl:
     WAYLAND_DISPLAY="" XDG_SESSION_TYPE=x11 WGPU_BACKEND=vulkan cargo run
 test:
     cargo test --workspace --all-features
+miri:
+    cargo +nightly miri test --workspace --all-features
 check:
     cargo clippy --workspace --all-targets --all-features
 doc:
