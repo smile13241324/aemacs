@@ -78,5 +78,5 @@ ONLY after closing the `</reasoning>` tag, proceed to generate the final code.
     -   **Timers:** NEVER use `smol::Timer` or `std::thread::sleep` in GPUI tests.
     -   **Solution:** Use `cx.background_executor().timer(duration)` to ensure the test scheduler controls time.
 -   **Rule 4: Style (The "Clippy Check")**
-    -   **CRITICAL VIOLATION:** Code must pass `cargo clippy -- -D warnings`.
+    -   **CRITICAL VIOLATION:** Code must pass `just check`.
     -   Use "New Type Patterns" (`struct UserId(u32)`) instead of raw primitives.
