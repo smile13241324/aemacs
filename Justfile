@@ -12,17 +12,17 @@ run_release:
 run_wsl:
     WAYLAND_DISPLAY="" XDG_SESSION_TYPE=x11 WGPU_BACKEND=vulkan cargo run
 test:
-    cargo test --workspace
+    cargo test --workspace --all-features
 check:
-    cargo check --workspace
+    cargo clippy --workspace --all-targets --all-features
 doc:
     cargo doc --workspace --open
 sync-ai:
     python3 ai/sync-agents.py
 clean:
-    cargo clean
+    cargo clean --workspace
 fmt:
-    cargo fmt --all
+    cargo +nightly fmt --all
 demo:
     cargo run -p aemacs-ai --example simple_chat
     cargo run -p aemacs-ai --example simple_chat_async

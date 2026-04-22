@@ -5,10 +5,6 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
-[lib]
-name = "aemacs_gpui"
-path = "src/lib.rs"
-
 [dependencies]
 tokio = { workspace = true }
 aemacs-core = { workspace = true }
@@ -26,3 +22,6 @@ uuid = { workspace = true, features = ["v4"] }
 regex = { workspace = true }
 pulldown-cmark = { workspace = true }
 serde_json = { workspace = true }
+
+[lints]
+workspace = true

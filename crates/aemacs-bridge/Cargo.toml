@@ -5,10 +5,6 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
-[lib]
-name = "aemacs_bridge"
-path = "src/lib.rs"
-
 [dependencies]
 pyo3 = { workspace = true }
 tree-sitter = { workspace = true }
@@ -23,3 +19,6 @@ tokio = { workspace = true }
 
 [dev-dependencies]
 reqwest = { workspace = true, features = ["json"] }
+
+[lints]
+workspace = true

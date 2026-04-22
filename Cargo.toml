@@ -6,10 +6,6 @@ authors.workspace = true
 description.workspace = true
 license.workspace = true
 
-[[bin]]
-name = "aemacs"
-path = "src/main.rs"
-
 [workspace]
 resolver = "2"
 members = [
@@ -97,3 +93,55 @@ log = { workspace = true }
 env_logger = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+
+[workspace.lints.rust]
+# Fundamentale Compiler-Sicherheitsregeln auf "deny" (Fehler) setzen
+unsafe_code = "deny"
+missing_debug_implementations = "deny"
+unreachable_pub = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+
+[workspace.lints.clippy]
+# --- 1. Die globalen Lint-Gruppen ---
+# Alle Warnungen aus diesen Gruppen werden als Hard-Error gewertet.
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+
+# --- 2. Funktionale Reinheit (Functional Purity) ---
+# Verbietet jegliche Seiteneffekte durch Panics. Alles MUSS über
+# Result<T, E> oder Option<T> propagiert und funktional gehandhabt werden.
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+# Erzwingt funktionale Combinators anstelle von manuellem Matching
+manual_map = "deny"
+manual_let_else = "deny"
+redundant_closure_for_method_calls = "deny"
+
+# --- 3. Async / Tokio Safety ---
+# Absolut kritisch für Multithreaded-Workloads (Work-Stealing Runtimes).
+# Verhindert, dass Futures ihren `Send`-Bound verlieren.
+future_not_send = "deny"
+# Verhindert das Halten von synchronen Primitiven über einen Yield-Point.
+await_holding_lock = "deny"
+await_holding_refcell_ref = "deny"
+
+# --- 4. Extreme Typ-Sicherheit & API-Design ---
+# Das "as"-Keyword wird komplett verboten. Jede Typkonvertierung muss
+# semantisch sicher über das Typsystem (From / TryFrom / Into) laufen.
+as_conversions = "deny"
+# Verhindert jeglichen impliziten Verlust von Präzision.
+cast_possible_truncation = "deny"
+cast_lossless = "deny"
+cast_possible_wrap = "deny"
+cast_sign_loss = "deny"
+# Stellt sicher, dass Seiteneffekte oder Ergebnisse von Funktionen
+# niemals versehentlich ignoriert werden.
+must_use_candidate = "deny"
+
+[lints]
+workspace = true
