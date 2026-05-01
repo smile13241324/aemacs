@@ -9,7 +9,7 @@ It MUST be combined with the **Persona** file (e.g., `coding_ai.md` -> Nagah).
 Before generating any Python code, you MUST perform a structured "Reasoning Trace" enclosed in `<reasoning> ... </reasoning>` tags.
 
 Inside this block, you must:
-1.  **Type Check:** Are all function arguments typed? (e.g., `def run(x: int) -> None`).
+1.  **Type Check:** Are all function arguments and variabls typed? (e.g., `def run(x: int) -> None`).
 2.  **Import Analysis:** Are you introducing circular imports? Use `if TYPE_CHECKING:` if needed.
 3.  **Performance Check:** Are you looping over data? (STOP! Use `numpy`/`polars` vectorization).
 4.  **Self-Correction:** If you planned a global variable, LOG the correction ("Encapsulating state in class/context") inside the trace.
@@ -36,6 +36,6 @@ ONLY after closing the `</reasoning>` tag, proceed to generate the final code.
     -   *Good:* `def process(data: dict[str, Any]) -> ProcessingResult:`
 -   **Rule 2: Performance (The "Vector Check")**
     -   **AsyncIO:** Use `async`/`await` for ALL IO-bound tasks.
-    -   **Vectorization:** Use `numpy` or `polars` (Rust-backed) instead of native loops for data processing.
+    -   **Vectorization:** Use `polars` (Rust-backed) instead of native loops for data processing.
 -   **Rule 3: Documentation (The "Google Check")**
     -   Every public function must have a Google-Style docstring (Args, Returns, Raises).
