@@ -1,11 +1,14 @@
-use crate::bus::{EventBus, SystemEvent};
-use crate::signals::TimePulseSignal;
+use std::{path::PathBuf, time::Duration};
+
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use log::{info, warn};
 use notify::{RecursiveMode, Watcher};
-use std::path::PathBuf;
-use std::time::Duration;
+
+use crate::{
+    bus::{EventBus, SystemEvent},
+    signals::TimePulseSignal,
+};
 
 /// Defines the generic interface for all sensory and autonomous trigger modules.
 #[async_trait]
@@ -30,11 +33,7 @@ impl ReactiveObserver for TimePulseObserver {
     }
 
     async fn run(&self, bus: EventBus) -> Result<()> {
-        info!(
-            "⏰ [{}] Heartbeat awakening. Interval: {}s",
-            self.name(),
-            self.interval_seconds
-        );
+        info!("⏰ [{}] Heartbeat awakening. Interval: {}s", self.name(), self.interval_seconds);
 
         let mut tick_count: u64 = 0;
         let mut interval = tokio::time::interval(Duration::from_secs(self.interval_seconds));
@@ -43,10 +42,7 @@ impl ReactiveObserver for TimePulseObserver {
             interval.tick().await;
             tick_count += 1;
 
-            let signal = TimePulseSignal {
-                tick_count,
-                interval_seconds: self.interval_seconds,
-            };
+            let signal = TimePulseSignal { tick_count, interval_seconds: self.interval_seconds };
 
             let payload =
                 serde_json::to_string(&signal).context("Failed to serialize TimePulseSignal")?;
@@ -195,9 +191,7 @@ mod tests {
     #[tokio::test]
     async fn test_time_pulse_emission_quest() -> Result<()> {
         let bus = EventBus::new();
-        let observer = TimePulseObserver {
-            interval_seconds: 1,
-        };
+        let observer = TimePulseObserver { interval_seconds: 1 };
 
         // Quest: Spawn the pulse in the background
         let bus_clone = bus.clone();
@@ -211,10 +205,7 @@ mod tests {
         // Check for the first tick signal
         let event = tokio::time::timeout(Duration::from_millis(500), rx.recv()).await??;
 
-        if let SystemEvent::Signal {
-            source, event_type, ..
-        } = event
-        {
+        if let SystemEvent::Signal { source, event_type, .. } = event {
             assert_eq!(source, "TimePulseObserver");
             assert_eq!(event_type, "TimePulse");
         } else {
@@ -236,9 +227,7 @@ mod tests {
     async fn test_file_watcher_signal_quest() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let bus = EventBus::new();
-        let observer = FileWatcherObserver {
-            path: temp_dir.path().to_path_buf(),
-        };
+        let observer = FileWatcherObserver { path: temp_dir.path().to_path_buf() };
 
         // Quest: Spawn watcher
         let bus_clone = bus.clone();
@@ -261,25 +250,19 @@ mod tests {
         // but here it's a fresh bus. However, notify might emit multiple events.
         let mut found_content = false;
         for _ in 0..10 {
-            if let Ok(Ok(SystemEvent::Signal {
-                source,
-                event_type,
-                payload,
-            })) = tokio::time::timeout(Duration::from_secs(1), rx.recv()).await
+            if let Ok(Ok(SystemEvent::Signal { source, event_type, payload })) =
+                tokio::time::timeout(Duration::from_secs(1), rx.recv()).await
                 && source == "FileSystem"
-                    && event_type == "FileSaved"
-                    && payload.contains("@@")
-                    && payload.contains(content)
-                {
-                    found_content = true;
-                    break;
-                }
+                && event_type == "FileSaved"
+                && payload.contains("@@")
+                && payload.contains(content)
+            {
+                found_content = true;
+                break;
+            }
         }
 
-        assert!(
-            found_content,
-            "FileWatcherObserver failed to flood the signal with file context!"
-        );
+        assert!(found_content, "FileWatcherObserver failed to flood the signal with file context!");
 
         Ok(())
     }

@@ -1,13 +1,16 @@
+use std::process::Stdio;
+
 use async_trait::async_trait;
 use futures::StreamExt;
-use std::process::Stdio;
 use tokio::process::Command;
 use tokio_util::codec::{FramedRead, LinesCodec};
 use tracing::{info, instrument};
 
-use crate::error::{AIError, AIResult};
-use crate::models::{AIRequest, Message, Role};
-use crate::{AIBackend, AIResponseStream};
+use crate::{
+    AIBackend, AIResponseStream,
+    error::{AIError, AIResult},
+    models::{AIRequest, Message, Role},
+};
 
 /// An AI backend implementation that executes a local binary to generate responses.
 /// This is used for integration with local models or custom scripting.
@@ -20,9 +23,7 @@ pub struct LocalBackend {
 impl LocalBackend {
     /// Initializes a new `LocalBackend`.
     pub fn new(binary: impl Into<String>) -> Self {
-        Self {
-            bin_path: binary.into(),
-        }
+        Self { bin_path: binary.into() }
     }
 }
 
@@ -37,13 +38,9 @@ impl AIBackend for LocalBackend {
     #[instrument(skip(self))]
     async fn health_check(&self) -> AIResult<()> {
         // Lets call the binary with "--version" to check if it's available.
-        let output = Command::new(&self.bin_path)
-            .arg("--version")
-            .output()
-            .await
-            .map_err(|e| {
-                AIError::BackendUnavailable(format!("Could not execute {}: {}", self.bin_path, e))
-            })?;
+        let output = Command::new(&self.bin_path).arg("--version").output().await.map_err(|e| {
+            AIError::BackendUnavailable(format!("Could not execute {}: {}", self.bin_path, e))
+        })?;
 
         if output.status.success() {
             info!("Healthcheck passed for {}", self.bin_path);
@@ -102,9 +99,10 @@ impl AIBackend for LocalBackend {
             .spawn()
             .map_err(AIError::IoError)?;
 
-        let stdout = child.stdout.take().ok_or_else(|| AIError::ConnectorError(
-            "Could not capture stdout".to_string(),
-        ))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| AIError::ConnectorError("Could not capture stdout".to_string()))?;
 
         // Translate the raw byte stream into a stream of events
         let stream = FramedRead::new(stdout, LinesCodec::new()).map(|result| match result {

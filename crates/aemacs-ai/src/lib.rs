@@ -11,14 +11,13 @@ pub mod persona;
 pub mod rag;
 pub mod registry;
 
+use async_trait::async_trait;
 pub use conversation::Conversation;
 pub use error::{AIError, AIResult};
+use futures::stream::BoxStream;
 pub use models::{AIRequest, Content, ContentPart, ImageUrl, Message, Role};
 pub use persona::Persona;
 pub use registry::PersonaRegistry;
-
-use async_trait::async_trait;
-use futures::stream::BoxStream;
 
 pub type AIResponseStream = BoxStream<'static, AIResult<StreamEvent>>;
 

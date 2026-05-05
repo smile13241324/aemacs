@@ -1,7 +1,9 @@
-use crate::bus::{EventBus, SystemEvent};
+use std::time::{Duration, Instant};
+
 use anyhow::Result;
 use log::{info, warn};
-use std::time::{Duration, Instant};
+
+use crate::bus::{EventBus, SystemEvent};
 
 /// The Sentinel Daemon monitors autonomous agent sanity by tracking status reports.
 /// If an agent fails to report functional integrity for over 1 hour, it triggers a rescue notification.
@@ -10,15 +12,10 @@ use std::time::{Duration, Instant};
 /// Returns an error if the daemon cannot be spawned.
 pub fn spawn_sentinel(bus: EventBus) -> Result<()> {
     let bus_clone = bus.clone();
-    spawn_sentinel_internal(
-        bus,
-        Duration::from_hours(1),
-        Duration::from_mins(1),
-        move |msg| {
-            let tx = bus_clone.tx.clone();
-            let _ = tx.send(SystemEvent::Notification(msg));
-        },
-    );
+    spawn_sentinel_internal(bus, Duration::from_hours(1), Duration::from_mins(1), move |msg| {
+        let tx = bus_clone.tx.clone();
+        let _ = tx.send(SystemEvent::Notification(msg));
+    });
     Ok(())
 }
 
@@ -39,7 +36,8 @@ fn spawn_sentinel_internal<F>(
         loop {
             // Non-blocking drain of the event bus to find status reports
             while let Ok(event) = rx.try_recv() {
-                if matches!(event, SystemEvent::Signal { ref event_type, .. } if event_type == "StatusReport") {
+                if matches!(event, SystemEvent::Signal { ref event_type, .. } if event_type == "StatusReport")
+                {
                     last_report = Instant::now();
                     info!("🛡️ Sentinel: Agent check-in received. Sanity confirmed.");
                 }
@@ -47,9 +45,7 @@ fn spawn_sentinel_internal<F>(
 
             // Check for silence
             if last_report.elapsed() > timeout {
-                warn!(
-                    "🚨 [SENTINEL ALERT] Agent silence exceeds {timeout:?}! Sanity compromised."
-                );
+                warn!("🚨 [SENTINEL ALERT] Agent silence exceeds {timeout:?}! Sanity compromised.");
 
                 on_alert(
                     "Sentinel Alert: Agent Sanity Compromised. Automated Rescue Protocol required."
@@ -68,9 +64,10 @@ fn spawn_sentinel_internal<F>(
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
+    use std::sync::{Arc, Mutex};
+
     use super::*;
     use crate::bus::EventBus;
-    use std::sync::{Arc, Mutex};
 
     #[tokio::test]
     async fn test_sentinel_vigilance_quest() -> Result<()> {
@@ -89,7 +86,10 @@ mod tests {
         // 1. Verify Silence Detection
         tokio::time::sleep(Duration::from_millis(500)).await;
 
-        assert!(*alert_triggered.lock().expect("Should not fail in test"), "The Sentinel slept while the agent was silent!");
+        assert!(
+            *alert_triggered.lock().expect("Should not fail in test"),
+            "The Sentinel slept while the agent was silent!"
+        );
 
         // 2. Verify Reset Logic
         // Reset the alert flag
@@ -115,7 +115,10 @@ mod tests {
 
         // 3. Verify it triggers again after another silence
         tokio::time::sleep(Duration::from_millis(400)).await;
-        assert!(*alert_triggered.lock().expect("Should not fail in test"), "The Sentinel failed to trigger a second time!");
+        assert!(
+            *alert_triggered.lock().expect("Should not fail in test"),
+            "The Sentinel failed to trigger a second time!"
+        );
 
         Ok(())
     }

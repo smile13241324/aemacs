@@ -1,9 +1,10 @@
+use std::time::Duration;
+
 use async_trait::async_trait;
 use futures::StreamExt;
 use reqwest::{Client, header};
 use serde::Deserialize;
 use serde_json::json;
-use std::time::Duration;
 use tokio_util::codec::{FramedRead, LinesCodec};
 use tokio_util::io::StreamReader; // Wichtig für den Fix von vorhin
 use tracing::{info, instrument};
@@ -51,11 +52,7 @@ impl OpenAICompatibleBackend {
             .build()
             .expect("Failed to build HTTP client");
 
-        Self {
-            client,
-            base_url: base_url.into(),
-            _api_key: api_key,
-        }
+        Self { client, base_url: base_url.into(), _api_key: api_key }
     }
 
     /// Internal helper to construct the full completion URL.
@@ -114,20 +111,14 @@ impl AIBackend for OpenAICompatibleBackend {
             info!("Healthcheck passed for {}", self.base_url);
             Ok(())
         } else {
-            Err(AIError::BackendUnavailable(format!(
-                "Server returned {}",
-                resp.status()
-            )))
+            Err(AIError::BackendUnavailable(format!("Server returned {}", resp.status())))
         }
     }
 
     /// Sends a non-streaming request to the backend and awaits the full response.
     #[instrument(skip(self, request))]
     async fn complete(&self, request: AIRequest) -> AIResult<Message> {
-        info!(
-            "🤖 [Ollama] Requesting completion from model: {}",
-            request.model
-        );
+        info!("🤖 [Ollama] Requesting completion from model: {}", request.model);
         let body = json!({
             "model": request.model,
             "messages": request.messages,
@@ -147,15 +138,11 @@ impl AIBackend for OpenAICompatibleBackend {
 
         if !resp.status().is_success() {
             let error_text = resp.text().await.unwrap_or_default();
-            return Err(AIError::ConnectorError(format!(
-                "API Error: {error_text}"
-            )));
+            return Err(AIError::ConnectorError(format!("API Error: {error_text}")));
         }
 
-        let openai_resp: OpenAIResponse = resp
-            .json()
-            .await
-            .map_err(|e| AIError::ParseError(e.to_string()))?;
+        let openai_resp: OpenAIResponse =
+            resp.json().await.map_err(|e| AIError::ParseError(e.to_string()))?;
 
         openai_resp
             .choices
@@ -167,10 +154,7 @@ impl AIBackend for OpenAICompatibleBackend {
 
     /// Sends a streaming request to the backend and returns a stream of tokens/events.
     async fn stream(&self, request: AIRequest) -> AIResult<AIResponseStream> {
-        info!(
-            "🤖 [Ollama] Requesting stream from model: {}",
-            request.model
-        );
+        info!("🤖 [Ollama] Requesting stream from model: {}", request.model);
         let body = json!({
             "model": request.model,
             "messages": request.messages,
@@ -190,9 +174,7 @@ impl AIBackend for OpenAICompatibleBackend {
 
         if !resp.status().is_success() {
             let error_text = resp.text().await.unwrap_or_default();
-            return Err(AIError::ConnectorError(format!(
-                "API Error: {error_text}"
-            )));
+            return Err(AIError::ConnectorError(format!("API Error: {error_text}")));
         }
 
         let byte_stream = resp.bytes_stream();
@@ -207,23 +189,24 @@ impl AIBackend for OpenAICompatibleBackend {
                 }
 
                 if let Some(json_str) = line.strip_prefix("data: ")
-                    && let Ok(chunk) = serde_json::from_str::<OpenAIStreamChunk>(json_str) {
-                        let mut events = Vec::new();
-                        for choice in chunk.choices {
-                            if let Some(content) = choice.delta.content {
-                                events.push(crate::StreamEvent::Content(content));
-                            }
-                            if let Some(tool_calls) = choice.delta.tool_calls {
-                                for tc in tool_calls {
-                                    events.push(crate::StreamEvent::ToolCall(tc));
-                                }
+                    && let Ok(chunk) = serde_json::from_str::<OpenAIStreamChunk>(json_str)
+                {
+                    let mut events = Vec::new();
+                    for choice in chunk.choices {
+                        if let Some(content) = choice.delta.content {
+                            events.push(crate::StreamEvent::Content(content));
+                        }
+                        if let Some(tool_calls) = choice.delta.tool_calls {
+                            for tc in tool_calls {
+                                events.push(crate::StreamEvent::ToolCall(tc));
                             }
                         }
-                        return Ok(events);
                     }
+                    return Ok(events);
+                }
 
                 Ok(Vec::new())
-            }
+            },
             Err(e) => Err(AIError::IoError(std::io::Error::other(e))),
         });
 
@@ -241,10 +224,10 @@ impl AIBackend for OpenAICompatibleBackend {
 
 #[cfg(test)]
 mod tests {
+    use tokio::{io::AsyncWriteExt, net::TcpListener};
+
     use super::*;
     use crate::models::AIRequest;
-    use tokio::io::AsyncWriteExt;
-    use tokio::net::TcpListener;
 
     #[tokio::test]
     async fn test_streaming_hydra_cage_quest() -> anyhow::Result<()> {
@@ -287,15 +270,8 @@ mod tests {
             }
         }
 
-        assert_eq!(
-            chunks.len(),
-            1,
-            "The 'Streaming-Hydra' failed! Expected 1 content chunk."
-        );
-        assert_eq!(
-            chunks[0], "Hello ",
-            "Fragmented JSON was not correctly reassembled!"
-        );
+        assert_eq!(chunks.len(), 1, "The 'Streaming-Hydra' failed! Expected 1 content chunk.");
+        assert_eq!(chunks[0], "Hello ", "Fragmented JSON was not correctly reassembled!");
 
         Ok(())
     }

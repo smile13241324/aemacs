@@ -1,5 +1,6 @@
-use aemacs_ai::rag::KnowledgeBase;
 use std::error::Error;
+
+use aemacs_ai::rag::KnowledgeBase;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -15,7 +16,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             eprintln!("❌ Failed to initialize KnowledgeBase: {e}");
             eprintln!("   Ensure Qdrant is running on port 6334 and Ollama on 11434.");
             return Ok(());
-        }
+        },
     };
 
     println!("✅ Connected to Qdrant & Ollama.");
@@ -34,8 +35,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     for (i, doc) in docs.into_iter().enumerate() {
         print!("   -> Indexing: '{doc}' ... ");
-        kb.store_archive("demo_agent", "Assistant", "demo_session", i, doc)
-            .await?;
+        kb.store_archive("demo_agent", "Assistant", "demo_session", i, doc).await?;
         println!("Done.");
     }
 

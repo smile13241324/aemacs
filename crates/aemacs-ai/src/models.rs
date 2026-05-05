@@ -1,5 +1,6 @@
-use serde::{Deserialize, Serialize};
 use std::fmt;
+
+use serde::{Deserialize, Serialize};
 
 /// Represents the role of a participant in a conversation.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -49,11 +50,11 @@ impl fmt::Display for Content {
                 for part in parts {
                     match part {
                         ContentPart::Text { text } => write!(f, "{text}")?,
-                        ContentPart::ImageUrl { .. } => {}
+                        ContentPart::ImageUrl { .. } => {},
                     }
                 }
                 Ok(())
-            }
+            },
         }
     }
 }
@@ -150,11 +151,7 @@ impl Message {
     pub fn user_with_image(text: impl Into<String>, image_url: impl Into<String>) -> Self {
         let parts = vec![
             ContentPart::Text { text: text.into() },
-            ContentPart::ImageUrl {
-                image_url: ImageUrl {
-                    url: image_url.into(),
-                },
-            },
+            ContentPart::ImageUrl { image_url: ImageUrl { url: image_url.into() } },
         ];
         Self {
             role: Role::User,
@@ -353,7 +350,7 @@ pub fn get_models_for_tier(tier_str: &str) -> Vec<&'static ModelDefinition> {
         _ => {
             tracing::warn!("Unknown hardware tier '{}', defaulting to LOW", tier_str);
             ModelTier::Low
-        }
+        },
     };
 
     MODELS.iter().filter(|m| m.tier == target_tier).collect()

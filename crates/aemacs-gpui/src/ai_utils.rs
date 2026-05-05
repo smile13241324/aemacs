@@ -1,11 +1,13 @@
-use aemacs_ai::Conversation;
-use aemacs_ai::connectors::openai_compatible::OpenAICompatibleBackend;
-use aemacs_ai::mcp::{ToolHost, ToolRegistry, run_agent_loop};
-use aemacs_ai::rag::KnowledgeBase;
+use std::sync::Arc;
+
+use aemacs_ai::{
+    Conversation,
+    connectors::openai_compatible::OpenAICompatibleBackend,
+    mcp::{ToolHost, ToolRegistry, run_agent_loop},
+    rag::KnowledgeBase,
+};
 use aemacs_core::runtime::Tokio;
 use gpui::{AsyncApp, Context, Task, WeakEntity};
-
-use std::sync::Arc;
 
 /// Defines the sequence of events emitted by an active agent during its execution.
 /// These events are used to update the UI in real-time as the agent reasons and acts.
@@ -55,21 +57,14 @@ where
                     aemacs_ai::mcp::LoopSignal::ToolCall(name) => AgentEvent::ToolStarted(name),
                     aemacs_ai::mcp::LoopSignal::ToolResult(name, success) => {
                         AgentEvent::ToolFinished(name, success)
-                    }
+                    },
                 };
                 let _ = tx_proxy.send(event).await;
             }
         });
 
-        match run_agent_loop(
-            &backend,
-            &registry,
-            &host,
-            &mut conversation,
-            10,
-            Some(signal_tx),
-        )
-        .await
+        match run_agent_loop(&backend, &registry, &host, &mut conversation, 10, Some(signal_tx))
+            .await
         {
             Ok(_result) => {
                 // ACO-025: Automatically archive the complete conversation to the RAG Fortress.
@@ -79,10 +74,10 @@ where
                 }
 
                 let _ = tx_for_stream.send(AgentEvent::Result(conversation)).await;
-            }
+            },
             Err(e) => {
                 let _ = tx_for_stream.send(AgentEvent::Error(e.to_string())).await;
-            }
+            },
         }
     });
 
@@ -105,7 +100,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    
+
     use aemacs_ai::mcp::ToolHost;
     use async_trait::async_trait;
 

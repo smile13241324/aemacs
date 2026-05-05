@@ -1,7 +1,6 @@
+use std::{fs, path::PathBuf, sync::OnceLock};
+
 use serde::Deserialize;
-use std::fs;
-use std::path::PathBuf;
-use std::sync::OnceLock;
 
 /// Represents the global configuration for the Æmacs system.
 /// This structure is typically loaded from `~/.aemacs/config.ron`.
@@ -47,7 +46,7 @@ pub fn get_config() -> &'static UserConfig {
 }
 
 /// Returns the standard physical path to the configuration file.
-#[must_use] 
+#[must_use]
 pub fn get_config_path() -> Option<PathBuf> {
     dirs::home_dir().map(|mut path| {
         path.push(".aemacs");
@@ -57,7 +56,7 @@ pub fn get_config_path() -> Option<PathBuf> {
 }
 
 /// Loads the user configuration from the default path.
-#[must_use] 
+#[must_use]
 pub fn load_user_config() -> UserConfig {
     let Some(path) = get_config_path() else {
         log::warn!("Could not determine home directory. Using default config.");
@@ -69,7 +68,7 @@ pub fn load_user_config() -> UserConfig {
 
 /// Loads the configuration from a specific physical path.
 /// It handles file missing, read errors, and format corruption by falling back to defaults.
-#[must_use] 
+#[must_use]
 pub fn load_config_from_path(path: &PathBuf) -> UserConfig {
     if !path.exists() {
         log::info!("No config file found at {}. Using default config.", path.display());
@@ -82,21 +81,23 @@ pub fn load_config_from_path(path: &PathBuf) -> UserConfig {
             Err(e) => {
                 log::error!("Failed to parse {}: {e}. Using default config.", path.display());
                 UserConfig::default()
-            }
+            },
         },
         Err(e) => {
             log::error!("Failed to read {}: {e}. Using default config.", path.display());
             UserConfig::default()
-        }
+        },
     }
 }
 
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
-    use super::*;
     use std::io::Write;
+
     use tempfile::NamedTempFile;
+
+    use super::*;
 
     #[test]
     fn test_load_config_ron_success() {
@@ -118,7 +119,8 @@ mod tests {
     fn test_load_config_partial_fallback() {
         let mut file = NamedTempFile::new().expect("Should not fail in test");
         // User only provided the tier, URLs are missing
-        writeln!(file, "UserConfig(hardware_tier: Some(\"MEDIUM\"))").expect("Should not fail in test");
+        writeln!(file, "UserConfig(hardware_tier: Some(\"MEDIUM\"))")
+            .expect("Should not fail in test");
 
         let mut config = load_config_from_path(&file.path().to_path_buf());
 

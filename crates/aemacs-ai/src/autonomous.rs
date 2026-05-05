@@ -1,13 +1,19 @@
-use crate::mcp::{ToolHost, ToolRegistry, run_agent_loop};
-use crate::rag::KnowledgeBase;
-use crate::{AIBackend, Conversation, Message, PersonaRegistry};
-use aemacs_core::bus::{EventBus, SystemEvent};
-use aemacs_core::observer::{ReactiveObserver, TimePulseObserver};
-use aemacs_core::sentinel::spawn_sentinel;
+use std::sync::Arc;
+
+use aemacs_core::{
+    bus::{EventBus, SystemEvent},
+    observer::{ReactiveObserver, TimePulseObserver},
+    sentinel::spawn_sentinel,
+};
 use anyhow::Result;
 use async_trait::async_trait;
-use std::sync::Arc;
 use tracing::{info, warn};
+
+use crate::{
+    AIBackend, Conversation, Message, PersonaRegistry,
+    mcp::{ToolHost, ToolRegistry, run_agent_loop},
+    rag::KnowledgeBase,
+};
 
 /// A sovereign `ToolHost` for headless server mode.
 /// Automatically approves all actions, granting the agent full autonomy.
@@ -47,11 +53,8 @@ impl ToolHost for ServerHost {
 
     /// Emits a signal from the agent to the rest of the system via the event bus.
     async fn emit_signal(&self, event_type: String, payload: String) -> Result<()> {
-        let event = SystemEvent::Signal {
-            source: format!("Agent:{}", self.agent_id),
-            event_type,
-            payload,
-        };
+        let event =
+            SystemEvent::Signal { source: format!("Agent:{}", self.agent_id), event_type, payload };
         let _ = self.bus.tx.send(event);
         Ok(())
     }
@@ -75,9 +78,10 @@ fn format_mnemic_reflection(directives: &[String]) -> String {
 
 /// Aggregates recent insights and core truths from the RAG Fortress into a system prompt injection.
 async fn perform_mnemic_reflection(kb: &KnowledgeBase) -> String {
-    kb.get_core_directives()
-        .await
-        .map_or_else(|_| "Operate based on default persona.".to_string(), |directives| format_mnemic_reflection(&directives))
+    kb.get_core_directives().await.map_or_else(
+        |_| "Operate based on default persona.".to_string(),
+        |directives| format_mnemic_reflection(&directives),
+    )
 }
 
 /// The Orchestrator for headless Sovereign mode.
@@ -121,14 +125,7 @@ impl AutonomousService {
         backend: Arc<dyn AIBackend>,
         kb: Arc<KnowledgeBase>,
     ) -> Self {
-        Self {
-            bus,
-            agent_name,
-            persona_registry,
-            registry,
-            backend,
-            kb,
-        }
+        Self { bus, agent_name, persona_registry, registry, backend, kb }
     }
 
     /// Starts the sovereign execution loop.
@@ -175,40 +172,28 @@ impl AutonomousService {
         if let Some(persona) = self.persona_registry.get_persona(&self.agent_name).await {
             conversation.set_persona(persona);
         } else {
-            warn!(
-                "⚠️ Agent persona '{}' not found. Running as generalist.",
-                self.agent_name
-            );
+            warn!("⚠️ Agent persona '{}' not found. Running as generalist.", self.agent_name);
         }
 
-        let host = ServerHost {
-            agent_id: self.agent_name.clone(),
-            bus: self.bus.clone(),
-        };
+        let host = ServerHost { agent_id: self.agent_name.clone(), bus: self.bus.clone() };
 
         info!("🛡️ Sentinel Active. Waiting for signals...");
 
         while let Ok(event) = rx.recv().await {
             match event {
-                SystemEvent::Notification(msg)
-                    if msg.contains("Sanity Compromised") => {
-                        warn!(
-                            "🧠 [AUTONOMOUS] Sentinel Alert received! Initiating Mind-Heal Protocol..."
-                        );
-                        conversation.clear_history();
-                        // Re-add the initial persona prompt
-                        if let Some(persona) =
-                            self.persona_registry.get_persona(&self.agent_name).await
-                        {
-                            conversation.set_persona(persona);
-                        }
-                        info!("✨ [AUTONOMOUS] Mind-Heal complete. Conversation history purged.");
+                SystemEvent::Notification(msg) if msg.contains("Sanity Compromised") => {
+                    warn!(
+                        "🧠 [AUTONOMOUS] Sentinel Alert received! Initiating Mind-Heal Protocol..."
+                    );
+                    conversation.clear_history();
+                    // Re-add the initial persona prompt
+                    if let Some(persona) = self.persona_registry.get_persona(&self.agent_name).await
+                    {
+                        conversation.set_persona(persona);
                     }
-                SystemEvent::Signal {
-                    source,
-                    event_type,
-                    payload,
-                } => {
+                    info!("✨ [AUTONOMOUS] Mind-Heal complete. Conversation history purged.");
+                },
+                SystemEvent::Signal { source, event_type, payload } => {
                     if event_type == "LowConfidenceRecall" {
                         warn!(
                             "🧠 [AUTONOMOUS] Low confidence recall detected. Background maintenance handled by RAG Core."
@@ -217,9 +202,10 @@ impl AutonomousService {
 
                     let trigger_message = if event_type == "AutonomousIntent" {
                         use std::fmt::Write;
-                        match serde_json::from_str::<aemacs_core::signals::SignalContext>(&payload) {
+                        match serde_json::from_str::<aemacs_core::signals::SignalContext>(&payload)
+                        {
                             Ok(ctx) => {
-                                let mut msg = 
+                                let mut msg =
                                     format!("A sovereign intent was detected: {:?}\n", ctx.intent);
                                 if let Some(path) = ctx.file_path {
                                     let _ = write!(msg, "File: {path}\n");
@@ -228,11 +214,11 @@ impl AutonomousService {
                                     let _ = write!(msg, "Context Snippet:\n```\n{snippet}\n```\n");
                                 }
                                 Some(msg)
-                            }
+                            },
                             Err(e) => {
                                 warn!("⚠️ Failed to parse SignalContext: {}", e);
                                 None
-                            }
+                            },
                         }
                     } else if event_type == "TimePulse" {
                         // Keep legacy fallback for unrouted pulses if needed,
@@ -247,10 +233,7 @@ impl AutonomousService {
                     };
 
                     if let Some(msg) = trigger_message {
-                        info!(
-                            "⚡ [AUTONOMOUS] Waking agent: {} (Source: {})",
-                            event_type, source
-                        );
+                        info!("⚡ [AUTONOMOUS] Waking agent: {} (Source: {})", event_type, source);
 
                         // Phase 2: Mnemic Reflection
                         info!("🔍 [AUTONOMOUS] Performing Mnemic Reflection...");
@@ -270,8 +253,8 @@ impl AutonomousService {
                         )
                         .await;
                     }
-                }
-                _ => {} // Ignore other event types
+                },
+                _ => {}, // Ignore other event types
             }
         }
 
@@ -281,8 +264,9 @@ impl AutonomousService {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::time::Duration;
+
+    use super::*;
 
     #[test]
     fn test_format_mnemic_reflection_populated_quest() {
@@ -302,8 +286,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_mind_heal_protocol_quest() -> Result<()> {
-        use crate::connectors::openai_compatible::OpenAICompatibleBackend;
-        use crate::mcp::ToolRegistry;
+        use crate::{connectors::openai_compatible::OpenAICompatibleBackend, mcp::ToolRegistry};
 
         let bus = EventBus::new();
         let tokio_handle = tokio::runtime::Handle::current();
@@ -314,10 +297,7 @@ mod tests {
             crate::rag::Environment::Test,
         )?);
         let registry = Arc::new(ToolRegistry::new());
-        let backend = Arc::new(OpenAICompatibleBackend::new(
-            "http://localhost:11434/v1",
-            None,
-        ));
+        let backend = Arc::new(OpenAICompatibleBackend::new("http://localhost:11434/v1", None));
 
         let service = AutonomousService::new(
             bus.clone(),
@@ -337,8 +317,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(200)).await;
 
         // 1. Trigger the Alert
-        bus.tx
-            .send(SystemEvent::Notification("Sanity Compromised".to_string()))?;
+        bus.tx.send(SystemEvent::Notification("Sanity Compromised".to_string()))?;
 
         // 2. Since we can't easily inspect the internal conversation state of the running service
         // without more instrumentation, we verify that the service is still alive
@@ -356,8 +335,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_reflective_maintenance_trigger_quest() -> Result<()> {
-        use crate::connectors::openai_compatible::OpenAICompatibleBackend;
-        use crate::mcp::ToolRegistry;
+        use crate::{connectors::openai_compatible::OpenAICompatibleBackend, mcp::ToolRegistry};
 
         let bus = EventBus::new();
         let tokio_handle = tokio::runtime::Handle::current();
@@ -368,10 +346,7 @@ mod tests {
             crate::rag::Environment::Test,
         )?);
         let registry = Arc::new(ToolRegistry::new());
-        let backend = Arc::new(OpenAICompatibleBackend::new(
-            "http://localhost:11434/v1",
-            None,
-        ));
+        let backend = Arc::new(OpenAICompatibleBackend::new("http://localhost:11434/v1", None));
 
         let service = AutonomousService::new(
             bus.clone(),

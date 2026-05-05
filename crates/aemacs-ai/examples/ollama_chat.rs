@@ -1,9 +1,11 @@
-use aemacs_ai::connectors::openai_compatible::OpenAICompatibleBackend;
-use aemacs_ai::{AIBackend, Conversation};
+use std::{
+    error::Error,
+    io::{self, Write},
+};
+
+use aemacs_ai::{AIBackend, Conversation, connectors::openai_compatible::OpenAICompatibleBackend};
 use base64::prelude::*;
 use futures::StreamExt;
-use std::error::Error;
-use std::io::{self, Write};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -23,7 +25,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             eprintln!("❌ Could not connect to Ollama. Is 'ollama serve' running?");
             eprintln!("   Error: {e}");
             return Ok(());
-        }
+        },
     }
 
     let request = if let Some(path) = image_path {
@@ -62,11 +64,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     print!("{content}");
                     io::stdout().flush()?;
                 }
-            }
+            },
             Err(e) => {
                 eprintln!("\n❌ Stream Error: {e}");
                 break;
-            }
+            },
         }
     }
 

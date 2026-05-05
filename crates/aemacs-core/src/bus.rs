@@ -1,5 +1,6 @@
-use gpui::Global;
 use std::path::PathBuf;
+
+use gpui::Global;
 use tokio::sync::broadcast;
 
 /// Represents all possible events that can be broadcast across the system.
@@ -15,21 +16,11 @@ pub enum SystemEvent {
     /// A new project plan has been initialized.
     PlanCreated(Vec<String>),
     /// A task within the current plan has changed its status.
-    TaskUpdated {
-        index: usize,
-        status: crate::task::TaskStatus,
-    },
+    TaskUpdated { index: usize, status: crate::task::TaskStatus },
     /// A request to switch the active agent persona.
-    PersonaChanged {
-        name: String,
-        message: Option<String>,
-    },
+    PersonaChanged { name: String, message: Option<String> },
     /// A telemetry signal emitted by an agent or sensory substrate.
-    Signal {
-        source: String,
-        event_type: String,
-        payload: String,
-    },
+    Signal { source: String, event_type: String, payload: String },
 }
 
 /// The central communication hub for the Æmacs system.
@@ -42,22 +33,20 @@ pub struct EventBus {
 
 impl std::fmt::Debug for EventBus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("EventBus")
-            .field("tx", &"broadcast::Sender<SystemEvent>")
-            .finish()
+        f.debug_struct("EventBus").field("tx", &"broadcast::Sender<SystemEvent>").finish()
     }
 }
 
 impl EventBus {
     /// Creates a new `EventBus` with a default channel capacity.
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
         let (tx, _rx) = broadcast::channel(1024);
         Self { tx }
     }
 
     /// Returns a new receiver for subscribing to system events.
-    #[must_use] 
+    #[must_use]
     pub fn subscribe(&self) -> broadcast::Receiver<SystemEvent> {
         self.tx.subscribe()
     }

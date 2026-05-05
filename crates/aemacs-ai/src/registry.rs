@@ -1,11 +1,10 @@
-use crate::error::AIError;
-use crate::persona::Persona;
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
+
 use notify::{EventKind, RecursiveMode, Watcher};
-use std::collections::HashMap;
-use std::path::PathBuf;
-use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{error, info, warn};
+
+use crate::{error::AIError, persona::Persona};
 
 /// The `PersonaRegistry` indexes all available agents and watches for changes in the agents directory.
 /// It provides a centralized point for retrieving and hot-reloading agent personas.
@@ -38,10 +37,11 @@ impl PersonaRegistry {
         let global_agents_dir = dirs::home_dir().map(|home| home.join(".aemacs").join("agents"));
 
         if let Some(ref dir) = global_agents_dir
-            && !dir.exists() {
-                // Silently ignore failure to create global dir, it's optional
-                let _ = std::fs::create_dir_all(dir);
-            }
+            && !dir.exists()
+        {
+            // Silently ignore failure to create global dir, it's optional
+            let _ = std::fs::create_dir_all(dir);
+        }
 
         // Local Directory
         let local_agents_dir = match std::env::current_dir() {
@@ -51,7 +51,7 @@ impl PersonaRegistry {
                     let _ = std::fs::create_dir_all(&dir);
                 }
                 Some(dir)
-            }
+            },
             Err(_) => None,
         };
 
@@ -94,22 +94,23 @@ impl PersonaRegistry {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.extension().and_then(|s| s.to_str()) == Some("yaml")
-                    && let Some(name) = path.file_stem().and_then(|s| s.to_str()) {
-                        match std::fs::read_to_string(&path) {
-                            Ok(content) => match Persona::from_yaml(&content) {
-                                Ok(mut persona) => {
-                                    persona.name = name.to_string();
-                                    // This will automatically overwrite any global persona with the same name
-                                    new_personas.insert(name.to_string(), persona);
-                                    info!("Loaded persona: {} from {:?}", name, dir);
-                                }
-                                Err(e) => {
-                                    warn!("Failed to parse persona YAML at {:?}: {}", path, e);
-                                }
+                    && let Some(name) = path.file_stem().and_then(|s| s.to_str())
+                {
+                    match std::fs::read_to_string(&path) {
+                        Ok(content) => match Persona::from_yaml(&content) {
+                            Ok(mut persona) => {
+                                persona.name = name.to_string();
+                                // This will automatically overwrite any global persona with the same name
+                                new_personas.insert(name.to_string(), persona);
+                                info!("Loaded persona: {} from {:?}", name, dir);
                             },
-                            Err(e) => warn!("Failed to read persona file at {:?}: {}", path, e),
-                        }
+                            Err(e) => {
+                                warn!("Failed to parse persona YAML at {:?}: {}", path, e);
+                            },
+                        },
+                        Err(e) => warn!("Failed to read persona file at {:?}: {}", path, e),
                     }
+                }
             }
         }
     }
@@ -137,22 +138,24 @@ impl PersonaRegistry {
                 match event.kind {
                     EventKind::Modify(_) | EventKind::Create(_) | EventKind::Remove(_) => {
                         let _ = tx.blocking_send(());
-                    }
-                    _ => {}
+                    },
+                    _ => {},
                 }
             }
         })
         .map_err(|e| AIError::Persona(format!("Failed to create watcher: {e}")))?;
 
         if let Some(ref dir) = self.global_agents_dir
-            && dir.exists() {
-                let _ = watcher.watch(dir, RecursiveMode::NonRecursive);
-            }
+            && dir.exists()
+        {
+            let _ = watcher.watch(dir, RecursiveMode::NonRecursive);
+        }
 
         if let Some(ref dir) = self.local_agents_dir
-            && dir.exists() {
-                let _ = watcher.watch(dir, RecursiveMode::NonRecursive);
-            }
+            && dir.exists()
+        {
+            let _ = watcher.watch(dir, RecursiveMode::NonRecursive);
+        }
 
         // Keep the watcher alive in a background task
         self.runtime_handle.spawn(async move {
@@ -172,9 +175,10 @@ impl PersonaRegistry {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
     use crate::persona::Persona;
-    use std::fs;
 
     #[tokio::test]
     async fn test_persona_registry_global_missing_quest() -> anyhow::Result<()> {
@@ -183,10 +187,7 @@ mod tests {
         fs::create_dir_all(&local_agents_dir)?;
 
         let test_persona = Persona::new("local-only", "Local Tester", "Local prompt", None);
-        fs::write(
-            local_agents_dir.join("local-only.yaml"),
-            serde_yaml::to_string(&test_persona)?,
-        )?;
+        fs::write(local_agents_dir.join("local-only.yaml"), serde_yaml::to_string(&test_persona)?)?;
 
         // Manually instantiate to simulate a missing global directory
         let registry = Arc::new(PersonaRegistry {
@@ -238,10 +239,8 @@ mod tests {
 
         registry.load_all().await?;
 
-        let loaded_persona = registry
-            .get_persona("test-agent")
-            .await
-            .expect("Hark! The agent was not loaded!");
+        let loaded_persona =
+            registry.get_persona("test-agent").await.expect("Hark! The agent was not loaded!");
 
         assert_eq!(
             loaded_persona.description, "Local Tester",
@@ -271,10 +270,7 @@ mod tests {
         });
 
         registry.load_all().await?;
-        assert_eq!(
-            registry.get_persona("bob").await.unwrap().description,
-            "The Architect"
-        );
+        assert_eq!(registry.get_persona("bob").await.unwrap().description, "The Architect");
 
         // 2. Start the Vigil
         registry.clone().start_watching()?;
@@ -289,10 +285,11 @@ mod tests {
             // 2 seconds total
             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
             if let Some(p) = registry.get_persona("bob").await
-                && p.description == "The Overworked Doubter" {
-                    reloaded = true;
-                    break;
-                }
+                && p.description == "The Overworked Doubter"
+            {
+                reloaded = true;
+                break;
+            }
         }
 
         assert!(

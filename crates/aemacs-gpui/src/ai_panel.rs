@@ -1,25 +1,26 @@
-use aemacs_ai::connectors::openai_compatible::OpenAICompatibleBackend;
-use aemacs_ai::loader::load_file;
-use aemacs_ai::mcp::{ToolHost, ToolRegistry, validate_path};
-use aemacs_ai::{AIBackend, Conversation, PersonaRegistry};
-use aemacs_core::{Editor, command::Command, mode::Mode};
-use async_trait::async_trait;
-use gpui::prelude::*;
-use gpui::{
-    App, AsyncApp, Context, Entity, FocusHandle, IntoElement, KeyDownEvent, WeakEntity, Window,
-    div, px, relative, rgb,
-};
-use regex::Regex;
-use std::path::Path;
-use std::sync::Arc;
-
-use crate::ai_utils::{AgentEvent, spawn_agent_task};
-use crate::editor_view::render_editor_view;
-use crate::input_handler::resolve_key_command;
+use std::{path::Path, sync::Arc};
 
 // --- Modal Bridge (ACO-023) ---
-
 use aemacs_ai::rag::KnowledgeBase;
+use aemacs_ai::{
+    AIBackend, Conversation, PersonaRegistry,
+    connectors::openai_compatible::OpenAICompatibleBackend,
+    loader::load_file,
+    mcp::{ToolHost, ToolRegistry, validate_path},
+};
+use aemacs_core::{Editor, command::Command, mode::Mode};
+use async_trait::async_trait;
+use gpui::{
+    App, AsyncApp, Context, Entity, FocusHandle, IntoElement, KeyDownEvent, WeakEntity, Window,
+    div, prelude::*, px, relative, rgb,
+};
+use regex::Regex;
+
+use crate::{
+    ai_utils::{AgentEvent, spawn_agent_task},
+    editor_view::render_editor_view,
+    input_handler::resolve_key_command,
+};
 
 /// Represents a request from the AI Mesh to the host UI environment.
 /// This is used to prompt the user for approvals or additional information.
@@ -58,10 +59,7 @@ impl ToolHost for GuiHost {
         let (tx, rx) = futures::channel::oneshot::channel();
         let _ = self
             .request_tx
-            .send(HostRequest::Approval {
-                description: description.to_string(),
-                responder: tx,
-            })
+            .send(HostRequest::Approval { description: description.to_string(), responder: tx })
             .await;
         rx.await.unwrap_or(false)
     }
@@ -71,10 +69,7 @@ impl ToolHost for GuiHost {
         let (tx, rx) = futures::channel::oneshot::channel();
         let _ = self
             .request_tx
-            .send(HostRequest::UserPrompt {
-                question: question.to_string(),
-                responder: tx,
-            })
+            .send(HostRequest::UserPrompt { question: question.to_string(), responder: tx })
             .await;
         rx.await.unwrap_or_default()
     }
@@ -86,10 +81,7 @@ impl ToolHost for GuiHost {
 
     /// Emits a progress signal to the event bus, typically used to update the "Currently Executing" UI.
     fn report_progress(&self, tool_name: String, is_running: bool) {
-        let signal = aemacs_core::signals::ToolProgressSignal {
-            tool_name,
-            is_running,
-        };
+        let signal = aemacs_core::signals::ToolProgressSignal { tool_name, is_running };
         if let Ok(payload) = serde_json::to_string(&signal) {
             let _ = self.event_tx.send(aemacs_core::bus::SystemEvent::Signal {
                 source: "Specialist".to_string(),
@@ -208,11 +200,7 @@ impl ChatMessage {
     fn new(role: impl Into<String>, content: impl Into<String>) -> Self {
         let content = content.into();
         let parsed_blocks = parse_markdown_blocks(&content);
-        Self {
-            role: role.into(),
-            content,
-            parsed_blocks,
-        }
+        Self { role: role.into(), content, parsed_blocks }
     }
 
     fn update_content(&mut self, new_content: String) {
@@ -239,7 +227,7 @@ fn parse_markdown_blocks(text: &str) -> Vec<MarkdownBlock> {
                 }
                 in_code_block = true;
                 current_language = lang.to_string();
-            }
+            },
             Event::Start(Tag::CodeBlock(pulldown_cmark::CodeBlockKind::Indented)) => {
                 if !current_text.is_empty() {
                     blocks.push(MarkdownBlock::Paragraph(current_text.trim().to_string()));
@@ -247,7 +235,7 @@ fn parse_markdown_blocks(text: &str) -> Vec<MarkdownBlock> {
                 }
                 in_code_block = true;
                 current_language = String::new();
-            }
+            },
             Event::End(TagEnd::CodeBlock) => {
                 blocks.push(MarkdownBlock::Code {
                     language: current_language.clone(),
@@ -255,14 +243,14 @@ fn parse_markdown_blocks(text: &str) -> Vec<MarkdownBlock> {
                 });
                 current_text.clear();
                 in_code_block = false;
-            }
+            },
             Event::Start(Tag::Heading { level, .. }) => {
                 if !current_text.is_empty() {
                     blocks.push(MarkdownBlock::Paragraph(current_text.trim().to_string()));
                     current_text.clear();
                 }
                 current_header_level = level as usize;
-            }
+            },
             Event::End(TagEnd::Heading(_)) => {
                 blocks.push(MarkdownBlock::Header {
                     level: current_header_level,
@@ -270,19 +258,19 @@ fn parse_markdown_blocks(text: &str) -> Vec<MarkdownBlock> {
                 });
                 current_text.clear();
                 current_header_level = 0;
-            }
+            },
             Event::Text(t) => {
                 current_text.push_str(&t);
-            }
+            },
             Event::Code(t) => {
                 current_text.push('`');
                 current_text.push_str(&t);
                 current_text.push('`');
-            }
+            },
             Event::SoftBreak | Event::HardBreak => {
                 current_text.push('\n');
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
 
@@ -326,9 +314,8 @@ impl AiPanel {
         let panel = cx.new(|cx| {
             let input_editor = cx.new(|_cx| {
                 let mut editor = Editor::new();
-                let _ = editor.run(aemacs_core::command::Command::EnterMode(
-                    aemacs_core::mode::Mode::Insert,
-                ));
+                let _ = editor
+                    .run(aemacs_core::command::Command::EnterMode(aemacs_core::mode::Mode::Insert));
                 editor
             });
             let input_list_state = gpui::ListState::new(0, gpui::ListAlignment::Top, px(10.0));
@@ -501,7 +488,11 @@ impl AiPanel {
     }
 
     /// Updates the local task list (ACO-034)
-    pub(crate) fn update_tasks(&mut self, tasks: Vec<aemacs_core::task::Task>, cx: &mut Context<'_, Self>) {
+    pub(crate) fn update_tasks(
+        &mut self,
+        tasks: Vec<aemacs_core::task::Task>,
+        cx: &mut Context<'_, Self>,
+    ) {
         self.tasks = tasks;
         cx.notify();
     }
@@ -547,10 +538,7 @@ impl AiPanel {
         let host = GuiHost {
             request_tx: self.host_tx.clone(),
             event_tx: self.event_tx.clone(),
-            agent_id: self
-                .active_persona_name
-                .clone()
-                .unwrap_or_else(|| "global".to_string()),
+            agent_id: self.active_persona_name.clone().unwrap_or_else(|| "global".to_string()),
         };
         let backend = self.backend.clone();
         let conversation = self.conversation.clone();
@@ -568,19 +556,18 @@ impl AiPanel {
                     AgentEvent::StreamChunk(chunk) => {
                         panel.status = CognitiveStatus::Streaming;
                         if let Some(last_msg) = panel.messages.last_mut()
-                            && last_msg.role == "AI" {
-                                last_msg.update_content(last_msg.content.clone() + &chunk);
-                            }
-                        panel
-                            .message_scroll_handle
-                            .set_offset(gpui::point(px(0.0), px(999999.0)));
-                    }
+                            && last_msg.role == "AI"
+                        {
+                            last_msg.update_content(last_msg.content.clone() + &chunk);
+                        }
+                        panel.message_scroll_handle.set_offset(gpui::point(px(0.0), px(999999.0)));
+                    },
                     AgentEvent::ToolStarted(name) => {
                         panel.current_action = Some(format!("Executing {name}..."));
-                    }
+                    },
                     AgentEvent::ToolFinished(_name, _success) => {
                         panel.current_action = None;
-                    }
+                    },
                     AgentEvent::Result(updated_conv) => {
                         panel.status = CognitiveStatus::Idle;
                         panel.conversation = updated_conv;
@@ -604,16 +591,17 @@ impl AiPanel {
                                 panel.messages.push(ChatMessage::new(role, content));
                             }
                         }
-                    }
+                    },
                     AgentEvent::Error(e) => {
                         panel.status = CognitiveStatus::Errored(e.clone());
                         if let Some(last_msg) = panel.messages.last_mut()
-                            && last_msg.role == "AI" {
-                                last_msg.role = "System".to_string();
-                                last_msg.update_content(format!("❌ AI Error: {e}"));
-                            }
+                            && last_msg.role == "AI"
+                        {
+                            last_msg.role = "System".to_string();
+                            last_msg.update_content(format!("❌ AI Error: {e}"));
+                        }
                         log::error!("AI Task Failed: {e}");
-                    }
+                    },
                 }
                 cx.notify();
             },
@@ -655,12 +643,7 @@ impl AiPanel {
             .flex()
             .flex_col()
             .gap_y(px(4.0))
-            .child(
-                div()
-                    .text_size(px(10.0))
-                    .text_color(rgb(0x5c6370))
-                    .child("ACTIVE AGENT"),
-            )
+            .child(div().text_size(px(10.0)).text_color(rgb(0x5c6370)).child("ACTIVE AGENT"))
             .child(div().flex().flex_wrap().gap(px(4.0)).children(
                 self.available_personas.iter().enumerate().map(|(i, name)| {
                     let is_selected = active_persona.as_ref() == Some(name);
@@ -671,21 +654,9 @@ impl AiPanel {
                         .py(px(2.0))
                         .rounded_md()
                         .border_1()
-                        .border_color(if is_selected {
-                            rgb(0xbd93f9)
-                        } else {
-                            rgb(0x3e4451)
-                        })
-                        .bg(if is_selected {
-                            rgb(0x282c34)
-                        } else {
-                            rgb(0x21252b)
-                        })
-                        .text_color(if is_selected {
-                            rgb(0xffffff)
-                        } else {
-                            rgb(0xabb2bf)
-                        })
+                        .border_color(if is_selected { rgb(0xbd93f9) } else { rgb(0x3e4451) })
+                        .bg(if is_selected { rgb(0x282c34) } else { rgb(0x21252b) })
+                        .text_color(if is_selected { rgb(0xffffff) } else { rgb(0xabb2bf) })
                         .text_size(px(11.0))
                         .cursor_pointer()
                         .on_click(cx.listener(move |this, _, _window, cx| {
@@ -751,21 +722,9 @@ impl AiPanel {
                             .py(px(4.0))
                             .rounded_md()
                             .border_1()
-                            .border_color(if is_selected {
-                                rgb(0xbd93f9)
-                            } else {
-                                rgb(0x3e4451)
-                            })
-                            .bg(if is_selected {
-                                rgb(0x282c34)
-                            } else {
-                                rgb(0x21252b)
-                            })
-                            .text_color(if is_selected {
-                                rgb(0xffffff)
-                            } else {
-                                rgb(0xabb2bf)
-                            })
+                            .border_color(if is_selected { rgb(0xbd93f9) } else { rgb(0x3e4451) })
+                            .bg(if is_selected { rgb(0x282c34) } else { rgb(0x21252b) })
+                            .text_color(if is_selected { rgb(0xffffff) } else { rgb(0xabb2bf) })
                             .text_size(px(11.0))
                             .cursor_pointer()
                             .on_click(cx.listener(move |this, _, _window, cx| {
@@ -873,12 +832,7 @@ impl AiPanel {
             .flex()
             .flex_col()
             .gap_y(px(4.0))
-            .child(
-                div()
-                    .text_size(px(10.0))
-                    .text_color(rgb(0x5c6370))
-                    .child("MAX CONTEXT DEPTH"),
-            )
+            .child(div().text_size(px(10.0)).text_color(rgb(0x5c6370)).child("MAX CONTEXT DEPTH"))
             .child(
                 div().flex().flex_wrap().gap(px(4.0)).children(
                     aemacs_ai::models::CONTEXT_OPTIONS
@@ -897,16 +851,8 @@ impl AiPanel {
                                 } else {
                                     rgb(0x3e4451)
                                 })
-                                .bg(if is_selected {
-                                    rgb(0x282c34)
-                                } else {
-                                    rgb(0x21252b)
-                                })
-                                .text_color(if is_selected {
-                                    rgb(0xffffff)
-                                } else {
-                                    rgb(0xabb2bf)
-                                })
+                                .bg(if is_selected { rgb(0x282c34) } else { rgb(0x21252b) })
+                                .text_color(if is_selected { rgb(0xffffff) } else { rgb(0xabb2bf) })
                                 .text_size(px(11.0))
                                 .cursor_pointer()
                                 .on_click(cx.listener(move |this, _, _window, cx| {
@@ -935,16 +881,14 @@ impl AiPanel {
             .iter()
             .find(|m| m.tier == tier && m.role == aemacs_ai::models::ModelRole::Roleplay);
 
-        let logic_est = logic_model
-            .map_or(0.0, |m| (self.selected_context as f32 / 1024.0).mul_add(m.kv_rate_gb_per_1k, m.base_vram_gb));
-        let voice_est = voice_model
-            .map_or(0.0, |m| (self.selected_context as f32 / 1024.0).mul_add(m.kv_rate_gb_per_1k, m.base_vram_gb));
+        let logic_est = logic_model.map_or(0.0, |m| {
+            (self.selected_context as f32 / 1024.0).mul_add(m.kv_rate_gb_per_1k, m.base_vram_gb)
+        });
+        let voice_est = voice_model.map_or(0.0, |m| {
+            (self.selected_context as f32 / 1024.0).mul_add(m.kv_rate_gb_per_1k, m.base_vram_gb)
+        });
 
-        let total_est = if logic_est > voice_est {
-            logic_est
-        } else {
-            voice_est
-        }; // Max because we unload Logic before loading Voice
+        let total_est = if logic_est > voice_est { logic_est } else { voice_est }; // Max because we unload Logic before loading Voice
 
         div()
             .text_size(px(10.0))
@@ -958,18 +902,17 @@ impl AiPanel {
         let is_active = !matches!(status, CognitiveStatus::Idle);
 
         let (color, shimmer_width, intensity) = match status {
-            CognitiveStatus::Idle => (
-                gpui::rgba(0x1c315eff),
-                Default::default(),
-                Default::default(),
-            ), // Dormant cobalt
+            CognitiveStatus::Idle => {
+                (gpui::rgba(0x1c315eff), Default::default(), Default::default())
+            }, // Dormant cobalt
             CognitiveStatus::Thinking => (gpui::rgba(0xffbf00ff), 0.4, 0.8), // Radiating amber
             CognitiveStatus::Streaming => (gpui::rgba(0x00ff7fff), 0.8, 1.0), // Vibrant emerald
             CognitiveStatus::Errored(_) => (gpui::rgba(0xdc143cff), 0.2, 1.0), // Jagged crimson
         };
 
         // Simulated Sine-wave pulsing for opacity (intensity)
-        let pulse_opacity = (self.shimmer_offset * std::f32::consts::PI * 2.0).sin().mul_add(0.3, 0.7);
+        let pulse_opacity =
+            (self.shimmer_offset * std::f32::consts::PI * 2.0).sin().mul_add(0.3, 0.7);
         let final_opacity = intensity * pulse_opacity;
 
         div()
@@ -977,21 +920,16 @@ impl AiPanel {
             .w_full()
             .when(is_active, |this| {
                 this.bg(gpui::rgba(0x181a1fff)).child(
-                    div()
-                        .size_full()
-                        .bg(color)
-                        .opacity(final_opacity)
-                        .relative()
-                        .child(
-                            div()
-                                .absolute()
-                                .top_0()
-                                .bottom_0()
-                                .left(relative(self.shimmer_offset))
-                                .w(relative(shimmer_width))
-                                .bg(gpui::rgba(0xffffffff))
-                                .opacity(0.4), // The "Heat" core
-                        ),
+                    div().size_full().bg(color).opacity(final_opacity).relative().child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .bottom_0()
+                            .left(relative(self.shimmer_offset))
+                            .w(relative(shimmer_width))
+                            .bg(gpui::rgba(0xffffffff))
+                            .opacity(0.4), // The "Heat" core
+                    ),
                 )
             })
             .when(!is_active, |this| this.bg(gpui::transparent_black()))
@@ -1066,10 +1004,7 @@ impl AiPanel {
                 Ok(path) => {
                     match load_file(&path) {
                         Ok(part) => {
-                            if let aemacs_ai::ContentPart::Text {
-                                text: profile_content,
-                            } = part
-                            {
+                            if let aemacs_ai::ContentPart::Text { text: profile_content } = part {
                                 self.conversation.set_profile(profile_content);
                                 self.messages.push(ChatMessage::new(
                                     "System",
@@ -1086,21 +1021,21 @@ impl AiPanel {
                                     format!("⚠️ Profile at '{path_str}' is not a text file."),
                                 ));
                             }
-                        }
+                        },
                         Err(e) => {
                             self.messages.push(ChatMessage::new(
                                 "System",
                                 format!("⚠️ Failed to load profile: {path_str} ({e})"),
                             ));
-                        }
+                        },
                     }
-                }
+                },
                 Err(e) => {
                     self.messages.push(ChatMessage::new(
                         "System",
                         format!("⚠️ Invalid profile path: {path_str} ({e})"),
                     ));
-                }
+                },
             }
         }
 
@@ -1128,21 +1063,21 @@ impl AiPanel {
                                     format!("⚠️ Material at '{path_str}' is not a text file."),
                                 ));
                             }
-                        }
+                        },
                         Err(e) => {
                             self.messages.push(ChatMessage::new(
                                 "System",
                                 format!("⚠️ Failed to load material: {path_str} ({e})"),
                             ));
-                        }
+                        },
                     }
-                }
+                },
                 Err(e) => {
                     self.messages.push(ChatMessage::new(
                         "System",
                         format!("⚠️ Invalid material path: {path_str} ({e})"),
                     ));
-                }
+                },
             }
         }
 
@@ -1150,13 +1085,8 @@ impl AiPanel {
             text = text.trim().to_string();
             text.push_str("\n\n---\n### ATTACHED CONTEXT\n");
             for (path, content) in attachments {
-                let ext = Path::new(&path)
-                    .extension()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("");
-                text.push_str(&format!(
-                    "#### File: {path}\n```{ext}\n{content}\n```\n"
-                ));
+                let ext = Path::new(&path).extension().and_then(|s| s.to_str()).unwrap_or("");
+                text.push_str(&format!("#### File: {path}\n```{ext}\n{content}\n```\n"));
             }
         }
 
@@ -1174,9 +1104,7 @@ impl AiPanel {
                 // ACO-006: Lexical Guard
                 self.messages.push(ChatMessage::new(
                     "System",
-                    format!(
-                        "⚠️ Unknown agent: /{agent_name}. Type a valid specialist name."
-                    ),
+                    format!("⚠️ Unknown agent: /{agent_name}. Type a valid specialist name."),
                 ));
                 self.input_editor.update(cx, |editor, _| {
                     editor.buffer.content = ropey::Rope::new();
@@ -1191,15 +1119,10 @@ impl AiPanel {
         if !text.trim().is_empty() {
             self.messages.push(ChatMessage::new("User", text.clone()));
         } else if switched {
-            let persona_display = self
-                .active_persona_name
-                .as_deref()
-                .unwrap_or("UNKNOWN")
-                .to_uppercase();
-            self.messages.push(ChatMessage::new(
-                "System",
-                format!("Agent switched to: {persona_display}"),
-            ));
+            let persona_display =
+                self.active_persona_name.as_deref().unwrap_or("UNKNOWN").to_uppercase();
+            self.messages
+                .push(ChatMessage::new("System", format!("Agent switched to: {persona_display}")));
         } else {
             return;
         }
@@ -1225,12 +1148,10 @@ impl AiPanel {
         } else {
             self.conversation.clear_persona();
         }
-        self.conversation
-            .add_message(aemacs_ai::Message::user(text));
+        self.conversation.add_message(aemacs_ai::Message::user(text));
 
         // Auto-scroll to the bottom so the user's message is immediately visible
-        self.message_scroll_handle
-            .set_offset(gpui::point(px(0.0), px(999999.0)));
+        self.message_scroll_handle.set_offset(gpui::point(px(0.0), px(999999.0)));
 
         cx.notify();
 
@@ -1250,8 +1171,7 @@ impl Render for AiPanel {
         if current_count == line_count {
             // Typing change: partial redraw
             if cursor_line == self.last_cursor_line {
-                self.input_list_state
-                    .splice(cursor_line..cursor_line + 1, 1);
+                self.input_list_state.splice(cursor_line..cursor_line + 1, 1);
             } else {
                 let min_line = std::cmp::min(cursor_line, self.last_cursor_line);
                 let max_line = std::cmp::max(cursor_line, self.last_cursor_line);
@@ -1271,11 +1191,8 @@ impl Render for AiPanel {
 
         let root_div = div().flex().flex_col();
 
-        let root_div = if self.is_maximized {
-            root_div.w_full()
-        } else {
-            root_div.w(px(self.width))
-        };
+        let root_div =
+            if self.is_maximized { root_div.w_full() } else { root_div.w(px(self.width)) };
 
         root_div
             .size_full()
@@ -1423,11 +1340,7 @@ impl Render for AiPanel {
                                     .w_full()
                                     .p(px(8.0))
                                     .rounded_md()
-                                    .bg(if is_user {
-                                        rgb(0x3e4451)
-                                    } else {
-                                        rgb(0x282c34)
-                                    })
+                                    .bg(if is_user { rgb(0x3e4451) } else { rgb(0x282c34) })
                                     .text_color(if is_error {
                                         rgb(0xe06c75)
                                     } else {
@@ -1476,7 +1389,7 @@ impl Render for AiPanel {
                                                     .font_weight(gpui::FontWeight::BOLD)
                                                     .child(content.clone())
                                                     .into_any_element()
-                                            }
+                                            },
                                         }
                                     })),
                             )
@@ -1525,8 +1438,9 @@ impl Render for AiPanel {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use regex::Regex;
+
+    use super::*;
 
     /// This quest verifies that our regex can distinguish between the Holy Statute (@)
     /// and the Raw Materials (@@). It ensures that '@@' is never accidentally
@@ -1604,15 +1518,9 @@ mod tests {
         assert_eq!(material_matches.len(), 2);
 
         // 3. Execute Stripping (Simulating the reverse-iteration logic used in send_message)
-        let mut all_tags: Vec<_> = statute_matches
-            .iter()
-            .map(|m: &regex::Match<'_>| (m.start(), m.end()))
-            .collect();
-        all_tags.extend(
-            material_matches
-                .iter()
-                .map(|m: &regex::Match<'_>| (m.start(), m.end())),
-        );
+        let mut all_tags: Vec<_> =
+            statute_matches.iter().map(|m: &regex::Match<'_>| (m.start(), m.end())).collect();
+        all_tags.extend(material_matches.iter().map(|m: &regex::Match<'_>| (m.start(), m.end())));
         all_tags.sort_by_key(|k| k.0);
 
         for (start, end) in all_tags.iter().rev() {
@@ -1636,10 +1544,7 @@ mod tests {
         let is_error_ok = msg_ok.content.contains("🛠️ TOOL_ERROR");
 
         assert!(is_tool_ok, "Should identify 'Tool' role.");
-        assert!(
-            !is_error_ok,
-            "Should not identify error in successful result."
-        );
+        assert!(!is_error_ok, "Should not identify error in successful result.");
 
         // Case 2: Failed tool
         let msg_err = ChatMessage::new("Tool", "🛠️ TOOL_ERROR: [File not found]");
@@ -1647,9 +1552,6 @@ mod tests {
         let is_error_err = msg_err.content.contains("🛠️ TOOL_ERROR");
 
         assert!(is_tool_err, "Should identify 'Tool' role.");
-        assert!(
-            is_error_err,
-            "Should identify error when TOOL_ERROR prefix is present."
-        );
+        assert!(is_error_err, "Should identify error when TOOL_ERROR prefix is present.");
     }
 }

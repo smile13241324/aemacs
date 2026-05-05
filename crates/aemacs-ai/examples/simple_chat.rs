@@ -1,6 +1,6 @@
-use aemacs_ai::connectors::local::LocalBackend;
-use aemacs_ai::{AIBackend, AIRequest, Message, Role};
 use std::error::Error;
+
+use aemacs_ai::{AIBackend, AIRequest, Message, Role, connectors::local::LocalBackend};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {

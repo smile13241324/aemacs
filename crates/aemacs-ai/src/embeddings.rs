@@ -1,6 +1,7 @@
-use crate::{AIError, AIResult};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+
+use crate::{AIError, AIResult};
 
 /// Provides a client for generating vector embeddings using the Ollama API.
 #[derive(Clone)]
@@ -37,11 +38,7 @@ struct EmbeddingResponse {
 impl OllamaEmbedder {
     /// Initializes a new `OllamaEmbedder`.
     pub fn new(base_url: impl Into<String>, model: impl Into<String>) -> Self {
-        Self {
-            client: Client::new(),
-            base_url: base_url.into(),
-            model: model.into(),
-        }
+        Self { client: Client::new(), base_url: base_url.into(), model: model.into() }
     }
 
     /// Translates a block of text into a vector of floating-point numbers.
@@ -49,10 +46,7 @@ impl OllamaEmbedder {
     pub async fn embed(&self, text: &str) -> AIResult<Vec<f32>> {
         let url = format!("{}/api/embeddings", self.base_url.trim_end_matches('/'));
 
-        let body = EmbeddingRequest {
-            model: &self.model,
-            prompt: text,
-        };
+        let body = EmbeddingRequest { model: &self.model, prompt: text };
 
         let res = self
             .client
@@ -73,15 +67,11 @@ impl OllamaEmbedder {
                 )));
             }
 
-            return Err(AIError::ConnectorError(format!(
-                "Embedding Error ({status}): {err_text}"
-            )));
+            return Err(AIError::ConnectorError(format!("Embedding Error ({status}): {err_text}")));
         }
 
-        let response: EmbeddingResponse = res
-            .json()
-            .await
-            .map_err(|e| AIError::ParseError(e.to_string()))?;
+        let response: EmbeddingResponse =
+            res.json().await.map_err(|e| AIError::ParseError(e.to_string()))?;
 
         Ok(response.embedding)
     }

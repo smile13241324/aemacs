@@ -1,8 +1,6 @@
-use crate::buffer::Buffer;
-use crate::command::Command;
-use crate::mode::Mode;
-use crate::selection::Selection;
 use ropey::Rope;
+
+use crate::{buffer::Buffer, command::Command, mode::Mode, selection::Selection};
 
 /// A snapshot of the editor state at a specific point in time.
 /// This is used to implement undo and redo functionality by storing full state transitions.
@@ -38,7 +36,7 @@ impl Default for Editor {
 
 impl Editor {
     /// Initializes a new, empty Editor instance with a single cursor at the start.
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
         Self {
             buffer: Buffer::new(),
@@ -74,10 +72,8 @@ impl Editor {
     /// Captures the current state and pushes it onto the undo stack.
     /// This should be called immediately before any operation that modifies the buffer.
     fn save_snapshot(&mut self) {
-        let snapshot = Snapshot {
-            content: self.buffer.content.clone(),
-            selections: self.selections.clone(),
-        };
+        let snapshot =
+            Snapshot { content: self.buffer.content.clone(), selections: self.selections.clone() };
         self.undo_stack.push(snapshot);
 
         // When we make a new change, the "redo" branch (the future) is invalidated.
@@ -217,7 +213,7 @@ impl Editor {
     }
 
     /// Returns the primary selection, which is usually the first one in the list.
-    #[must_use] 
+    #[must_use]
     pub fn primary_cursor(&self) -> Selection {
         *self.selections.first().unwrap_or(&Selection::point(0))
     }
@@ -288,11 +284,7 @@ impl Editor {
             let target_line_len = target_line_end - target_line_start;
 
             // Avoid jumping past the newline.
-            let clamp_limit = if target_line_len > 0 {
-                target_line_len - 1
-            } else {
-                0
-            };
+            let clamp_limit = if target_line_len > 0 { target_line_len - 1 } else { 0 };
 
             let new_col = std::cmp::min(column, clamp_limit);
             let new_pos = target_line_start + new_col;
@@ -334,7 +326,7 @@ impl Editor {
     }
 
     /// Returns the current position of the primary cursor as (1-based Line, 1-based Column).
-    #[must_use] 
+    #[must_use]
     pub fn cursor_position(&self) -> (usize, usize) {
         let max_chars = self.buffer.len_chars();
         let head = std::cmp::min(self.primary_cursor().head, max_chars);
@@ -355,7 +347,7 @@ impl Editor {
     }
 
     /// Returns the number of lines currently in the buffer.
-    #[must_use] 
+    #[must_use]
     pub fn line_count(&self) -> usize {
         self.buffer.content.len_lines()
     }

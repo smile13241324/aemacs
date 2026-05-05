@@ -1,8 +1,10 @@
-use aemacs_ai::connectors::local::LocalBackend;
-use aemacs_ai::{AIBackend, AIRequest, Message, Role};
+use std::{
+    error::Error,
+    io::{self, Write},
+};
+
+use aemacs_ai::{AIBackend, AIRequest, Message, Role, connectors::local::LocalBackend};
 use futures::StreamExt;
-use std::error::Error;
-use std::io::{self, Write};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -37,11 +39,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     print!("{content}");
                     io::stdout().flush()?;
                 }
-            }
+            },
             Err(e) => {
                 eprintln!("\n❌ Stream Error: {e}");
                 break;
-            }
+            },
         }
     }
 

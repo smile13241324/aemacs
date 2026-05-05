@@ -1,6 +1,5 @@
 use aemacs_core::{Editor, mode::Mode};
-use gpui::prelude::*;
-use gpui::{IntoElement, ListState, div, list, px, rgb, rgba};
+use gpui::{IntoElement, ListState, div, list, prelude::*, px, rgb, rgba};
 /// Renders the core editor text area, including line gutters, text content, and cursor styling.
 /// It uses a high-performance virtualized list to efficiently display extremely large buffers.
 ///
@@ -8,7 +7,11 @@ use gpui::{IntoElement, ListState, div, list, px, rgb, rgba};
 /// * `editor`: A reference to the active Editor engine state.
 /// * `list_state`: The GPUI `ListState` controlling the scroll position and item rendering.
 /// * `wrap`: Whether text lines should soft-wrap at the view boundary.
-pub(crate) fn render_editor_view(editor: &Editor, list_state: ListState, wrap: bool) -> impl IntoElement {
+pub(crate) fn render_editor_view(
+    editor: &Editor,
+    list_state: ListState,
+    wrap: bool,
+) -> impl IntoElement {
     let theme_bg = rgb(0x282c34);
     let text_color = rgb(0xabb2bf);
     let cursor_pos = editor.cursor_position();
@@ -77,11 +80,7 @@ pub(crate) fn render_editor_view(editor: &Editor, list_state: ListState, wrap: b
                 .child(
                     div()
                         .child(cursor_char_str)
-                        .bg(if is_block {
-                            cursor_bg
-                        } else {
-                            rgba(0x00000000)
-                        })
+                        .bg(if is_block { cursor_bg } else { rgba(0x00000000) })
                         .text_color(if is_block { rgb(0x282c34) } else { text_color })
                         .when(!is_block, |this| this.border_l_2().border_color(cursor_bg)),
                 )

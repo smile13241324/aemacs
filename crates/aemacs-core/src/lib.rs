@@ -16,13 +16,12 @@ pub mod triage;
 pub mod watcher;
 
 use anyhow::Result;
-use log::info;
-
 pub use buffer::Buffer;
 pub use bus::EventBus;
 pub use command::Command;
 pub use editor::Editor;
 pub use keymap::KeymapRegistry;
+use log::info;
 pub use mode::Mode;
 pub use selection::Selection;
 

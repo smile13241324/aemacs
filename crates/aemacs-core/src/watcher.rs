@@ -1,8 +1,10 @@
-use crate::bus::{EventBus, SystemEvent};
+use std::path::Path;
+
 use anyhow::Result;
 use log::{info, warn};
 use notify::{RecursiveMode, Watcher};
-use std::path::Path;
+
+use crate::bus::{EventBus, SystemEvent};
 
 /// The Global Watcher monitors the entire workspace for changes.
 pub struct GlobalWatcher {
@@ -39,15 +41,12 @@ impl GlobalWatcher {
                             }
                         }
                     }
-                }
+                },
                 Err(e) => warn!("Watch error: {e:?}"),
             }
         })?;
 
-        Ok(Self {
-            bus,
-            watcher: Box::new(watcher),
-        })
+        Ok(Self { bus, watcher: Box::new(watcher) })
     }
 
     /// Registers a physical directory path to be monitored recursively.
@@ -80,12 +79,13 @@ pub fn spawn_global_watcher(bus: EventBus, workspace_root: &Path) -> Result<()> 
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
-    use super::*;
-    use crate::bus::EventBus;
-    use std::fs::File;
-    use std::io::Write;
+    use std::{fs::File, io::Write};
+
     use tempfile::tempdir;
     use tokio::time::{Duration, timeout};
+
+    use super::*;
+    use crate::bus::EventBus;
 
     #[tokio::test]
     async fn test_global_watcher_vigilance_quest() -> Result<()> {

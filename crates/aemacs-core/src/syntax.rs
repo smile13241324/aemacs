@@ -1,6 +1,6 @@
+use std::{fs, path::Path};
+
 use anyhow::{Result, anyhow};
-use std::fs;
-use std::path::Path;
 use tree_sitter::{Parser, Query, QueryCursor, StreamingIterator};
 
 /// Defines the set of programming languages supported by the Æmacs syntax analysis engine.
@@ -41,7 +41,7 @@ impl SupportedLanguage {
 
     /// Retrieves the Tree-sitter language grammar and the corresponding S-expression query
     /// used to identify significant symbols (functions, structs, classes, etc.) for this language.
-    #[must_use] 
+    #[must_use]
     pub fn get_config(&self) -> (tree_sitter::Language, &'static str) {
         match self {
             Self::Rust => (
@@ -138,31 +138,36 @@ pub fn extract_symbol(
 
     while let Some((m, capture_index)) = captures.next() {
         let capture = m.captures[*capture_index];
-        let capture_name = query.capture_names()[usize::try_from(capture.index).unwrap_or_default()];
+        let capture_name =
+            query.capture_names()[usize::try_from(capture.index).unwrap_or_default()];
 
         if capture_name == "name"
             && let Ok(name) = capture.node.utf8_text(source_code.as_bytes())
-                && name == symbol_name {
-                    // Once we find the name, the item is the node with the "item" capture index in the same match
-                    for c in m.captures {
-                        if query.capture_names()[usize::try_from(c.index).unwrap_or_default()] == "item" {
-                            return Ok(c.node.utf8_text(source_code.as_bytes())?.to_string());
-                        }
-                    }
+            && name == symbol_name
+        {
+            // Once we find the name, the item is the node with the "item" capture index in the same match
+            for c in m.captures {
+                if query.capture_names()[usize::try_from(c.index).unwrap_or_default()] == "item" {
+                    return Ok(c.node.utf8_text(source_code.as_bytes())?.to_string());
                 }
+            }
+        }
     }
 
     Err(anyhow!(
-        "Symbol '{symbol_name}' not found in {} (Detected Language: {lang:?})", path.display()
+        "Symbol '{symbol_name}' not found in {} (Detected Language: {lang:?})",
+        path.display()
     ))
 }
 
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
-    use super::*;
     use std::io::Write;
+
     use tempfile::NamedTempFile;
+
+    use super::*;
 
     #[test]
     fn test_extract_python_symbol() -> Result<()> {

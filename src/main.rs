@@ -1,13 +1,12 @@
-use aemacs_ai::PersonaRegistry;
-use aemacs_ai::autonomous::AutonomousService;
-use aemacs_ai::connectors::openai_compatible::OpenAICompatibleBackend;
-use aemacs_ai::mcp::ToolRegistry;
-use aemacs_ai::rag::KnowledgeBase;
-use aemacs_core::bus::EventBus;
-use aemacs_core::observer::ReactiveObserver;
+use std::sync::Arc;
+
+use aemacs_ai::{
+    PersonaRegistry, autonomous::AutonomousService,
+    connectors::openai_compatible::OpenAICompatibleBackend, mcp::ToolRegistry, rag::KnowledgeBase,
+};
+use aemacs_core::{bus::EventBus, observer::ReactiveObserver};
 use anyhow::Result;
 use log::info;
-use std::sync::Arc;
 
 fn main() -> Result<()> {
     // 1. Initialize the logger
@@ -19,9 +18,7 @@ fn main() -> Result<()> {
 
     // --- Headless Sovereign Detection (ACO-011) ---
     if args.iter().any(|arg| arg == "--server") {
-        let rt = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()?;
+        let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
 
         return rt.block_on(async {
             info!("🌑 [SERVER] Headless Sovereign Mode detected.");
@@ -55,8 +52,14 @@ fn main() -> Result<()> {
 
             // B. AI Infrastructure
             let kb = Arc::new(KnowledgeBase::new(
-                config.qdrant_url.as_deref().ok_or_else(|| anyhow::anyhow!("Missing qdrant_url"))?,
-                config.ollama_url.as_deref().ok_or_else(|| anyhow::anyhow!("Missing ollama_url"))?,
+                config
+                    .qdrant_url
+                    .as_deref()
+                    .ok_or_else(|| anyhow::anyhow!("Missing qdrant_url"))?,
+                config
+                    .ollama_url
+                    .as_deref()
+                    .ok_or_else(|| anyhow::anyhow!("Missing ollama_url"))?,
                 aemacs_ai::rag::Environment::Production,
             )?);
             let tokio_handle = tokio::runtime::Handle::current();
@@ -67,7 +70,13 @@ fn main() -> Result<()> {
                 Some(bus.tx.clone()),
             ));
             let backend = Arc::new(OpenAICompatibleBackend::new(
-                format!("{}/v1", config.ollama_url.as_deref().ok_or_else(|| anyhow::anyhow!("Missing ollama_url"))?),
+                format!(
+                    "{}/v1",
+                    config
+                        .ollama_url
+                        .as_deref()
+                        .ok_or_else(|| anyhow::anyhow!("Missing ollama_url"))?
+                ),
                 None,
             ));
 
@@ -76,9 +85,8 @@ fn main() -> Result<()> {
                 aemacs_bridge::spawn_intent_bridge(bus.clone(), bridge_port).await?;
             }
 
-            let watcher = aemacs_core::observer::FileWatcherObserver {
-                path: std::env::current_dir()?,
-            };
+            let watcher =
+                aemacs_core::observer::FileWatcherObserver { path: std::env::current_dir()? };
             let bus_watcher = bus.clone();
             tokio::spawn(async move {
                 if let Err(e) = watcher.run(bus_watcher).await {

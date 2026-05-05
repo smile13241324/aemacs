@@ -1,13 +1,15 @@
+use std::{
+    path::PathBuf,
+    time::{Duration, Instant},
+};
+
 use aemacs_core::{Editor, command::Command, mode::Mode, runtime};
 use anyhow::Result;
-use gpui::prelude::*;
 use gpui::{
     App, Application, Bounds, Context, Entity, FocusHandle, IntoElement, KeyDownEvent, Window,
-    WindowBounds, WindowOptions, div, px, rgb, size,
+    WindowBounds, WindowOptions, div, prelude::*, px, rgb, size,
 };
 use log::info;
-use std::path::PathBuf;
-use std::time::{Duration, Instant};
 
 pub(crate) mod ai_panel;
 use ai_panel::AiPanel;
@@ -25,10 +27,9 @@ pub fn init() -> Result<()> {
     Ok(())
 }
 
-use aemacs_ai::PersonaRegistry;
-use aemacs_ai::mcp::ToolRegistry;
-use aemacs_ai::rag::KnowledgeBase;
 use std::sync::Arc;
+
+use aemacs_ai::{PersonaRegistry, mcp::ToolRegistry, rag::KnowledgeBase};
 
 /// The primary visual container for the editor.
 /// It manages the coordination between the text editor, the AI side panel,
@@ -123,11 +124,11 @@ impl Workspace {
                         Ok(ed) => {
                             log::info!("📂 [Workspace] File loaded successfully.");
                             ed
-                        }
+                        },
                         Err(e) => {
                             log::error!("⚠️ [Workspace] Failed to load file: {e}");
                             Editor::new() // Fallback: Leerer Buffer
-                        }
+                        },
                     }
                 } else {
                     Editor::new()
@@ -161,169 +162,156 @@ impl Workspace {
             let mut rx = bus.subscribe();
 
             // --- Tool Approval Listener (ACO-035) ---
-            cx.spawn(
-                |workspace: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-                    let mut cx = cx.clone();
-                    async move {
-                        while let Ok(request) = host_rx.recv().await {
-                            match request {
-                                ai_panel::HostRequest::Approval {
-                                    description,
-                                    responder,
-                                } => {
-                                    let _ = workspace.update(&mut cx, |this, cx| {
-                                        let window_handle = this.window_handle;
-                                        let _ = cx.update_window(window_handle, |_, window, cx| {
-                                            let future = window.prompt(
-                                                gpui::PromptLevel::Warning,
-                                                "AI Permission Request",
-                                                Some(&description),
-                                                &["Approve", "Deny"],
-                                                cx,
-                                            );
-                                            cx.background_executor()
-                                                .spawn(async move {
-                                                    let answer = future.await.unwrap_or(1usize);
-                                                    let _ = responder.send(answer == 0);
-                                                })
-                                                .detach();
-                                        });
+            cx.spawn(|workspace: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                let mut cx = cx.clone();
+                async move {
+                    while let Ok(request) = host_rx.recv().await {
+                        match request {
+                            ai_panel::HostRequest::Approval { description, responder } => {
+                                let _ = workspace.update(&mut cx, |this, cx| {
+                                    let window_handle = this.window_handle;
+                                    let _ = cx.update_window(window_handle, |_, window, cx| {
+                                        let future = window.prompt(
+                                            gpui::PromptLevel::Warning,
+                                            "AI Permission Request",
+                                            Some(&description),
+                                            &["Approve", "Deny"],
+                                            cx,
+                                        );
+                                        cx.background_executor()
+                                            .spawn(async move {
+                                                let answer = future.await.unwrap_or(1usize);
+                                                let _ = responder.send(answer == 0);
+                                            })
+                                            .detach();
                                     });
-                                }
-                                ai_panel::HostRequest::UserPrompt {
-                                    question,
-                                    responder,
-                                } => {
-                                    let _ = workspace.update(&mut cx, |this, cx| {
-                                        let window_handle = this.window_handle;
-                                        let _ = cx.update_window(window_handle, |_, window, cx| {
-                                            let future = window.prompt(
-                                                gpui::PromptLevel::Info,
-                                                "AI Question",
-                                                Some(&question),
-                                                &["Acknowledge"],
-                                                cx,
-                                            );
-                                            cx.background_executor()
-                                                .spawn(async move {
-                                                    let _ = future.await;
-                                                    let _ =
-                                                        responder.send("Acknowledged".to_string());
-                                                })
-                                                .detach();
-                                        });
+                                });
+                            },
+                            ai_panel::HostRequest::UserPrompt { question, responder } => {
+                                let _ = workspace.update(&mut cx, |this, cx| {
+                                    let window_handle = this.window_handle;
+                                    let _ = cx.update_window(window_handle, |_, window, cx| {
+                                        let future = window.prompt(
+                                            gpui::PromptLevel::Info,
+                                            "AI Question",
+                                            Some(&question),
+                                            &["Acknowledge"],
+                                            cx,
+                                        );
+                                        cx.background_executor()
+                                            .spawn(async move {
+                                                let _ = future.await;
+                                                let _ = responder.send("Acknowledged".to_string());
+                                            })
+                                            .detach();
                                     });
-                                }
-                            }
+                                });
+                            },
                         }
                     }
-                },
-            )
+                }
+            })
             .detach();
 
-            cx.spawn(
-                |workspace: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-                    let mut cx = cx.clone();
-                    async move {
-                        while let Ok(event) = rx.recv().await {
-                            match event {
-                                aemacs_core::bus::SystemEvent::FileModified(modified_path) => {
-                                    let _ = workspace.update(&mut cx, |this, cx| {
-                                        let editor_path = this.editor.read(cx).buffer.path.clone();
-                                        if let Some(current_path) = editor_path
-                                            && current_path == modified_path {
-                                                log::info!(
-                                                    "🔄 [Workspace] Auto-reloading buffer: {current_path:?}"
-                                                );
-                                                let _ = this.editor.update(cx, |ed, _| ed.reload());
-                                                cx.notify();
-                                            }
-                                    });
-                                }
-                                aemacs_core::bus::SystemEvent::Notification(msg) => {
-                                    let _ = workspace.update(&mut cx, |this, cx| {
-                                        log::info!("🔔 [Workspace] Notification: {msg}");
-                                        this.notification = Some(msg);
-                                        cx.notify();
-                                    });
-                                }
-                                aemacs_core::bus::SystemEvent::OpenFile(path) => {
-                                    let _ = workspace.update(&mut cx, |this, cx| {
-                                        match aemacs_core::Editor::from_file(path.clone()) {
-                                            Ok(new_editor) => {
-                                                log::info!(
-                                                    "📂 [Workspace] Switching to file: {path:?}"
-                                                );
-                                                this.editor.update(cx, |ed, _| *ed = new_editor);
-                                                this.notification =
-                                                    Some(format!("Opened: {path:?}"));
-                                            }
-                                            Err(e) => {
-                                                log::error!(
-                                                    "⚠️ [Workspace] Failed to open file: {e}"
-                                                );
-                                                this.notification =
-                                                    Some(format!("Error opening file: {e}"));
-                                            }
-                                        }
-                                        cx.notify();
-                                    });
-                                }
-                                aemacs_core::bus::SystemEvent::PlanCreated(tasks) => {
-                                    let _ = workspace.update(&mut cx, |this, cx| {
+            cx.spawn(|workspace: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                let mut cx = cx.clone();
+                async move {
+                    while let Ok(event) = rx.recv().await {
+                        match event {
+                            aemacs_core::bus::SystemEvent::FileModified(modified_path) => {
+                                let _ = workspace.update(&mut cx, |this, cx| {
+                                    let editor_path = this.editor.read(cx).buffer.path.clone();
+                                    if let Some(current_path) = editor_path
+                                        && current_path == modified_path
+                                    {
                                         log::info!(
-                                            "📋 [Workspace] Plan created with {} tasks.",
-                                            tasks.len()
+                                            "🔄 [Workspace] Auto-reloading buffer: {current_path:?}"
                                         );
-                                        this.tasks = tasks
-                                            .into_iter()
-                                            .map(|desc| aemacs_core::task::Task {
-                                                description: desc,
-                                                status: aemacs_core::task::TaskStatus::Pending,
-                                            })
-                                            .collect();
+                                        let _ = this.editor.update(cx, |ed, _| ed.reload());
+                                        cx.notify();
+                                    }
+                                });
+                            },
+                            aemacs_core::bus::SystemEvent::Notification(msg) => {
+                                let _ = workspace.update(&mut cx, |this, cx| {
+                                    log::info!("🔔 [Workspace] Notification: {msg}");
+                                    this.notification = Some(msg);
+                                    cx.notify();
+                                });
+                            },
+                            aemacs_core::bus::SystemEvent::OpenFile(path) => {
+                                let _ = workspace.update(&mut cx, |this, cx| {
+                                    match aemacs_core::Editor::from_file(path.clone()) {
+                                        Ok(new_editor) => {
+                                            log::info!(
+                                                "📂 [Workspace] Switching to file: {path:?}"
+                                            );
+                                            this.editor.update(cx, |ed, _| *ed = new_editor);
+                                            this.notification = Some(format!("Opened: {path:?}"));
+                                        },
+                                        Err(e) => {
+                                            log::error!("⚠️ [Workspace] Failed to open file: {e}");
+                                            this.notification =
+                                                Some(format!("Error opening file: {e}"));
+                                        },
+                                    }
+                                    cx.notify();
+                                });
+                            },
+                            aemacs_core::bus::SystemEvent::PlanCreated(tasks) => {
+                                let _ = workspace.update(&mut cx, |this, cx| {
+                                    log::info!(
+                                        "📋 [Workspace] Plan created with {} tasks.",
+                                        tasks.len()
+                                    );
+                                    this.tasks = tasks
+                                        .into_iter()
+                                        .map(|desc| aemacs_core::task::Task {
+                                            description: desc,
+                                            status: aemacs_core::task::TaskStatus::Pending,
+                                        })
+                                        .collect();
+                                    // Update AiPanel
+                                    let tasks_clone = this.tasks.clone();
+                                    this.ai_panel.update(cx, |panel, cx| {
+                                        panel.update_tasks(tasks_clone, cx);
+                                    });
+                                    cx.notify();
+                                });
+                            },
+                            aemacs_core::bus::SystemEvent::TaskUpdated { index, status } => {
+                                let _ = workspace.update(&mut cx, |this, cx| {
+                                    if let Some(task) = this.tasks.get_mut(index) {
+                                        log::info!(
+                                            "✅ [Workspace] Task {index} updated to {status:?}."
+                                        );
+                                        task.status = status;
                                         // Update AiPanel
                                         let tasks_clone = this.tasks.clone();
                                         this.ai_panel.update(cx, |panel, cx| {
                                             panel.update_tasks(tasks_clone, cx);
                                         });
                                         cx.notify();
+                                    }
+                                });
+                            },
+                            aemacs_core::bus::SystemEvent::PersonaChanged { name, message } => {
+                                let _ = workspace.update(&mut cx, |this, cx| {
+                                    log::info!(
+                                        "🔄 [Workspace] Programmatic persona switch: {name}"
+                                    );
+                                    this.ai_panel.update(cx, |panel, cx| {
+                                        panel.handoff_persona(name, message, cx);
                                     });
-                                }
-                                aemacs_core::bus::SystemEvent::TaskUpdated { index, status } => {
-                                    let _ = workspace.update(&mut cx, |this, cx| {
-                                        if let Some(task) = this.tasks.get_mut(index) {
-                                            log::info!(
-                                                "✅ [Workspace] Task {index} updated to {status:?}."
-                                            );
-                                            task.status = status;
-                                            // Update AiPanel
-                                            let tasks_clone = this.tasks.clone();
-                                            this.ai_panel.update(cx, |panel, cx| {
-                                                panel.update_tasks(tasks_clone, cx);
-                                            });
-                                            cx.notify();
-                                        }
-                                    });
-                                }
-                                aemacs_core::bus::SystemEvent::PersonaChanged { name, message } => {
-                                    let _ = workspace.update(&mut cx, |this, cx| {
-                                        log::info!(
-                                            "🔄 [Workspace] Programmatic persona switch: {name}"
-                                        );
-                                        this.ai_panel.update(cx, |panel, cx| {
-                                            panel.handoff_persona(name, message, cx);
-                                        });
-                                    });
-                                }
-                                aemacs_core::bus::SystemEvent::Signal { .. } => {
-                                    // Handled internally by AiPanel's Triage Router (ACO-026)
-                                }
-                            }
+                                });
+                            },
+                            aemacs_core::bus::SystemEvent::Signal { .. } => {
+                                // Handled internally by AiPanel's Triage Router (ACO-026)
+                            },
                         }
                     }
-                },
-            )
+                }
+            })
             .detach();
 
             Self {
@@ -432,20 +420,22 @@ impl Workspace {
 
         if self.editor.read(cx).mode == Mode::Insert
             && let Some((last_char, last_time)) = &self.last_key
-                && last_char == "f" && keystroke.key == "d"
-                    && current_time.duration_since(*last_time) < Duration::from_millis(250) {
-                        self.editor.update(cx, |editor, _| editor.backspace());
+            && last_char == "f"
+            && keystroke.key == "d"
+            && current_time.duration_since(*last_time) < Duration::from_millis(250)
+        {
+            self.editor.update(cx, |editor, _| editor.backspace());
 
-                        self.editor.update(cx, |editor, _| {
-                            if let Err(e) = editor.run(Command::EnterMode(Mode::Normal)) {
-                                log::error!("Failed to switch mode: {e}");
-                            }
-                        });
+            self.editor.update(cx, |editor, _| {
+                if let Err(e) = editor.run(Command::EnterMode(Mode::Normal)) {
+                    log::error!("Failed to switch mode: {e}");
+                }
+            });
 
-                        self.last_key = None;
-                        cx.notify();
-                        return;
-                    }
+            self.last_key = None;
+            cx.notify();
+            return;
+        }
 
         let current_mode = self.editor.read(cx).mode;
 
@@ -486,10 +476,8 @@ impl Render for Workspace {
         if current_count == line_count {
             // Typing change: partial redraw
             if cursor_line == self.last_cursor_line {
-                self.editor_list_state
-                    .splice(cursor_line..cursor_line + 1, 1);
-                self.gutter_list_state
-                    .splice(cursor_line..cursor_line + 1, 1);
+                self.editor_list_state.splice(cursor_line..cursor_line + 1, 1);
+                self.gutter_list_state.splice(cursor_line..cursor_line + 1, 1);
             } else {
                 let min_line = std::cmp::min(cursor_line, self.last_cursor_line);
                 let max_line = std::cmp::max(cursor_line, self.last_cursor_line);
@@ -644,11 +632,7 @@ impl Render for Workspace {
                     } else {
                         "AI: OFF"
                     }))
-                    .child(
-                        div()
-                            .text_color(status_fg)
-                            .child(format!("Ln {line}, Col {col}")),
-                    )
+                    .child(div().text_color(status_fg).child(format!("Ln {line}, Col {col}")))
                     .child(div().text_color(gutter_text).child("UTF-8")),
             )
     }
@@ -657,17 +641,14 @@ impl Render for Workspace {
 /// The main entry point for the Æmacs graphical application.
 /// It initializes the asynchronous runtime, boots the core systems, and starts the GPUI event loop.
 pub fn run_app(file_to_open: Option<PathBuf>) {
-    let runtime = match tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(2)
-        .enable_all()
-        .build()
-    {
-        Ok(rt) => rt,
-        Err(e) => {
-            log::error!("Failed to initialize Tokio runtime: {e}");
-            std::process::exit(1);
-        }
-    };
+    let runtime =
+        match tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build() {
+            Ok(rt) => rt,
+            Err(e) => {
+                log::error!("Failed to initialize Tokio runtime: {e}");
+                std::process::exit(1);
+            },
+        };
 
     let handle = runtime.handle().clone();
 
@@ -718,11 +699,11 @@ pub fn run_app(file_to_open: Option<PathBuf>) {
             window.focus(&focus_handle, cx);
             view
         }) {
-            Ok(_) => {}
+            Ok(_) => {},
             Err(e) => {
                 log::error!("Failed to open window: {e:?}");
                 std::process::exit(1);
-            }
+            },
         }
 
         cx.activate(true);

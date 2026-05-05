@@ -1,9 +1,10 @@
-use crate::models::{ContentPart, ImageUrl};
+use std::{fs, path::Path};
+
 use anyhow::{Context, Result};
 use base64::prelude::*;
 use mime_guess::from_path;
-use std::fs;
-use std::path::Path;
+
+use crate::models::{ContentPart, ImageUrl};
 
 /// Loads a file from the physical disk and translates it into a format suitable for the AI model.
 /// It automatically detects MIME types to distinguish between text documents and image assets.
@@ -15,9 +16,7 @@ pub fn load_file(path: impl AsRef<Path>) -> Result<ContentPart> {
         let bytes = fs::read(path).with_context(|| format!("Failed to read image: {path:?}"))?;
         let b64 = BASE64_STANDARD.encode(&bytes);
         let url = format!("data:{mime};base64,{b64}");
-        Ok(ContentPart::ImageUrl {
-            image_url: ImageUrl { url },
-        })
+        Ok(ContentPart::ImageUrl { image_url: ImageUrl { url } })
     } else {
         // Default to Text.
         // In a real system, we should check for binary content to avoid dumping garbage.
@@ -30,9 +29,11 @@ pub fn load_file(path: impl AsRef<Path>) -> Result<ContentPart> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::io::Write;
+
     use tempfile::NamedTempFile;
+
+    use super::*;
 
     #[test]
     fn test_load_file_gatekeeper_audit_quest() -> Result<()> {
@@ -61,10 +62,7 @@ mod tests {
 
         // --- 3. The Void-Check (Missing File) ---
         let result = load_file("/tmp/non_existent_file_9999");
-        assert!(
-            result.is_err(),
-            "The 'Void-Check' failed! Missing file should return an error."
-        );
+        assert!(result.is_err(), "The 'Void-Check' failed! Missing file should return an error.");
 
         Ok(())
     }

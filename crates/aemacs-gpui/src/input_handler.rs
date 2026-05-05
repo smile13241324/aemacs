@@ -54,8 +54,9 @@ pub(crate) fn resolve_key_command(keystroke: &Keystroke, mode: Mode) -> Option<C
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use gpui::Modifiers;
+
+    use super::*;
 
     #[test]
     fn test_input_handler_handshake_quest() {
@@ -81,15 +82,9 @@ mod tests {
         );
 
         // --- 2. Navigation ---
-        let left_key = Keystroke {
-            modifiers: Modifiers::default(),
-            key: "left".to_string(),
-            key_char: None,
-        };
-        assert_eq!(
-            resolve_key_command(&left_key, Mode::Normal),
-            Some(Command::MoveLeft)
-        );
+        let left_key =
+            Keystroke { modifiers: Modifiers::default(), key: "left".to_string(), key_char: None };
+        assert_eq!(resolve_key_command(&left_key, Mode::Normal), Some(Command::MoveLeft));
 
         // --- 3. Text Insertion ---
         let a_key = Keystroke {
@@ -107,10 +102,7 @@ mod tests {
 
         // --- 4. Modifiers (Safety Check) ---
         let ctrl_i = Keystroke {
-            modifiers: Modifiers {
-                control: true,
-                ..Default::default()
-            },
+            modifiers: Modifiers { control: true, ..Default::default() },
             key: "i".to_string(),
             key_char: Some("i".to_string()),
         };

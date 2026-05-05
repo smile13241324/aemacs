@@ -1,10 +1,12 @@
-use aemacs_ai::migration::{export_jsonl, extract_legacy_files, import_jsonl};
-use aemacs_ai::rag::{Environment, KnowledgeBase};
+use std::{path::PathBuf, sync::Arc};
+
+use aemacs_ai::{
+    migration::{export_jsonl, extract_legacy_files, import_jsonl},
+    rag::{Environment, KnowledgeBase},
+};
 use aemacs_core::config::get_config;
 use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand};
-use std::path::PathBuf;
-use std::sync::Arc;
 
 /// The command-line interface structure for the Memory Migration tool.
 /// It uses the `clap` crate to parse user input and route to the correct subcommands.
@@ -76,13 +78,7 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match &cli.command {
-        Commands::Extract {
-            agent_id,
-            start_time,
-            time_step_sec,
-            output,
-            files,
-        } => {
+        Commands::Extract { agent_id, start_time, time_step_sec, output, files } => {
             println!("🛠️  [EXTRACT] Processing {} files...", files.len());
             let start_dt = start_time.parse::<DateTime<Utc>>()?;
 
@@ -102,24 +98,14 @@ async fn main() -> anyhow::Result<()> {
             }
 
             println!("✅  [EXTRACT] Done.");
-        }
+        },
         Commands::Import { file, production } => {
             println!("📥  [IMPORT] Connecting to Forge Matrix...");
             let config = get_config();
-            let qdrant_url = config
-                .qdrant_url
-                .as_deref()
-                .unwrap_or("http://localhost:6334");
-            let ollama_url = config
-                .ollama_url
-                .as_deref()
-                .unwrap_or("http://localhost:11434");
+            let qdrant_url = config.qdrant_url.as_deref().unwrap_or("http://localhost:6334");
+            let ollama_url = config.ollama_url.as_deref().unwrap_or("http://localhost:11434");
 
-            let env = if *production {
-                Environment::Production
-            } else {
-                Environment::Test
-            };
+            let env = if *production { Environment::Production } else { Environment::Test };
             let kb = Arc::new(KnowledgeBase::new(qdrant_url, ollama_url, env)?);
 
             // Ensure collection exists (default dim 768 for nomic)
@@ -128,34 +114,20 @@ async fn main() -> anyhow::Result<()> {
             println!("📥  [IMPORT] Ingesting {file:?}...");
             import_jsonl(&kb, file).await?;
             println!("✅  [IMPORT] Done.");
-        }
-        Commands::Export {
-            agent_id,
-            output,
-            production,
-        } => {
+        },
+        Commands::Export { agent_id, output, production } => {
             println!("📤  [EXPORT] Connecting to Forge Matrix...");
             let config = get_config();
-            let qdrant_url = config
-                .qdrant_url
-                .as_deref()
-                .unwrap_or("http://localhost:6334");
-            let ollama_url = config
-                .ollama_url
-                .as_deref()
-                .unwrap_or("http://localhost:11434");
+            let qdrant_url = config.qdrant_url.as_deref().unwrap_or("http://localhost:6334");
+            let ollama_url = config.ollama_url.as_deref().unwrap_or("http://localhost:11434");
 
-            let env = if *production {
-                Environment::Production
-            } else {
-                Environment::Test
-            };
+            let env = if *production { Environment::Production } else { Environment::Test };
             let kb = Arc::new(KnowledgeBase::new(qdrant_url, ollama_url, env)?);
 
             println!("📤  [EXPORT] Searching matrix for agent: {agent_id}...");
             export_jsonl(&kb, agent_id, output).await?;
             println!("✅  [EXPORT] Done.");
-        }
+        },
     }
 
     Ok(())

@@ -1,12 +1,15 @@
-use crate::error::AIResult;
-use crate::rag::KnowledgeBase;
+use std::{
+    fs::File,
+    io::{BufRead, BufReader, Write},
+    path::Path,
+};
+
 use chrono::{DateTime, Utc};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::fs::File;
-use std::io::{BufRead, BufReader, Write};
-use std::path::Path;
 use tracing::{info, warn};
+
+use crate::{error::AIResult, rag::KnowledgeBase};
 
 /// Defines the intermediate JSONL format for memory migration.
 #[derive(Debug, Serialize, Deserialize)]
@@ -89,9 +92,7 @@ pub fn extract_legacy_files(
                     if current_tier == "ARCHIVE" {
                         records.push(LegacyRecord::Archive {
                             agent_id: agent_id.to_string(),
-                            role: current_speaker
-                                .clone()
-                                .unwrap_or_else(|| "Unknown".to_string()),
+                            role: current_speaker.clone().unwrap_or_else(|| "Unknown".to_string()),
                             phase: current_phase.clone(),
                             context: current_context.clone(),
                             timestamp: ts_str,
@@ -150,20 +151,13 @@ pub async fn import_jsonl(kb: &KnowledgeBase, jsonl_path: &Path) -> AIResult<()>
                         context,
                         timestamp,
                         content,
-                    } => {
-                        kb.store_legacy_archive(
+                    } => kb
+                        .store_legacy_archive(
                             &agent_id, &role, &phase, &context, &timestamp, &content,
                         )
                         .await
-                        .map(|_| ())
-                    }
-                    LegacyRecord::Genesis {
-                        agent_id,
-                        phase,
-                        context,
-                        timestamp,
-                        content,
-                    } => kb
+                        .map(|_| ()),
+                    LegacyRecord::Genesis { agent_id, phase, context, timestamp, content } => kb
                         .store_legacy_genesis(&agent_id, &phase, &context, &timestamp, &content)
                         .await
                         .map(|_| ()),
@@ -175,18 +169,15 @@ pub async fn import_jsonl(kb: &KnowledgeBase, jsonl_path: &Path) -> AIResult<()>
                 } else {
                     success_count += 1;
                 }
-            }
+            },
             Err(e) => {
                 warn!("Failed to parse JSONL line: {}", e);
                 err_count += 1;
-            }
+            },
         }
     }
 
-    info!(
-        "Import complete. Success: {}, Failed: {}",
-        success_count, err_count
-    );
+    info!("Import complete. Success: {}, Failed: {}", success_count, err_count);
     Ok(())
 }
 
@@ -197,22 +188,16 @@ pub async fn export_jsonl(kb: &KnowledgeBase, agent_id: &str, output_path: &Path
     // 2. Fetch Genesis
     let mut genesis = kb.search_genesis("").await?;
     // Filter genesis by agent_id manually since search_genesis doesn't take agent_id directly
-    genesis.retain(|r| {
-        r.metadata
-            .get("agent_id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            == agent_id
-    });
+    genesis
+        .retain(|r| r.metadata.get("agent_id").and_then(|v| v.as_str()).unwrap_or("") == agent_id);
 
     let mut file = File::create(output_path).map_err(crate::error::AIError::IoError)?;
     let mut export_count = 0;
 
     // Helper to write a record
     let mut write_record = |record: LegacyRecord| -> AIResult<()> {
-        let json_str = serde_json::to_string(&record).map_err(|e| {
-            crate::error::AIError::ParseError(format!("Failed to serialize: {e}"))
-        })?;
+        let json_str = serde_json::to_string(&record)
+            .map_err(|e| crate::error::AIError::ParseError(format!("Failed to serialize: {e}")))?;
         writeln!(file, "{json_str}").map_err(crate::error::AIError::IoError)?;
         export_count += 1;
         Ok(())
@@ -223,30 +208,17 @@ pub async fn export_jsonl(kb: &KnowledgeBase, agent_id: &str, output_path: &Path
     // In a production scenario, we would group chunks back into full messages before export.
 
     for arch in archives {
-        let role = arch
-            .metadata
-            .get("role")
-            .and_then(|v| v.as_str())
-            .unwrap_or("Unknown")
-            .to_string();
-        let phase = arch
-            .metadata
-            .get("phase")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
+        let role =
+            arch.metadata.get("role").and_then(|v| v.as_str()).unwrap_or("Unknown").to_string();
+        let phase = arch.metadata.get("phase").and_then(|v| v.as_str()).unwrap_or("").to_string();
         let context = arch
             .metadata
             .get("architectural_context") // Based on format_insight_statute logic
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        let timestamp = arch
-            .metadata
-            .get("timestamp")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
+        let timestamp =
+            arch.metadata.get("timestamp").and_then(|v| v.as_str()).unwrap_or("").to_string();
 
         write_record(LegacyRecord::Archive {
             agent_id: agent_id.to_string(),
@@ -259,24 +231,16 @@ pub async fn export_jsonl(kb: &KnowledgeBase, agent_id: &str, output_path: &Path
     }
 
     for gen_record in genesis {
-        let phase = gen_record
-            .metadata
-            .get("phase")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
+        let phase =
+            gen_record.metadata.get("phase").and_then(|v| v.as_str()).unwrap_or("").to_string();
         let context = gen_record
             .metadata
             .get("architectural_context")
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        let timestamp = gen_record
-            .metadata
-            .get("timestamp")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
+        let timestamp =
+            gen_record.metadata.get("timestamp").and_then(|v| v.as_str()).unwrap_or("").to_string();
 
         write_record(LegacyRecord::Genesis {
             agent_id: agent_id.to_string(),
@@ -293,11 +257,13 @@ pub async fn export_jsonl(kb: &KnowledgeBase, agent_id: &str, output_path: &Path
 
 #[cfg(test)]
 mod tests {
+    use std::io::Read;
+
+    use chrono::TimeZone;
+    use tempfile::NamedTempFile;
+
     use super::*;
     use crate::rag::Environment;
-    use chrono::TimeZone;
-    use std::io::Read;
-    use tempfile::NamedTempFile;
 
     #[test]
     fn test_regex_state_machine_quest() -> anyhow::Result<()> {
@@ -324,36 +290,23 @@ end------------------------------------
         assert_eq!(records.len(), 2, "Expected exactly 2 records parsed.");
 
         match &records[0] {
-            LegacyRecord::Archive {
-                agent_id,
-                role,
-                phase,
-                context,
-                content,
-                ..
-            } => {
+            LegacyRecord::Archive { agent_id, role, phase, context, content, .. } => {
                 assert_eq!(agent_id, "TestAgent");
                 assert_eq!(role, "User");
                 assert_eq!(phase, "AWAKENING");
                 assert_eq!(context, "Custom.");
                 assert_eq!(content, "Hello World");
-            }
+            },
             _ => panic!("First record should be an Archive!"),
         }
 
         match &records[1] {
-            LegacyRecord::Genesis {
-                agent_id,
-                phase,
-                context,
-                content,
-                ..
-            } => {
+            LegacyRecord::Genesis { agent_id, phase, context, content, .. } => {
                 assert_eq!(agent_id, "TestAgent");
                 assert_eq!(phase, "TRANSITION");
                 assert_eq!(context, "System Rule.");
                 assert_eq!(content, "Be good.");
-            }
+            },
             _ => panic!("Second record should be a Genesis!"),
         }
 
@@ -438,10 +391,7 @@ This block never ends...
             return Ok(());
         }
 
-        let test_agent = format!(
-            "E2EAgent_{}",
-            uuid::Uuid::new_v4().to_string().replace('-', "")
-        );
+        let test_agent = format!("E2EAgent_{}", uuid::Uuid::new_v4().to_string().replace('-', ""));
 
         // 2. EXTRACTION Phase
         let mut src_file = NamedTempFile::new()?;
@@ -478,18 +428,9 @@ end------------------------------------
         let mut exported_content = String::new();
         std::fs::File::open(export_file.path())?.read_to_string(&mut exported_content)?;
 
-        assert!(
-            exported_content.contains("Test Content 1"),
-            "Exported file missing content!"
-        );
-        assert!(
-            exported_content.contains(&test_agent),
-            "Exported file missing agent ID!"
-        );
-        assert!(
-            exported_content.contains("Archive"),
-            "Exported file missing record type!"
-        );
+        assert!(exported_content.contains("Test Content 1"), "Exported file missing content!");
+        assert!(exported_content.contains(&test_agent), "Exported file missing agent ID!");
+        assert!(exported_content.contains("Archive"), "Exported file missing record type!");
 
         Ok(())
     }

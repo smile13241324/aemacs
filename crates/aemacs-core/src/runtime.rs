@@ -1,21 +1,18 @@
-use gpui::{App, AppContext, Global, Task};
 use std::future::Future;
 
+use gpui::{App, AppContext, Global, Task};
 pub use tokio::task::JoinError;
 
 /// Initializes the Tokio wrapper using a new Tokio runtime.
 pub fn init(cx: &mut App) {
-    let runtime = match tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(2)
-        .enable_all()
-        .build()
-    {
-        Ok(rt) => rt,
-        Err(e) => {
-            log::error!("Failed to initialize Tokio: {e}");
-            std::process::exit(1);
-        }
-    };
+    let runtime =
+        match tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build() {
+            Ok(rt) => rt,
+            Err(e) => {
+                log::error!("Failed to initialize Tokio: {e}");
+                std::process::exit(1);
+            },
+        };
 
     cx.set_global(GlobalTokio::new(RuntimeHolder::Owned(runtime)));
 }

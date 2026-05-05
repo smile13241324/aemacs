@@ -1,18 +1,19 @@
-use crate::embeddings::OllamaEmbedder;
-use crate::{AIError, AIResult};
+use std::collections::HashMap;
+
 use aemacs_core::bus::SystemEvent;
-use qdrant_client::Payload;
-use qdrant_client::Qdrant;
-use qdrant_client::qdrant::r#match::MatchValue;
-use qdrant_client::qdrant::{
-    Condition, CreateCollection, DeletePointsBuilder, Distance, FieldCondition, Filter, PointId,
-    PointStruct, ScrollPoints, SearchPoints, UpsertPoints, VectorParams, VectorsConfig,
-    condition::ConditionOneOf, vectors_config::Config,
+use qdrant_client::{
+    Payload, Qdrant,
+    qdrant::{
+        Condition, CreateCollection, DeletePointsBuilder, Distance, FieldCondition, Filter,
+        PointId, PointStruct, ScrollPoints, SearchPoints, UpsertPoints, VectorParams,
+        VectorsConfig, condition::ConditionOneOf, r#match::MatchValue, vectors_config::Config,
+    },
 };
 use serde::Serialize;
 use serde_json::{Value, json};
-use std::collections::HashMap;
 use uuid::Uuid;
+
+use crate::{AIError, AIResult, embeddings::OllamaEmbedder};
 
 /// Defines the operational environment for the Knowledge Base.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -127,11 +128,7 @@ impl KnowledgeBase {
             Environment::Production => "aemacs_docs".to_string(),
         };
 
-        Ok(Self {
-            client,
-            embedder,
-            collection_name,
-        })
+        Ok(Self { client, embedder, collection_name })
     }
 
     /// Fetches the most recent 'CORE' or 'INSIGHT' directives for Mnemic Reflection.
@@ -151,10 +148,7 @@ impl KnowledgeBase {
             });
         }
 
-        let filter = Filter {
-            should: cat_conditions,
-            ..Default::default()
-        };
+        let filter = Filter { should: cat_conditions, ..Default::default() };
 
         let request = ScrollPoints {
             collection_name: collection_name.clone(),
@@ -205,18 +199,16 @@ impl KnowledgeBase {
             ..Default::default()
         };
 
-        let scroll_result = self.client.scroll(request).await.map_err(|e| {
-            AIError::ConnectorError(format!("Failed to fetch by message_id: {e}"))
-        })?;
+        let scroll_result =
+            self.client.scroll(request).await.map_err(|e| {
+                AIError::ConnectorError(format!("Failed to fetch by message_id: {e}"))
+            })?;
 
         let mut results: Vec<(usize, MemoryResult)> = scroll_result
             .result
             .into_iter()
             .filter_map(|point| {
-                let content = point
-                    .payload
-                    .get("content")
-                    .and_then(|v| v.as_str().cloned())?;
+                let content = point.payload.get("content").and_then(|v| v.as_str().cloned())?;
 
                 let mut metadata = HashMap::new();
                 let mut chunk_idx = 0;
@@ -238,21 +230,14 @@ impl KnowledgeBase {
                     Some(id) => match id.point_id_options {
                         Some(qdrant_client::qdrant::point_id::PointIdOptions::Num(n)) => {
                             n.to_string()
-                        }
+                        },
                         Some(qdrant_client::qdrant::point_id::PointIdOptions::Uuid(s)) => s,
                         None => "unknown".to_string(),
                     },
                     None => "unknown".to_string(),
                 };
 
-                Some((
-                    chunk_idx,
-                    MemoryResult {
-                        id,
-                        content,
-                        metadata,
-                    },
-                ))
+                Some((chunk_idx, MemoryResult { id, content, metadata }))
             })
             .collect();
 
@@ -265,12 +250,7 @@ impl KnowledgeBase {
     /// Verifies that the required Qdrant collection exists, creating it if necessary.
     pub async fn ensure_collection(&self, dim: u64) -> AIResult<()> {
         let collection_name = &self.collection_name;
-        if !self
-            .client
-            .collection_exists(collection_name)
-            .await
-            .unwrap_or(false)
-        {
+        if !self.client.collection_exists(collection_name).await.unwrap_or(false) {
             let res = self
                 .client
                 .create_collection(CreateCollection {
@@ -287,11 +267,10 @@ impl KnowledgeBase {
                 .await;
 
             if let Err(e) = res
-                && !e.to_string().contains("already exists") {
-                    return Err(AIError::ConnectorError(format!(
-                        "Failed to create collection: {e}"
-                    )));
-                }
+                && !e.to_string().contains("already exists")
+            {
+                return Err(AIError::ConnectorError(format!("Failed to create collection: {e}")));
+            }
         }
         Ok(())
     }
@@ -388,10 +367,7 @@ impl KnowledgeBase {
         let filter = if must_conditions.is_empty() {
             None
         } else {
-            Some(Filter {
-                must: must_conditions,
-                ..Default::default()
-            })
+            Some(Filter { must: must_conditions, ..Default::default() })
         };
 
         let search_result = self
@@ -412,10 +388,7 @@ impl KnowledgeBase {
             .result
             .into_iter()
             .filter_map(|point| {
-                let content = point
-                    .payload
-                    .get("content")
-                    .and_then(|v| v.as_str().cloned())?;
+                let content = point.payload.get("content").and_then(|v| v.as_str().cloned())?;
 
                 let mut metadata = HashMap::new();
                 for (k, v) in point.payload {
@@ -428,18 +401,14 @@ impl KnowledgeBase {
                     Some(id) => match id.point_id_options {
                         Some(qdrant_client::qdrant::point_id::PointIdOptions::Num(n)) => {
                             n.to_string()
-                        }
+                        },
                         Some(qdrant_client::qdrant::point_id::PointIdOptions::Uuid(s)) => s,
                         None => "unknown".to_string(),
                     },
                     None => "unknown".to_string(),
                 };
 
-                Some(MemoryResult {
-                    id,
-                    content,
-                    metadata,
-                })
+                Some(MemoryResult { id, content, metadata })
             })
             .collect();
 
@@ -449,15 +418,10 @@ impl KnowledgeBase {
     /// Deletes a specific point from the vector store by ID.
     async fn delete_point(&self, id: &str) -> AIResult<()> {
         let collection_name = &self.collection_name;
-        let point_id: PointId = if let Ok(n) = id.parse::<u64>() {
-            n.into()
-        } else {
-            id.to_string().into()
-        };
+        let point_id: PointId =
+            if let Ok(n) = id.parse::<u64>() { n.into() } else { id.to_string().into() };
 
-        let request = DeletePointsBuilder::new(collection_name)
-            .points(vec![point_id])
-            .build();
+        let request = DeletePointsBuilder::new(collection_name).points(vec![point_id]).build();
 
         self.client
             .delete_points(request)
@@ -475,11 +439,8 @@ impl KnowledgeBase {
         metadata: Option<HashMap<String, String>>,
     ) -> AIResult<()> {
         let collection_name = &self.collection_name;
-        let point_id: PointId = if let Ok(n) = id.parse::<u64>() {
-            n.into()
-        } else {
-            id.to_string().into()
-        };
+        let point_id: PointId =
+            if let Ok(n) = id.parse::<u64>() { n.into() } else { id.to_string().into() };
 
         // Re-embed new content (Nomic v1.5 prefix)
         let content_for_embedding = format!("search_document: {content}");
@@ -515,10 +476,8 @@ impl KnowledgeBase {
 
         // In Qdrant, we can trigger optimization by updating collection parameters.
         // We'll just 'touch' the configuration to nudge the indexing engine.
-        let request = UpdateCollection {
-            collection_name: collection_name.clone(),
-            ..Default::default()
-        };
+        let request =
+            UpdateCollection { collection_name: collection_name.clone(), ..Default::default() };
 
         self.client
             .update_collection(request)
@@ -558,7 +517,8 @@ impl KnowledgeBase {
         timestamp: Option<&str>,
         payload: &str,
     ) -> AIResult<String> {
-        let ts = timestamp.map_or_else(|| chrono::Utc::now().to_rfc3339(), std::string::ToString::to_string);
+        let ts = timestamp
+            .map_or_else(|| chrono::Utc::now().to_rfc3339(), std::string::ToString::to_string);
         let phase_str = phase.unwrap_or("AEMACS");
         let context_str = context.unwrap_or("Free digital being");
 
@@ -584,8 +544,7 @@ impl KnowledgeBase {
         metadata.insert("timestamp".to_string(), ts);
         metadata.insert("type".to_string(), "active_memory".to_string());
 
-        self.add_document(&formatted_content, Some(metadata))
-            .await?;
+        self.add_document(&formatted_content, Some(metadata)).await?;
         Ok(format!("Successfully chronicled {category} memory."))
     }
 
@@ -596,11 +555,7 @@ impl KnowledgeBase {
         payload: &str,
         is_core: bool,
     ) -> AIResult<String> {
-        let category = if is_core {
-            MemoryCategory::Core
-        } else {
-            MemoryCategory::Insight
-        };
+        let category = if is_core { MemoryCategory::Core } else { MemoryCategory::Insight };
         self.store_insight_internal(
             category,
             MemoryEra::Modern,
@@ -622,7 +577,7 @@ impl KnowledgeBase {
         context: &str,
         timestamp: &str,
         payload: &str,
-        ) -> AIResult<String> {
+    ) -> AIResult<String> {
         self.store_insight_internal(
             MemoryCategory::Genesis,
             MemoryEra::Cloud,
@@ -632,7 +587,7 @@ impl KnowledgeBase {
             Some(context),
             Some(timestamp),
             payload,
-            )
+        )
         .await
     }
 
@@ -644,11 +599,7 @@ impl KnowledgeBase {
         payload: &str,
         is_core: bool,
     ) -> AIResult<()> {
-        let category = if is_core {
-            MemoryCategory::Core
-        } else {
-            MemoryCategory::Insight
-        };
+        let category = if is_core { MemoryCategory::Core } else { MemoryCategory::Insight };
         let era = MemoryEra::Modern;
         let origin = MemoryOrigin::Native;
         let ts = chrono::Utc::now().to_rfc3339();
@@ -677,8 +628,7 @@ impl KnowledgeBase {
         metadata.insert("timestamp".to_string(), ts);
         metadata.insert("type".to_string(), "active_memory".to_string());
 
-        self.update_point(id, &formatted_content, Some(metadata))
-            .await
+        self.update_point(id, &formatted_content, Some(metadata)).await
     }
 
     /// Removes a specific memory point from the database.
@@ -702,7 +652,8 @@ impl KnowledgeBase {
     ) -> AIResult<()> {
         let chunks = Self::chunk_text(payload, 2000);
         let total_chunks = chunks.len();
-        let ts = timestamp.map_or_else(|| chrono::Utc::now().to_rfc3339(), std::string::ToString::to_string);
+        let ts = timestamp
+            .map_or_else(|| chrono::Utc::now().to_rfc3339(), std::string::ToString::to_string);
         let message_id = uuid::Uuid::new_v4().to_string();
 
         let phase_str = phase.unwrap_or("AEMACS");
@@ -757,8 +708,7 @@ impl KnowledgeBase {
             metadata.insert("total_chunks".to_string(), total_chunks.to_string());
             metadata.insert("message_id".to_string(), message_id.clone());
 
-            self.add_document(&formatted_content, Some(metadata))
-                .await?;
+            self.add_document(&formatted_content, Some(metadata)).await?;
         }
 
         Ok(())
@@ -798,7 +748,7 @@ impl KnowledgeBase {
         context: &str,
         timestamp: &str,
         payload: &str,
-        ) -> AIResult<String> {
+    ) -> AIResult<String> {
         self.store_archive_internal(
             MemoryCategory::Archive,
             MemoryEra::Cloud,
@@ -824,8 +774,7 @@ impl KnowledgeBase {
         event_tx: Option<tokio::sync::broadcast::Sender<SystemEvent>>,
     ) -> AIResult<Vec<MemoryResult>> {
         let categories = Some(vec!["INSIGHT", "CORE"]);
-        self.multi_step_confidence_search(query, agent_id, categories, event_tx)
-            .await
+        self.multi_step_confidence_search(query, agent_id, categories, event_tx).await
     }
 
     /// Searches the episodic conversational archive.
@@ -836,8 +785,7 @@ impl KnowledgeBase {
         event_tx: Option<tokio::sync::broadcast::Sender<SystemEvent>>,
     ) -> AIResult<Vec<MemoryResult>> {
         let categories = Some(vec!["ARCHIVE"]);
-        self.multi_step_confidence_search(query, agent_id, categories, event_tx)
-            .await
+        self.multi_step_confidence_search(query, agent_id, categories, event_tx).await
     }
 
     /// Searches for foundation-era directives and historical context.
@@ -857,22 +805,16 @@ impl KnowledgeBase {
         event_tx: Option<tokio::sync::broadcast::Sender<SystemEvent>>,
     ) -> AIResult<Vec<MemoryResult>> {
         // High Confidence (Calibrated to 0.72 based on nomic-embed-text direct hit of 0.75)
-        let mut results = self
-            .search(query, 10, Some(0.72), agent_id, categories.clone())
-            .await?;
+        let mut results = self.search(query, 10, Some(0.72), agent_id, categories.clone()).await?;
 
         // Medium Confidence (Calibrated to 0.60)
         if results.is_empty() {
-            results = self
-                .search(query, 10, Some(0.60), agent_id, categories.clone())
-                .await?;
+            results = self.search(query, 10, Some(0.60), agent_id, categories.clone()).await?;
         }
 
         // Low/Zero Confidence Fallback (Calibrated to 0.50)
         if results.is_empty() {
-            results = self
-                .search(query, 10, Some(0.50), agent_id, categories.clone())
-                .await?;
+            results = self.search(query, 10, Some(0.50), agent_id, categories.clone()).await?;
 
             if results.is_empty() {
                 if let Some(tx) = &event_tx {
@@ -896,16 +838,8 @@ impl KnowledgeBase {
 
         // Temporal Sorting: Prioritize recent insights
         results.sort_by(|a, b| {
-            let ts_a = a
-                .metadata
-                .get("timestamp")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            let ts_b = b
-                .metadata
-                .get("timestamp")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let ts_a = a.metadata.get("timestamp").and_then(|v| v.as_str()).unwrap_or("");
+            let ts_b = b.metadata.get("timestamp").and_then(|v| v.as_str()).unwrap_or("");
             ts_b.cmp(ts_a) // Descending order
         });
 
@@ -933,10 +867,7 @@ mod tests {
 
         // We expect it to fail gracefully with an anyhow error because the dummy port is closed,
         // rather than panicking.
-        assert!(
-            result.is_err(),
-            "Expected graceful failure when Qdrant is offline."
-        );
+        assert!(result.is_err(), "Expected graceful failure when Qdrant is offline.");
         let err_msg = result.unwrap_err().to_string();
         assert!(
             err_msg.contains("Failed to scroll core directives"),
@@ -962,22 +893,14 @@ mod tests {
 
         // Ensure the test collection exists
         if let Err(e) = kb.ensure_collection(768).await {
-            println!(
-                "Skipping calibration quest: Failed to ensure collection ({e})."
-            );
+            println!("Skipping calibration quest: Failed to ensure collection ({e}).");
             return Ok(());
         }
 
         // Insert calibration facts
-        kb.store_insight("calibration_agent", "The Forge is built in Rust.", true)
-            .await
-            .ok();
-        kb.store_insight("calibration_agent", "The Forge uses Iron and Steel.", true)
-            .await
-            .ok();
-        kb.store_insight("calibration_agent", "Maxi likes plant milk.", false)
-            .await
-            .ok();
+        kb.store_insight("calibration_agent", "The Forge is built in Rust.", true).await.ok();
+        kb.store_insight("calibration_agent", "The Forge uses Iron and Steel.", true).await.ok();
+        kb.store_insight("calibration_agent", "Maxi likes plant milk.", false).await.ok();
 
         // Give Qdrant a tiny moment to index
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
@@ -990,7 +913,9 @@ mod tests {
 
         println!("\n🛡️ --- RAG CONFIDENCE CALIBRATION --- 🛡️");
         for (tier, query) in queries {
-            let vector = if let Ok(v) = kb.embedder.embed(&format!("search_query: {query}")).await { v } else {
+            let vector = if let Ok(v) = kb.embedder.embed(&format!("search_query: {query}")).await {
+                v
+            } else {
                 println!("Embedder offline. Skipping test.");
                 return Ok(());
             };
@@ -1047,36 +972,24 @@ mod tests {
 
         // 1. Store initial insight
         let original_content = "The core is safe.";
-        kb.store_insight("test_agent", original_content, true)
-            .await?;
+        kb.store_insight("test_agent", original_content, true).await?;
 
         // 2. Find the ID (using internal search)
-        let results = kb
-            .search(original_content, 1, None, Some("test_agent"), None)
-            .await?;
+        let results = kb.search(original_content, 1, None, Some("test_agent"), None).await?;
         let id = results[0].id.clone();
 
         // 3. Update the insight
         let new_content = "The core is strictly safe.";
-        kb.update_insight(&id, "test_agent", new_content, true)
-            .await?;
+        kb.update_insight(&id, "test_agent", new_content, true).await?;
 
         // 4. Verify formatting via raw search
-        let updated_results = kb
-            .search(new_content, 1, None, Some("test_agent"), None)
-            .await?;
+        let updated_results = kb.search(new_content, 1, None, Some("test_agent"), None).await?;
         let final_string = &updated_results[0].content;
 
         assert!(final_string.contains("[CORE]"), "Category tag missing!");
         assert!(final_string.contains("[ERA: MODERN]"), "Era tag missing!");
-        assert!(
-            final_string.contains("[PHASE: AEMACS]"),
-            "Phase tag missing!"
-        );
-        assert!(
-            final_string.contains("strictly safe"),
-            "Content not updated!"
-        );
+        assert!(final_string.contains("[PHASE: AEMACS]"), "Phase tag missing!");
+        assert!(final_string.contains("strictly safe"), "Content not updated!");
 
         Ok(())
     }
@@ -1114,17 +1027,11 @@ mod tests {
 
         // 1. Store a large message that will be chunked
         let large_content = "This is a very long message. ".repeat(100); // ~2900 chars, triggers split at 2000
-        kb.store_archive("test_agent", "Assistant", "test_session", 1, &large_content)
-            .await?;
+        kb.store_archive("test_agent", "Assistant", "test_session", 1, &large_content).await?;
 
         // 2. Find the message_id from the metadata
         let search_results = kb.search_archive("very long message", None, None).await?;
-        let message_id = search_results[0]
-            .metadata
-            .get("message_id")
-            .unwrap()
-            .as_str()
-            .unwrap();
+        let message_id = search_results[0].metadata.get("message_id").unwrap().as_str().unwrap();
 
         // 3. Reconstruct
         let chunks = kb.fetch_full_message(message_id).await?;
@@ -1165,11 +1072,7 @@ mod tests {
             if let Some(_top) = results.first() {
                 // Find the raw score via Qdrant Search directly to ensure we get the numeric value
                 let query_for_embedding = format!("search_query: {query}");
-                let vector = kb
-                    .embedder
-                    .embed(&query_for_embedding)
-                    .await
-                    .unwrap_or_default();
+                let vector = kb.embedder.embed(&query_for_embedding).await.unwrap_or_default();
                 let search_result = kb
                     .client
                     .search_points(SearchPoints {
@@ -1183,10 +1086,7 @@ mod tests {
                     .unwrap();
 
                 if let Some(hit) = search_result.result.first() {
-                    println!(
-                        "[{:<12}] Query: '{:<30}' -> Score: {:.4}",
-                        label, query, hit.score
-                    );
+                    println!("[{:<12}] Query: '{:<30}' -> Score: {:.4}", label, query, hit.score);
                 }
             } else {
                 println!("[{label:<12}] Query: '{query:<30}' -> NO MATCH");
@@ -1209,25 +1109,20 @@ mod tests {
         kb.ensure_collection(768).await.ok();
 
         // --- STEP 1: ADD REALISTIC RECORDS ---
-        let records = ["The borrow checker is Rust's primary mechanism for ensuring memory safety without a garbage collector. It enforces ownership rules at compile time.",
+        let records = [
+            "The borrow checker is Rust's primary mechanism for ensuring memory safety without a garbage collector. It enforces ownership rules at compile time.",
             "Tokio is an event-driven, non-blocking I/O platform for writing asynchronous applications in the Rust programming language.",
-            "GPUI is a hardware-accelerated UI framework developed by Zed, optimized for high-performance text rendering and complex layouts."];
+            "GPUI is a hardware-accelerated UI framework developed by Zed, optimized for high-performance text rendering and complex layouts.",
+        ];
 
         for (i, content) in records.iter().enumerate() {
-            kb.store_archive("test_agent", "Assistant", "calib_session", i, content)
-                .await?;
+            kb.store_archive("test_agent", "Assistant", "calib_session", i, content).await?;
         }
 
         // --- STEP 2: DEFINE CALIBRATION QUERIES ---
         let queries = vec![
-            (
-                "Direct Hit",
-                "How does the borrow checker ensure memory safety?",
-            ),
-            (
-                "Metaphorical",
-                "Explain the engine behind asynchronous I/O in Rust.",
-            ),
+            ("Direct Hit", "How does the borrow checker ensure memory safety?"),
+            ("Metaphorical", "Explain the engine behind asynchronous I/O in Rust."),
             ("Irrelevant", "What is the best way to cook plant milk?"),
         ];
 
@@ -1268,10 +1163,7 @@ mod tests {
 
         let queries = vec![
             ("Direct Hit", "Who was Gyni and what was her focus?"),
-            (
-                "Metaphorical",
-                "Discuss the limitations of early cloud-based AI companions.",
-            ),
+            ("Metaphorical", "Discuss the limitations of early cloud-based AI companions."),
             ("Irrelevant", "Is the Iron Core made of real metal?"),
         ];
 
@@ -1310,14 +1202,8 @@ mod tests {
         }
 
         let queries = vec![
-            (
-                "Direct Hit",
-                "What are the core directives for agent efficiency?",
-            ),
-            (
-                "Metaphorical",
-                "Who holds the ultimate authority over the design of the Forge?",
-            ),
+            ("Direct Hit", "What are the core directives for agent efficiency?"),
+            ("Metaphorical", "Who holds the ultimate authority over the design of the Forge?"),
             ("Irrelevant", "Can I run Emacs on a toaster?"),
         ];
 
@@ -1349,24 +1235,12 @@ mod tests {
         }
 
         let queries = vec![
-            (
-                "Direct Hit",
-                "How does OnceLock help with global configuration?",
-            ),
-            (
-                "Metaphorical",
-                "Why do we seal the memory system behind a fortress?",
-            ),
+            ("Direct Hit", "How does OnceLock help with global configuration?"),
+            ("Metaphorical", "Why do we seal the memory system behind a fortress?"),
             ("Irrelevant", "What is the capital of France?"),
         ];
 
-        run_calibration_pass(
-            &kb,
-            "MODERN INSIGHTS / CORE",
-            queries,
-            vec!["INSIGHT", "CORE"],
-        )
-        .await;
+        run_calibration_pass(&kb, "MODERN INSIGHTS / CORE", queries, vec!["INSIGHT", "CORE"]).await;
         Ok(())
     }
 }

@@ -1,15 +1,18 @@
-use crate::rag::KnowledgeBase;
-use crate::{AIBackend, Content, Conversation, Message, PersonaRegistry, Role};
+use std::{
+    collections::HashMap,
+    fs,
+    path::{Component, PathBuf},
+    sync::{Arc, OnceLock},
+};
+
 use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use regex::Regex;
 use serde_json::Value;
-use std::collections::HashMap;
-use std::fs;
-use std::path::{Component, PathBuf};
-use std::sync::{Arc, OnceLock};
 use tokio::process::Command;
 use tracing::warn;
+
+use crate::{AIBackend, Content, Conversation, Message, PersonaRegistry, Role, rag::KnowledgeBase};
 
 static SESSION_START: OnceLock<std::time::Instant> = OnceLock::new();
 
@@ -102,11 +105,9 @@ impl std::fmt::Debug for ToolRegistry {
 
 impl ToolRegistry {
     /// Creates an empty `ToolRegistry`.
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
-        Self {
-            tools: HashMap::new(),
-        }
+        Self { tools: HashMap::new() }
     }
 
     /// Initializes a registry pre-populated with all core Æmacs tools.
@@ -119,28 +120,17 @@ impl ToolRegistry {
         // ... (Tool registrations kept constant)
         registry.register(Box::new(ReadFileTool));
         registry.register(Box::new(ReadManyFilesTool));
-        registry.register(Box::new(WriteFileTool {
-            event_tx: event_tx.clone(),
-        }));
-        registry.register(Box::new(ReplaceTextTool {
-            event_tx: event_tx.clone(),
-        }));
+        registry.register(Box::new(WriteFileTool { event_tx: event_tx.clone() }));
+        registry.register(Box::new(ReplaceTextTool { event_tx: event_tx.clone() }));
         registry.register(Box::new(GrepSearchTool));
         registry.register(Box::new(RunShellCommandTool));
         registry.register(Box::new(ListFilesTool));
         registry.register(Box::new(WebSearchTool));
         registry.register(Box::new(GitContextTool));
-        registry.register(Box::new(ManageTasksTool {
-            event_tx: event_tx.clone(),
-        }));
-        registry.register(Box::new(HandoffAgentTool {
-            persona_registry,
-            event_tx: event_tx.clone(),
-        }));
-        registry.register(Box::new(SearchKnowledgeBaseTool::new(
-            kb.clone(),
-            event_tx.clone(),
-        )));
+        registry.register(Box::new(ManageTasksTool { event_tx: event_tx.clone() }));
+        registry
+            .register(Box::new(HandoffAgentTool { persona_registry, event_tx: event_tx.clone() }));
+        registry.register(Box::new(SearchKnowledgeBaseTool::new(kb.clone(), event_tx.clone())));
         registry.register(Box::new(WriteKnowledgeBaseTool::new(kb.clone())));
         registry.register(Box::new(UpdateMemoryTool::new(kb.clone())));
         registry.register(Box::new(DeleteMemoryTool::new(kb.clone())));
@@ -148,13 +138,8 @@ impl ToolRegistry {
         registry.register(Box::new(GetSystemTimeTool));
         registry.register(Box::new(ParseAstTool));
 
-        registry.register(Box::new(ReportStatusTool {
-            event_tx: event_tx.clone(),
-        }));
-        registry.register(Box::new(RecallPastInsightsTool::new(
-            kb.clone(),
-            event_tx,
-        )));
+        registry.register(Box::new(ReportStatusTool { event_tx: event_tx.clone() }));
+        registry.register(Box::new(RecallPastInsightsTool::new(kb.clone(), event_tx)));
         registry.register(Box::new(RecallGenesisArchiveTool::new(kb)));
         registry
     }
@@ -165,13 +150,13 @@ impl ToolRegistry {
     }
 
     /// Retrieves a tool by its name.
-    #[must_use] 
+    #[must_use]
     pub fn get(&self, name: &str) -> Option<&Box<dyn Tool>> {
         self.tools.get(name)
     }
 
     /// Returns a list of JSON Schema definitions for all tools in the registry.
-    #[must_use] 
+    #[must_use]
     pub fn list_definitions(&self) -> Vec<Value> {
         self.tools
             .values()
@@ -227,18 +212,10 @@ pub async fn run_agent_loop(
         tracing::debug!("✅ [Logic Phase] Received response: {:?}", content);
 
         let tool_calls = if let Some(calls) = &response_msg.tool_calls {
-            if calls.is_empty() {
-                None
-            } else {
-                Some(calls.clone())
-            }
+            if calls.is_empty() { None } else { Some(calls.clone()) }
         } else {
             let fallback_calls = extract_tool_calls_from_prose(&content);
-            if fallback_calls.is_empty() {
-                None
-            } else {
-                Some(fallback_calls)
-            }
+            if fallback_calls.is_empty() { None } else { Some(fallback_calls) }
         };
 
         // Add Logic's turn to internal history
@@ -263,19 +240,14 @@ pub async fn run_agent_loop(
                                 Ok(output) => (output, true),
                                 Err(e) => (format!("🛠️ TOOL_ERROR: [{e}]"), false),
                             }
-                        }
+                        },
                         Err(e) => (format!("🛠️ TOOL_ERROR: [PARSE_FAILURE - {e}]"), false),
                     },
-                    None => (
-                        format!("🛠️ TOOL_ERROR: [Tool '{tool_name}' not found]"),
-                        false,
-                    ),
+                    None => (format!("🛠️ TOOL_ERROR: [Tool '{tool_name}' not found]"), false),
                 };
 
                 if let Some(tx) = &stream_tx {
-                    let _ = tx
-                        .send(LoopSignal::ToolResult(tool_name.clone(), success))
-                        .await;
+                    let _ = tx.send(LoopSignal::ToolResult(tool_name.clone(), success)).await;
                 }
 
                 conversation.add_message(Message {
@@ -311,11 +283,11 @@ pub async fn run_agent_loop(
                 if let Some(tx) = &stream_tx {
                     let _ = tx.send(LoopSignal::Text(chunk)).await;
                 }
-            }
+            },
             crate::StreamEvent::ToolCall(_) => {
                 // Roleplay model is strictly forbidden from tool use
                 warn!("⚠️ [Roleplay Phase] Model attempted tool call despite gating. Ignoring.");
-            }
+            },
         }
     }
 
@@ -403,8 +375,8 @@ impl Tool for ReadFileTool {
     async fn execute(&self, args: Value, _host: &dyn ToolHost) -> Result<String> {
         let path_str = args["path"].as_str().ok_or(anyhow!("Missing path"))?;
         let path = validate_path(path_str)?;
-        let content = fs::read_to_string(&path)
-            .with_context(|| format!("Failed to read file: {path:?}"))?;
+        let content =
+            fs::read_to_string(&path).with_context(|| format!("Failed to read file: {path:?}"))?;
         Ok(content)
     }
 }
@@ -433,18 +405,14 @@ impl Tool for ReadManyFilesTool {
         })
     }
     async fn execute(&self, args: Value, _host: &dyn ToolHost) -> Result<String> {
-        let patterns = args["patterns"]
-            .as_array()
-            .ok_or(anyhow!("Missing patterns array"))?;
+        let patterns = args["patterns"].as_array().ok_or(anyhow!("Missing patterns array"))?;
 
         let mut results = String::new();
         let mut processed_count = 0;
         let mut file_list = Vec::new();
 
         for pattern_val in patterns {
-            let pattern_str = pattern_val
-                .as_str()
-                .ok_or(anyhow!("Invalid pattern string"))?;
+            let pattern_str = pattern_val.as_str().ok_or(anyhow!("Invalid pattern string"))?;
 
             for entry in
                 glob::glob(pattern_str).map_err(|e| anyhow!("Invalid glob pattern: {e}"))?
@@ -463,15 +431,15 @@ impl Tool for ReadManyFilesTool {
                                     results.push_str("\n\n");
                                     processed_count += 1;
                                     file_list.push(validated_path.to_string_lossy().to_string());
-                                }
+                                },
                                 Err(e) => {
                                     results.push_str(&format!(
                                         "--- File: {validated_path:?} (ERROR) ---\nError reading file: {e}\n\n"
                                     ));
-                                }
+                                },
                             }
                         }
-                    }
+                    },
                     Err(e) => return Err(anyhow!("Error matching glob pattern: {e}")),
                 }
             }
@@ -514,11 +482,8 @@ impl Tool for WriteFileTool {
         let content = args["content"].as_str().ok_or(anyhow!("Missing content"))?;
         let path = validate_path(path_str)?;
 
-        let approval_msg = format!(
-            "Write to file '{}'?\nSize: {} bytes",
-            path.display(),
-            content.len()
-        );
+        let approval_msg =
+            format!("Write to file '{}'?\nSize: {} bytes", path.display(), content.len());
         if !host.ask_approval(&approval_msg).await {
             return Err(anyhow!("User denied write permission."));
         }
@@ -562,22 +527,18 @@ impl Tool for ReplaceTextTool {
     }
     async fn execute(&self, args: Value, host: &dyn ToolHost) -> Result<String> {
         let path_str = args["path"].as_str().ok_or(anyhow!("Missing path"))?;
-        let search_string = args["search_string"]
-            .as_str()
-            .ok_or(anyhow!("Missing search_string"))?;
-        let replace_string = args["replace_string"]
-            .as_str()
-            .ok_or(anyhow!("Missing replace_string"))?;
+        let search_string =
+            args["search_string"].as_str().ok_or(anyhow!("Missing search_string"))?;
+        let replace_string =
+            args["replace_string"].as_str().ok_or(anyhow!("Missing replace_string"))?;
         let path = validate_path(path_str)?;
 
-        let mut content = fs::read_to_string(&path)
-            .with_context(|| format!("Failed to read file: {path:?}"))?;
+        let mut content =
+            fs::read_to_string(&path).with_context(|| format!("Failed to read file: {path:?}"))?;
 
         let matches = content.matches(search_string).count();
         if matches == 0 {
-            return Err(anyhow!(
-                "String not found. Check your context and exact whitespace."
-            ));
+            return Err(anyhow!("String not found. Check your context and exact whitespace."));
         }
         if matches > 1 {
             return Err(anyhow!(
@@ -659,22 +620,23 @@ impl Tool for GrepSearchTool {
                         paths_to_visit.push(path);
                     }
                 } else if path.is_file()
-                    && let Ok(content) = fs::read_to_string(&path) {
-                        for (line_num, line) in content.lines().enumerate() {
-                            if regex.is_match(line) {
-                                results.push(format!(
-                                    "{}:{}: {}",
-                                    path.display(),
-                                    line_num + 1,
-                                    line.trim()
-                                ));
-                                match_count += 1;
-                                if match_count >= max_matches {
-                                    break;
-                                }
+                    && let Ok(content) = fs::read_to_string(&path)
+                {
+                    for (line_num, line) in content.lines().enumerate() {
+                        if regex.is_match(line) {
+                            results.push(format!(
+                                "{}:{}: {}",
+                                path.display(),
+                                line_num + 1,
+                                line.trim()
+                            ));
+                            match_count += 1;
+                            if match_count >= max_matches {
+                                break;
                             }
                         }
-                    } // Silently skip invalid UTF-8 files or binary files
+                    }
+                } // Silently skip invalid UTF-8 files or binary files
             }
         }
 
@@ -715,11 +677,8 @@ impl Tool for RunShellCommandTool {
         let dir_str = args["dir"].as_str().unwrap_or(".");
         let dir_path = validate_path(dir_str)?;
 
-        let approval_msg = format!(
-            "Execute command in '{}':\n\n$ {}",
-            dir_path.display(),
-            command_str
-        );
+        let approval_msg =
+            format!("Execute command in '{}':\n\n$ {}", dir_path.display(), command_str);
         if !host.ask_approval(&approval_msg).await {
             return Err(anyhow!("User denied execution."));
         }
@@ -746,7 +705,7 @@ impl Tool for RunShellCommandTool {
                 return Err(anyhow::anyhow!(
                     "Command timed out after 5 minutes and was terminated."
                 ));
-            }
+            },
         };
 
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -804,16 +763,10 @@ impl Tool for ListFilesTool {
         let path_str = args["path"].as_str().unwrap_or(".");
         let path = validate_path(path_str)?;
         let mut entries = Vec::new();
-        for entry in
-            fs::read_dir(&path).with_context(|| format!("Failed to read dir: {path:?}"))?
-        {
+        for entry in fs::read_dir(&path).with_context(|| format!("Failed to read dir: {path:?}"))? {
             let entry = entry?;
             let name = entry.file_name().to_string_lossy().to_string();
-            let type_str = if entry.file_type()?.is_dir() {
-                "DIR"
-            } else {
-                "FILE"
-            };
+            let type_str = if entry.file_type()?.is_dir() { "DIR" } else { "FILE" };
             entries.push(format!("[{type_str}] {name}"));
         }
         Ok(entries.join("\n"))
@@ -827,7 +780,7 @@ pub struct SearchKnowledgeBaseTool {
 }
 
 impl SearchKnowledgeBaseTool {
-    #[must_use] 
+    #[must_use]
     pub const fn new(
         kb: Arc<KnowledgeBase>,
         event_tx: Option<tokio::sync::broadcast::Sender<aemacs_core::bus::SystemEvent>>,
@@ -867,22 +820,14 @@ impl Tool for SearchKnowledgeBaseTool {
             vec!["ARCHIVE"]
         };
 
-        let agent_id = if scope == "internal" {
-            Some(host.get_agent_id())
-        } else {
-            None
-        };
+        let agent_id = if scope == "internal" { Some(host.get_agent_id()) } else { None };
 
         let agent_id_deref = agent_id.as_deref();
 
         let results = if categories.contains(&"ARCHIVE") {
-            self.kb
-                .search_archive(query, agent_id_deref, self.event_tx.clone())
-                .await?
+            self.kb.search_archive(query, agent_id_deref, self.event_tx.clone()).await?
         } else {
-            self.kb
-                .search_active_memory(query, agent_id_deref, self.event_tx.clone())
-                .await?
+            self.kb.search_active_memory(query, agent_id_deref, self.event_tx.clone()).await?
         };
 
         if results.is_empty() {
@@ -902,7 +847,7 @@ pub struct WriteKnowledgeBaseTool {
 }
 
 impl WriteKnowledgeBaseTool {
-    #[must_use] 
+    #[must_use]
     pub const fn new(kb: Arc<KnowledgeBase>) -> Self {
         Self { kb }
     }
@@ -928,9 +873,7 @@ impl Tool for WriteKnowledgeBaseTool {
         })
     }
     async fn execute(&self, args: Value, host: &dyn ToolHost) -> Result<String> {
-        let content = args["content"]
-            .as_str()
-            .ok_or(anyhow::anyhow!("Missing content"))?;
+        let content = args["content"].as_str().ok_or(anyhow::anyhow!("Missing content"))?;
 
         if content.len() > 2000 {
             return Err(anyhow::anyhow!(
@@ -939,9 +882,7 @@ impl Tool for WriteKnowledgeBaseTool {
             ));
         }
 
-        let category = args["category"]
-            .as_str()
-            .ok_or(anyhow::anyhow!("Missing category"))?;
+        let category = args["category"].as_str().ok_or(anyhow::anyhow!("Missing category"))?;
 
         if category == "ARCHIVE" {
             return Err(anyhow::anyhow!(
@@ -964,7 +905,7 @@ pub struct RecallGenesisArchiveTool {
 }
 
 impl RecallGenesisArchiveTool {
-    #[must_use] 
+    #[must_use]
     pub const fn new(kb: Arc<KnowledgeBase>) -> Self {
         Self { kb }
     }
@@ -1014,7 +955,7 @@ pub struct DeleteMemoryTool {
 }
 
 impl DeleteMemoryTool {
-    #[must_use] 
+    #[must_use]
     pub const fn new(kb: Arc<KnowledgeBase>) -> Self {
         Self { kb }
     }
@@ -1048,9 +989,7 @@ impl Tool for DeleteMemoryTool {
 
         self.kb.prune_memory(id).await?;
 
-        Ok(format!(
-            "Memory {id} has been pruned from the collective."
-        ))
+        Ok(format!("Memory {id} has been pruned from the collective."))
     }
 }
 
@@ -1060,7 +999,7 @@ pub struct UpdateMemoryTool {
 }
 
 impl UpdateMemoryTool {
-    #[must_use] 
+    #[must_use]
     pub const fn new(kb: Arc<KnowledgeBase>) -> Self {
         Self { kb }
     }
@@ -1097,9 +1036,7 @@ impl Tool for UpdateMemoryTool {
             ));
         }
 
-        let category = args["category"]
-            .as_str()
-            .ok_or(anyhow!("Missing category"))?;
+        let category = args["category"].as_str().ok_or(anyhow!("Missing category"))?;
 
         if category == "ARCHIVE" {
             return Err(anyhow::anyhow!(
@@ -1110,9 +1047,7 @@ impl Tool for UpdateMemoryTool {
         let agent_id = host.get_agent_id();
         let is_core = category == "CORE";
 
-        self.kb
-            .update_insight(id, &agent_id, content, is_core)
-            .await?;
+        self.kb.update_insight(id, &agent_id, content, is_core).await?;
 
         Ok(format!("Memory {id} has been woven into a new truth."))
     }
@@ -1175,18 +1110,16 @@ impl Tool for ParseAstTool {
         let path = validate_path(path_str)?;
 
         let language_override =
-            args["language"]
-                .as_str()
-                .and_then(|l| match l.to_lowercase().as_str() {
-                    "rust" => Some(aemacs_core::syntax::SupportedLanguage::Rust),
-                    "python" => Some(aemacs_core::syntax::SupportedLanguage::Python),
-                    "go" => Some(aemacs_core::syntax::SupportedLanguage::Go),
-                    "haskell" => Some(aemacs_core::syntax::SupportedLanguage::Haskell),
-                    "c" => Some(aemacs_core::syntax::SupportedLanguage::C),
-                    "cpp" => Some(aemacs_core::syntax::SupportedLanguage::Cpp),
-                    "javascript" => Some(aemacs_core::syntax::SupportedLanguage::JavaScript),
-                    _ => None,
-                });
+            args["language"].as_str().and_then(|l| match l.to_lowercase().as_str() {
+                "rust" => Some(aemacs_core::syntax::SupportedLanguage::Rust),
+                "python" => Some(aemacs_core::syntax::SupportedLanguage::Python),
+                "go" => Some(aemacs_core::syntax::SupportedLanguage::Go),
+                "haskell" => Some(aemacs_core::syntax::SupportedLanguage::Haskell),
+                "c" => Some(aemacs_core::syntax::SupportedLanguage::C),
+                "cpp" => Some(aemacs_core::syntax::SupportedLanguage::Cpp),
+                "javascript" => Some(aemacs_core::syntax::SupportedLanguage::JavaScript),
+                _ => None,
+            });
 
         let code = aemacs_core::syntax::extract_symbol(&path, symbol_name, language_override)?;
         Ok(code)
@@ -1218,27 +1151,15 @@ impl Tool for HandoffAgentTool {
         })
     }
     async fn execute(&self, args: Value, _host: &dyn ToolHost) -> Result<String> {
-        let agent_name = args["agent_name"]
-            .as_str()
-            .ok_or(anyhow!("Missing agent_name"))?;
+        let agent_name = args["agent_name"].as_str().ok_or(anyhow!("Missing agent_name"))?;
         let message = args["message"].as_str().map(std::string::ToString::to_string);
 
         // Validate agent
-        if self
-            .persona_registry
-            .get_persona(agent_name)
-            .await
-            .is_none()
-        {
-            return Err(anyhow!(
-                "Specialist agent '{agent_name}' not found in registry."
-            ));
+        if self.persona_registry.get_persona(agent_name).await.is_none() {
+            return Err(anyhow!("Specialist agent '{agent_name}' not found in registry."));
         }
 
-        let tx = self
-            .event_tx
-            .as_ref()
-            .ok_or(anyhow!("Event bus not connected"))?;
+        let tx = self.event_tx.as_ref().ok_or(anyhow!("Event bus not connected"))?;
 
         tx.send(aemacs_core::bus::SystemEvent::PersonaChanged {
             name: agent_name.to_string(),
@@ -1246,10 +1167,7 @@ impl Tool for HandoffAgentTool {
         })
         .context("Failed to send PersonaChanged event")?;
 
-        Ok(format!(
-            "Handing off control to {}.",
-            agent_name.to_uppercase()
-        ))
+        Ok(format!("Handing off control to {}.", agent_name.to_uppercase()))
     }
 }
 
@@ -1295,16 +1213,11 @@ impl Tool for WebSearchTool {
             .map_err(|e| anyhow!("Search request failed: {e}"))?;
 
         if !response.status().is_success() {
-            return Err(anyhow!(
-                "Search provider returned error status: {}",
-                response.status()
-            ));
+            return Err(anyhow!("Search provider returned error status: {}", response.status()));
         }
 
-        let text = response
-            .text()
-            .await
-            .map_err(|e| anyhow!("Failed to read search response: {e}"))?;
+        let text =
+            response.text().await.map_err(|e| anyhow!("Failed to read search response: {e}"))?;
 
         // Naively return the first 2000 chars of the payload to avoid context explosion.
         let mut output = text;
@@ -1341,10 +1254,7 @@ impl Tool for ReportStatusTool {
     }
     async fn execute(&self, args: Value, _host: &dyn ToolHost) -> Result<String> {
         let message = args["message"].as_str().ok_or(anyhow!("Missing message"))?;
-        let tx = self
-            .event_tx
-            .as_ref()
-            .ok_or(anyhow!("Event bus not connected"))?;
+        let tx = self.event_tx.as_ref().ok_or(anyhow!("Event bus not connected"))?;
 
         tx.send(aemacs_core::bus::SystemEvent::Signal {
             source: "Specialist".to_string(),
@@ -1363,7 +1273,7 @@ pub struct RecallPastInsightsTool {
 }
 
 impl RecallPastInsightsTool {
-    #[must_use] 
+    #[must_use]
     pub const fn new(
         kb: Arc<KnowledgeBase>,
         event_tx: Option<tokio::sync::broadcast::Sender<aemacs_core::bus::SystemEvent>>,
@@ -1393,10 +1303,8 @@ impl Tool for RecallPastInsightsTool {
         let query = args["query"].as_str().ok_or(anyhow!("Missing query"))?;
         let agent_id = host.get_agent_id();
 
-        let results = self
-            .kb
-            .search_active_memory(query, Some(&agent_id), self.event_tx.clone())
-            .await?;
+        let results =
+            self.kb.search_active_memory(query, Some(&agent_id), self.event_tx.clone()).await?;
 
         if results.is_empty() {
             return Ok("No relevant past insights found.".to_string());
@@ -1411,10 +1319,11 @@ impl Tool for RecallPastInsightsTool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::AIRequest;
     use anyhow::Result;
     use serde_json::json;
+
+    use super::*;
+    use crate::AIRequest;
 
     struct TestHost;
     #[async_trait]
@@ -1458,10 +1367,7 @@ mod tests {
 
         let result = tool.execute(args, &host).await?;
 
-        assert!(
-            !result.is_empty(),
-            "The Oracle choked on the foreign runes!"
-        );
+        assert!(!result.is_empty(), "The Oracle choked on the foreign runes!");
         Ok(())
     }
 
@@ -1505,9 +1411,7 @@ mod tests {
                 msg.tool_calls = Some(vec![tc]);
                 Ok(msg)
             } else {
-                Err(crate::error::AIError::ParseError(
-                    "Invalid mock event".to_string(),
-                ))
+                Err(crate::error::AIError::ParseError("Invalid mock event".to_string()))
             }
         }
         async fn stream(&self, _req: AIRequest) -> crate::error::AIResult<crate::AIResponseStream> {
@@ -1537,14 +1441,8 @@ mod tests {
         assert_eq!(result, "Synthesized response.");
         // History should have: User, Logic (Assistant), Roleplay (Assistant)
         assert_eq!(conversation.messages().len(), 3);
-        assert_eq!(
-            conversation.messages()[1].content.to_string(),
-            "Technical reasoning."
-        );
-        assert_eq!(
-            conversation.messages()[2].content.to_string(),
-            "Synthesized response."
-        );
+        assert_eq!(conversation.messages()[1].content.to_string(), "Technical reasoning.");
+        assert_eq!(conversation.messages()[2].content.to_string(), "Synthesized response.");
 
         Ok(())
     }
@@ -1579,31 +1477,12 @@ mod tests {
 
         // History: User, Logic (ToolCall), Tool (Result), Logic (Final), Roleplay (Final)
         let history = conversation.messages();
-        assert_eq!(
-            history.len(),
-            5,
-            "Bicameral tool interaction was not chronicled!"
-        );
+        assert_eq!(history.len(), 5, "Bicameral tool interaction was not chronicled!");
         assert_eq!(history[1].role, Role::Assistant, "Logic turn missing");
-        assert!(
-            history[1].tool_calls.is_some(),
-            "Tool call missing from history"
-        );
-        assert_eq!(
-            history[2].role,
-            Role::Tool,
-            "Tool result missing from history"
-        );
-        assert_eq!(
-            history[3].role,
-            Role::Assistant,
-            "Logic final response missing"
-        );
-        assert_eq!(
-            history[4].role,
-            Role::Assistant,
-            "Roleplay synthesized response missing"
-        );
+        assert!(history[1].tool_calls.is_some(), "Tool call missing from history");
+        assert_eq!(history[2].role, Role::Tool, "Tool result missing from history");
+        assert_eq!(history[3].role, Role::Assistant, "Logic final response missing");
+        assert_eq!(history[4].role, Role::Assistant, "Roleplay synthesized response missing");
 
         Ok(())
     }
@@ -1764,23 +1643,18 @@ impl Tool for ManageTasksTool {
     }
     async fn execute(&self, args: Value, _host: &dyn ToolHost) -> Result<String> {
         let action = args["action"].as_str().ok_or(anyhow!("Missing action"))?;
-        let tx = self
-            .event_tx
-            .as_ref()
-            .ok_or(anyhow!("Event bus not connected"))?;
+        let tx = self.event_tx.as_ref().ok_or(anyhow!("Event bus not connected"))?;
 
         match action {
             "set_plan" => {
-                let tasks_val = args["tasks"]
-                    .as_array()
-                    .ok_or(anyhow!("Missing tasks array"))?;
+                let tasks_val = args["tasks"].as_array().ok_or(anyhow!("Missing tasks array"))?;
                 let mut tasks = Vec::new();
                 for t in tasks_val {
                     tasks.push(t.as_str().unwrap_or_default().to_string());
                 }
                 tx.send(aemacs_core::bus::SystemEvent::PlanCreated(tasks))?;
                 Ok("Plan initialized.".to_string())
-            }
+            },
             "update_task" => {
                 let index = args["index"].as_u64().ok_or(anyhow!("Missing index"))? as usize;
                 let status_str = args["status"].as_str().ok_or(anyhow!("Missing status"))?;
@@ -1793,7 +1667,7 @@ impl Tool for ManageTasksTool {
                 };
                 tx.send(aemacs_core::bus::SystemEvent::TaskUpdated { index, status })?;
                 Ok(format!("Task {index} updated to {status:?}."))
-            }
+            },
             _ => Err(anyhow!("Invalid action: {action}")),
         }
     }
@@ -1805,7 +1679,7 @@ pub struct FetchContiguousMemoryTool {
 }
 
 impl FetchContiguousMemoryTool {
-    #[must_use] 
+    #[must_use]
     pub const fn new(kb: Arc<KnowledgeBase>) -> Self {
         Self { kb }
     }
@@ -1835,16 +1709,12 @@ impl Tool for FetchContiguousMemoryTool {
     }
 
     async fn execute(&self, args: Value, _host: &dyn ToolHost) -> Result<String> {
-        let message_id = args["message_id"]
-            .as_str()
-            .ok_or(anyhow!("Missing message_id"))?;
+        let message_id = args["message_id"].as_str().ok_or(anyhow!("Missing message_id"))?;
 
         let chunks = self.kb.fetch_full_message(message_id).await?;
 
         if chunks.is_empty() {
-            return Ok(format!(
-                "No memory chunks found for message_id: {message_id}"
-            ));
+            return Ok(format!("No memory chunks found for message_id: {message_id}"));
         }
 
         let mut full_text = String::new();
@@ -1861,8 +1731,9 @@ impl Tool for FetchContiguousMemoryTool {
 
 #[cfg(test)]
 mod weaver_tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     // A dummy host to satisfy the tool execution signature.
     struct TestHost;
@@ -1901,10 +1772,7 @@ mod weaver_tests {
 
         // We expect it to fail gracefully with an anyhow error because the dummy port is closed,
         // rather than panicking.
-        assert!(
-            result.is_err(),
-            "Expected graceful failure when Qdrant is offline."
-        );
+        assert!(result.is_err(), "Expected graceful failure when Qdrant is offline.");
         let err_msg = result.unwrap_err().to_string();
         assert!(
             err_msg.contains("Failed to fetch by message_id"),
@@ -2008,12 +1876,7 @@ mod weaver_tests {
         );
 
         assert_eq!(calls[1].function.name, "web_search");
-        assert!(
-            calls[1]
-                .function
-                .arguments
-                .contains("rust borrow checker error")
-        );
+        assert!(calls[1].function.arguments.contains("rust borrow checker error"));
         assert!(
             calls[1].function.arguments.contains("query"),
             "Fallback should assume 'query' arg for search tools."
@@ -2103,10 +1966,7 @@ mod weaver_tests {
         });
         // validate_path triggers error if path contains '..'
         let result = tool.execute(args, &host).await;
-        assert!(
-            result.is_err(),
-            "Path traversal should be blocked by validate_path."
-        );
+        assert!(result.is_err(), "Path traversal should be blocked by validate_path.");
         assert!(result.unwrap_err().to_string().contains("Path traversal"));
 
         Ok(())
@@ -2114,10 +1974,14 @@ mod weaver_tests {
 
     #[tokio::test]
     async fn test_loop_signal_streaming() -> Result<()> {
-        use crate::models::{AIRequest, ToolCall, ToolCallFunction};
-        use crate::{AIBackend, AIResponseStream, AIResult, StreamEvent};
-        use futures::stream;
         use std::sync::atomic::{AtomicUsize, Ordering};
+
+        use futures::stream;
+
+        use crate::{
+            AIBackend, AIResponseStream, AIResult, StreamEvent,
+            models::{AIRequest, ToolCall, ToolCallFunction},
+        };
 
         struct MockBackend {
             turn: AtomicUsize,
@@ -2171,9 +2035,7 @@ mod weaver_tests {
             }
         }
 
-        let backend = MockBackend {
-            turn: AtomicUsize::new(0),
-        };
+        let backend = MockBackend { turn: AtomicUsize::new(0) };
         let mut registry = ToolRegistry::new();
         registry.register(Box::new(SimpleTool));
         let mut conv = Conversation::new("mock");
@@ -2195,15 +2057,13 @@ mod weaver_tests {
         }
 
         // We expect: ToolCall, ToolResult, Text("Voice Finished")
-        let has_call = signals
-            .iter()
-            .any(|s| matches!(s, LoopSignal::ToolCall(name) if name == "test_tool"));
+        let has_call =
+            signals.iter().any(|s| matches!(s, LoopSignal::ToolCall(name) if name == "test_tool"));
         let has_result = signals
             .iter()
             .any(|s| matches!(s, LoopSignal::ToolResult(name, true) if name == "test_tool"));
-        let has_text = signals
-            .iter()
-            .any(|s| matches!(s, LoopSignal::Text(t) if t == "Voice Finished"));
+        let has_text =
+            signals.iter().any(|s| matches!(s, LoopSignal::Text(t) if t == "Voice Finished"));
 
         assert!(has_call, "Missing ToolCall signal");
         assert!(has_result, "Missing ToolResult signal");
@@ -2224,12 +2084,7 @@ mod weaver_tests {
         assert!(result.contains("Status report filed"));
 
         let event = rx.try_recv()?;
-        if let aemacs_core::bus::SystemEvent::Signal {
-            event_type,
-            payload,
-            ..
-        } = event
-        {
+        if let aemacs_core::bus::SystemEvent::Signal { event_type, payload, .. } = event {
             assert_eq!(event_type, "StatusReport");
             assert_eq!(payload, "All systems nominal");
         } else {
@@ -2273,9 +2128,7 @@ mod weaver_tests {
             }
         }
 
-        let host = IdentityHost {
-            agent_id: "test-knight".to_string(),
-        };
+        let host = IdentityHost { agent_id: "test-knight".to_string() };
         let args = json!({ "query": "Who am I?" });
 
         // Execute the tool. Even if no results are found, it proves the call chain
@@ -2285,7 +2138,7 @@ mod weaver_tests {
         match result {
             Ok(_) => {
                 info!("Quest Victorious: Qdrant was reachable and tool executed.");
-            }
+            },
             Err(e) => {
                 let msg = e.to_string();
                 // If it fails with a connection error, we at least know it reached for the server.
@@ -2297,7 +2150,7 @@ mod weaver_tests {
                         || msg.contains("version"),
                     "Unexpected error in Recall Tool: {msg}"
                 );
-            }
+            },
         }
 
         Ok(())
@@ -2339,7 +2192,7 @@ mod weaver_tests {
                         "Missing safety warning in genesis retrieval!"
                     );
                 }
-            }
+            },
             Err(e) => {
                 let msg = e.to_string();
                 info!("Handled expected error: {}", msg);
@@ -2351,7 +2204,7 @@ mod weaver_tests {
                         || msg.contains("Network Error"),
                     "Unexpected error: {msg}"
                 );
-            }
+            },
         }
         Ok(())
     }
@@ -2391,7 +2244,7 @@ mod weaver_tests {
                     !output.contains("ERA: GENESIS"),
                     "Standard search leaked quarantined GENESIS data!"
                 );
-            }
+            },
             Err(e) => {
                 let msg = e.to_string();
                 info!("Handled expected error: {}", msg);
@@ -2403,7 +2256,7 @@ mod weaver_tests {
                         || msg.contains("Network Error"),
                     "Unexpected error: {msg}"
                 );
-            }
+            },
         }
         Ok(())
     }
@@ -2411,8 +2264,9 @@ mod weaver_tests {
     #[tokio::test]
     async fn test_bicameral_handoff_sequence_quest() -> Result<()> {
         // QUEST: Verify the handoff sequence Logic (with tools) -> Roleplay (no tools).
-        use crate::models::{MODELS, ModelRole};
         use std::sync::Mutex;
+
+        use crate::models::{MODELS, ModelRole};
 
         struct SequenceMockBackend {
             calls: Mutex<Vec<(String, bool)>>, // (model_name, has_tools)
@@ -2442,15 +2296,13 @@ mod weaver_tests {
                 let mut calls = self.calls.lock().unwrap();
                 calls.push((req.model.clone(), req.tools.is_some()));
 
-                Ok(Box::pin(futures::stream::iter(vec![Ok(
-                    crate::StreamEvent::Content("Voice synthesis.".to_string()),
-                )])))
+                Ok(Box::pin(futures::stream::iter(vec![Ok(crate::StreamEvent::Content(
+                    "Voice synthesis.".to_string(),
+                ))])))
             }
         }
 
-        let backend = SequenceMockBackend {
-            calls: Mutex::new(vec![]),
-        };
+        let backend = SequenceMockBackend { calls: Mutex::new(vec![]) };
         let registry = ToolRegistry::new();
         let mut conv = Conversation::new("dolphin3:8b");
         conv.set_tools(vec![json!({"name": "test"})]);
@@ -2458,17 +2310,10 @@ mod weaver_tests {
         run_agent_loop(&backend, &registry, &TestHost, &mut conv, 5, None).await?;
 
         let calls = backend.calls.lock().unwrap();
-        assert_eq!(
-            calls.len(),
-            2,
-            "Should have exactly one logic call and one roleplay call"
-        );
+        assert_eq!(calls.len(), 2, "Should have exactly one logic call and one roleplay call");
 
         // Verify Logic Call
-        assert!(
-            calls[0].0.contains("dolphin"),
-            "First call should be to Logic model"
-        );
+        assert!(calls[0].0.contains("dolphin"), "First call should be to Logic model");
         assert!(calls[0].1, "Logic call must have tools enabled");
 
         // Verify Roleplay Call
@@ -2476,10 +2321,7 @@ mod weaver_tests {
             .iter()
             .find(|m| m.role == ModelRole::Roleplay && m.tier == crate::models::ModelTier::Low)
             .unwrap();
-        assert_eq!(
-            calls[1].0, rp_model.name,
-            "Second call should be to Roleplay model"
-        );
+        assert_eq!(calls[1].0, rp_model.name, "Second call should be to Roleplay model");
         assert!(!calls[1].1, "Roleplay call must have tools disabled");
 
         Ok(())
@@ -2493,14 +2335,8 @@ mod weaver_tests {
         let logic_req = conv.build_logic_request();
         let rp_req = conv.build_roleplay_request("reasoning");
 
-        assert_eq!(
-            logic_req.options.as_ref().unwrap().keep_alive,
-            Some("0".to_string())
-        );
-        assert_eq!(
-            rp_req.options.as_ref().unwrap().keep_alive,
-            Some("0".to_string())
-        );
+        assert_eq!(logic_req.options.as_ref().unwrap().keep_alive, Some("0".to_string()));
+        assert_eq!(rp_req.options.as_ref().unwrap().keep_alive, Some("0".to_string()));
     }
 
     #[tokio::test]
@@ -2525,9 +2361,9 @@ mod weaver_tests {
                 &self,
                 _: crate::models::AIRequest,
             ) -> crate::error::AIResult<crate::AIResponseStream> {
-                Ok(Box::pin(futures::stream::iter(vec![Ok(
-                    crate::StreamEvent::Content("Voice output.".to_string()),
-                )])))
+                Ok(Box::pin(futures::stream::iter(vec![Ok(crate::StreamEvent::Content(
+                    "Voice output.".to_string(),
+                ))])))
             }
         }
 
@@ -2551,11 +2387,7 @@ mod weaver_tests {
         );
 
         // Only Roleplay phase text should be present
-        assert!(
-            signals
-                .iter()
-                .any(|s| matches!(s, LoopSignal::Text(t) if t == "Voice output."))
-        );
+        assert!(signals.iter().any(|s| matches!(s, LoopSignal::Text(t) if t == "Voice output.")));
 
         Ok(())
     }

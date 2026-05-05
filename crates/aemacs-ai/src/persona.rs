@@ -1,5 +1,6 @@
-use crate::error::AIError;
 use serde::{Deserialize, Serialize};
+
+use crate::error::AIError;
 
 /// A Persona defines the static identity of an AI agent within the Æmacs Unified Agentic System.
 /// Personas are defined in YAML files and loaded into the Agent Registry.
