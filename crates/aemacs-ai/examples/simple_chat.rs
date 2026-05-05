@@ -27,7 +27,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let response = backend.complete(request).await?;
 
     println!("--- RESPONSE ---");
-    println!("{:?}", response);
+    println!("{response:?}");
     println!("----------------");
 
     Ok(())

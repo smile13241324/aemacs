@@ -17,7 +17,8 @@ pub struct Selection {
 
 impl Selection {
     /// Creates a new cursor (point) at the specified character index.
-    pub fn point(pos: usize) -> Self {
+    #[must_use] 
+    pub const fn point(pos: usize) -> Self {
         Self {
             anchor: pos,
             head: pos,
@@ -26,7 +27,8 @@ impl Selection {
     }
 
     /// Creates a new selection spanning from the anchor to the head.
-    pub fn new(anchor: usize, head: usize) -> Self {
+    #[must_use] 
+    pub const fn new(anchor: usize, head: usize) -> Self {
         Self {
             anchor,
             head,
@@ -35,23 +37,27 @@ impl Selection {
     }
 
     /// Returns true if this selection represents a single point (cursor) rather than a range.
-    pub fn is_empty(&self) -> bool {
+    #[must_use] 
+    pub const fn is_empty(&self) -> bool {
         self.anchor == self.head
     }
 
     /// Returns the absolute starting character index of the selection (the minimum of anchor and head).
+    #[must_use] 
     pub fn start(&self) -> usize {
         min(self.anchor, self.head)
     }
 
     /// Returns the absolute ending character index of the selection (the maximum of anchor and head).
+    #[must_use] 
     pub fn end(&self) -> usize {
         max(self.anchor, self.head)
     }
 
     /// Swaps the anchor and head of the selection, effectively reversing its direction.
     /// This operation resets the `wanted_column` memory.
-    pub fn swap(&self) -> Self {
+    #[must_use] 
+    pub const fn swap(&self) -> Self {
         Self {
             anchor: self.head,
             head: self.anchor,

@@ -7,7 +7,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 
-/// The PersonaRegistry indexes all available agents and watches for changes in the agents directory.
+/// The `PersonaRegistry` indexes all available agents and watches for changes in the agents directory.
 /// It provides a centralized point for retrieving and hot-reloading agent personas.
 pub struct PersonaRegistry {
     /// Thread-safe storage for loaded personas, keyed by their internal name.
@@ -20,6 +20,16 @@ pub struct PersonaRegistry {
     runtime_handle: tokio::runtime::Handle,
 }
 
+impl std::fmt::Debug for PersonaRegistry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PersonaRegistry")
+            .field("global_agents_dir", &self.global_agents_dir)
+            .field("local_agents_dir", &self.local_agents_dir)
+            .field("runtime_handle", &"tokio::runtime::Handle")
+            .finish()
+    }
+}
+
 impl PersonaRegistry {
     /// Create a new registry and initialize the agents directory.
     /// It automatically scans for global and local agent definitions.
@@ -27,12 +37,11 @@ impl PersonaRegistry {
         // Global Directory
         let global_agents_dir = dirs::home_dir().map(|home| home.join(".aemacs").join("agents"));
 
-        if let Some(ref dir) = global_agents_dir {
-            if !dir.exists() {
+        if let Some(ref dir) = global_agents_dir
+            && !dir.exists() {
                 // Silently ignore failure to create global dir, it's optional
                 let _ = std::fs::create_dir_all(dir);
             }
-        }
 
         // Local Directory
         let local_agents_dir = match std::env::current_dir() {
@@ -84,8 +93,8 @@ impl PersonaRegistry {
         if let Ok(entries) = std::fs::read_dir(dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.extension().and_then(|s| s.to_str()) == Some("yaml") {
-                    if let Some(name) = path.file_stem().and_then(|s| s.to_str()) {
+                if path.extension().and_then(|s| s.to_str()) == Some("yaml")
+                    && let Some(name) = path.file_stem().and_then(|s| s.to_str()) {
                         match std::fs::read_to_string(&path) {
                             Ok(content) => match Persona::from_yaml(&content) {
                                 Ok(mut persona) => {
@@ -95,13 +104,12 @@ impl PersonaRegistry {
                                     info!("Loaded persona: {} from {:?}", name, dir);
                                 }
                                 Err(e) => {
-                                    warn!("Failed to parse persona YAML at {:?}: {}", path, e)
+                                    warn!("Failed to parse persona YAML at {:?}: {}", path, e);
                                 }
                             },
                             Err(e) => warn!("Failed to read persona file at {:?}: {}", path, e),
                         }
                     }
-                }
             }
         }
     }
@@ -134,25 +142,23 @@ impl PersonaRegistry {
                 }
             }
         })
-        .map_err(|e| AIError::Persona(format!("Failed to create watcher: {}", e)))?;
+        .map_err(|e| AIError::Persona(format!("Failed to create watcher: {e}")))?;
 
-        if let Some(ref dir) = self.global_agents_dir {
-            if dir.exists() {
+        if let Some(ref dir) = self.global_agents_dir
+            && dir.exists() {
                 let _ = watcher.watch(dir, RecursiveMode::NonRecursive);
             }
-        }
 
-        if let Some(ref dir) = self.local_agents_dir {
-            if dir.exists() {
+        if let Some(ref dir) = self.local_agents_dir
+            && dir.exists() {
                 let _ = watcher.watch(dir, RecursiveMode::NonRecursive);
             }
-        }
 
         // Keep the watcher alive in a background task
         self.runtime_handle.spawn(async move {
             // Keep a reference to the watcher so it doesn't get dropped
             let _watcher = watcher;
-            while let Some(_) = rx.recv().await {
+            while rx.recv().await == Some(()) {
                 info!("Agents directory changed, reloading personas...");
                 if let Err(e) = registry.load_all().await {
                     error!("Failed to reload personas: {}", e);
@@ -282,12 +288,11 @@ mod tests {
         for _ in 0..20 {
             // 2 seconds total
             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-            if let Some(p) = registry.get_persona("bob").await {
-                if p.description == "The Overworked Doubter" {
+            if let Some(p) = registry.get_persona("bob").await
+                && p.description == "The Overworked Doubter" {
                     reloaded = true;
                     break;
                 }
-            }
         }
 
         assert!(

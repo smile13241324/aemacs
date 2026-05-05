@@ -6,7 +6,7 @@ use gpui::Keystroke;
 ///
 /// Note: Standard keys like 'Enter' are handled at the view level to allow for
 /// context-sensitive behavior (e.g., newline in editor vs send in chat).
-pub fn resolve_key_command(keystroke: &Keystroke, mode: Mode) -> Option<Command> {
+pub(crate) fn resolve_key_command(keystroke: &Keystroke, mode: Mode) -> Option<Command> {
     if keystroke.key == "backspace" {
         return Some(Command::Backspace);
     }
@@ -43,10 +43,9 @@ pub fn resolve_key_command(keystroke: &Keystroke, mode: Mode) -> Option<Command>
                 // Other Normal mode keys would go here (h,j,k,l, etc)
                 // For now, return None
                 return None;
-            } else {
-                // Insert Mode: Type text
-                return Some(Command::Insert(text.clone()));
             }
+            // Insert Mode: Type text
+            return Some(Command::Insert(text.clone()));
         }
     }
 

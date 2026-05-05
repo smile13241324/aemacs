@@ -31,24 +31,24 @@ pub enum Content {
 
 impl From<String> for Content {
     fn from(s: String) -> Self {
-        Content::Text(s)
+        Self::Text(s)
     }
 }
 
 impl From<&str> for Content {
     fn from(s: &str) -> Self {
-        Content::Text(s.to_string())
+        Self::Text(s.to_string())
     }
 }
 
 impl fmt::Display for Content {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Content::Text(s) => write!(f, "{}", s),
-            Content::Parts(parts) => {
+            Self::Text(s) => write!(f, "{s}"),
+            Self::Parts(parts) => {
                 for part in parts {
                     match part {
-                        ContentPart::Text { text } => write!(f, "{}", text)?,
+                        ContentPart::Text { text } => write!(f, "{text}")?,
                         ContentPart::ImageUrl { .. } => {}
                     }
                 }
@@ -234,6 +234,7 @@ pub enum ModelRole {
 }
 
 /// Static definition of an AI model available in the registry.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ModelDefinition {
     /// The physical name of the model (for backend calls).
     pub name: &'static str,

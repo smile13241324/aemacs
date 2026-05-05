@@ -14,7 +14,7 @@ pub enum AIError {
     #[error("Configuration error: {0}")]
     ConfigError(String),
 
-    /// A generic failure within a specific AI connector (e.g., Qdrant, OpenAI).
+    /// A generic failure within a specific AI connector (e.g., Qdrant, `OpenAI`).
     #[error("Connector failed: {0}")]
     ConnectorError(String),
 

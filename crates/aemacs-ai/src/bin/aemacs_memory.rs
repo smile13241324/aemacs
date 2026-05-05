@@ -125,7 +125,7 @@ async fn main() -> anyhow::Result<()> {
             // Ensure collection exists (default dim 768 for nomic)
             kb.ensure_collection(768).await?;
 
-            println!("📥  [IMPORT] Ingesting {:?}...", file);
+            println!("📥  [IMPORT] Ingesting {file:?}...");
             import_jsonl(&kb, file).await?;
             println!("✅  [IMPORT] Done.");
         }
@@ -152,7 +152,7 @@ async fn main() -> anyhow::Result<()> {
             };
             let kb = Arc::new(KnowledgeBase::new(qdrant_url, ollama_url, env)?);
 
-            println!("📤  [EXPORT] Searching matrix for agent: {}...", agent_id);
+            println!("📤  [EXPORT] Searching matrix for agent: {agent_id}...");
             export_jsonl(&kb, agent_id, output).await?;
             println!("✅  [EXPORT] Done.");
         }

@@ -6,13 +6,22 @@ use std::path::PathBuf;
 
 /// The Global Watcher monitors the entire workspace for changes.
 pub struct GlobalWatcher {
-    bus: EventBus,
+    _bus: EventBus,
     watcher: Box<dyn Watcher + Send + Sync>,
 }
 
+impl std::fmt::Debug for GlobalWatcher {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GlobalWatcher")
+            .field("bus", &self._bus)
+            .field("watcher", &"Box<dyn Watcher>")
+            .finish()
+    }
+}
+
 impl GlobalWatcher {
-    /// Initializes a new GlobalWatcher connected to the specified system event bus.
-    /// It uses the platform's recommended watcher implementation (e.g., inotify, FSEvents).
+    /// Initializes a new `GlobalWatcher` connected to the specified system event bus.
+    /// It uses the platform's recommended watcher implementation (e.g., inotify, `FSEvents`).
     pub fn new(bus: EventBus) -> Result<Self> {
         let bus_clone = bus.clone();
         let watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
@@ -22,18 +31,18 @@ impl GlobalWatcher {
                     if event.kind.is_modify() {
                         for path in event.paths {
                             let system_event = SystemEvent::FileModified(path);
-                            if let Err(_) = bus_clone.tx.send(system_event) {
+                            if bus_clone.tx.send(system_event).is_err() {
                                 warn!("EventBus disconnected in GlobalWatcher.");
                             }
                         }
                     }
                 }
-                Err(e) => warn!("Watch error: {:?}", e),
+                Err(e) => warn!("Watch error: {e:?}"),
             }
         })?;
 
         Ok(Self {
-            bus,
+            _bus: bus,
             watcher: Box::new(watcher),
         })
     }
@@ -43,7 +52,7 @@ impl GlobalWatcher {
     /// # Errors
     /// Returns an error if the OS fails to initialize the watch on the specified path.
     pub fn watch(&mut self, path: PathBuf) -> Result<()> {
-        info!("👁️  Watching workspace: {:?}", path);
+        info!("👁️  Watching workspace: {path:?}");
         self.watcher.watch(&path, RecursiveMode::Recursive)?;
         Ok(())
     }
@@ -64,6 +73,7 @@ pub fn spawn_global_watcher(bus: EventBus, workspace_root: PathBuf) -> Result<()
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use crate::bus::EventBus;
     use std::fs::File;
@@ -105,12 +115,8 @@ mod tests {
         // 4. Wait for signal with timeout
         let result = timeout(Duration::from_secs(2), async {
             while let Ok(event) = rx.recv().await {
-                if let SystemEvent::FileModified(p) = event {
-                    if p.canonicalize().unwrap_or_default()
-                        == file_path.canonicalize().unwrap_or_default()
-                    {
-                        return true;
-                    }
+                if matches!(event, SystemEvent::FileModified(ref p) if p.canonicalize().unwrap_or_default() == file_path.canonicalize().unwrap_or_default()) {
+                    return true;
                 }
             }
             false
@@ -122,7 +128,7 @@ mod tests {
             "The 'Vigilance-Quest' failed! No FileModified signal detected within 2 seconds."
         );
         assert!(
-            result.unwrap(),
+            result.expect("Should not fail in test"),
             "Received events but none matched the target file path."
         );
 

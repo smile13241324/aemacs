@@ -34,7 +34,7 @@ pub enum LoopSignal {
 
 // --- Interfaces ---
 
-/// The ToolHost provides the environment and authority for tool execution.
+/// The `ToolHost` provides the environment and authority for tool execution.
 /// It acts as the bridge between the agent and the human user or system resources.
 #[async_trait]
 pub trait ToolHost: Send + Sync {
@@ -65,6 +65,7 @@ pub trait Tool: Send + Sync {
 }
 
 /// A default host implementation that denies all sensitive requests.
+#[derive(Debug)]
 pub struct DenyAllHost;
 #[async_trait]
 impl ToolHost for DenyAllHost {
@@ -91,8 +92,17 @@ pub struct ToolRegistry {
     tools: HashMap<String, Box<dyn Tool>>,
 }
 
+impl std::fmt::Debug for ToolRegistry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ToolRegistry")
+            .field("tools", &self.tools.keys().collect::<Vec<_>>())
+            .finish()
+    }
+}
+
 impl ToolRegistry {
-    /// Creates an empty ToolRegistry.
+    /// Creates an empty `ToolRegistry`.
+    #[must_use] 
     pub fn new() -> Self {
         Self {
             tools: HashMap::new(),
@@ -143,9 +153,9 @@ impl ToolRegistry {
         }));
         registry.register(Box::new(RecallPastInsightsTool::new(
             kb.clone(),
-            event_tx.clone(),
+            event_tx,
         )));
-        registry.register(Box::new(RecallGenesisArchiveTool::new(kb.clone())));
+        registry.register(Box::new(RecallGenesisArchiveTool::new(kb)));
         registry
     }
 
@@ -155,11 +165,13 @@ impl ToolRegistry {
     }
 
     /// Retrieves a tool by its name.
+    #[must_use] 
     pub fn get(&self, name: &str) -> Option<&Box<dyn Tool>> {
         self.tools.get(name)
     }
 
     /// Returns a list of JSON Schema definitions for all tools in the registry.
+    #[must_use] 
     pub fn list_definitions(&self) -> Vec<Value> {
         self.tools
             .values()
@@ -249,13 +261,13 @@ pub async fn run_agent_loop(
                             host.report_progress(tool_name.clone(), false);
                             match exec_result {
                                 Ok(output) => (output, true),
-                                Err(e) => (format!("🛠️ TOOL_ERROR: [{}]", e), false),
+                                Err(e) => (format!("🛠️ TOOL_ERROR: [{e}]"), false),
                             }
                         }
-                        Err(e) => (format!("🛠️ TOOL_ERROR: [PARSE_FAILURE - {}]", e), false),
+                        Err(e) => (format!("🛠️ TOOL_ERROR: [PARSE_FAILURE - {e}]"), false),
                     },
                     None => (
-                        format!("🛠️ TOOL_ERROR: [Tool '{}' not found]", tool_name),
+                        format!("🛠️ TOOL_ERROR: [Tool '{tool_name}' not found]"),
                         false,
                     ),
                 };
@@ -340,9 +352,9 @@ fn extract_tool_calls_from_prose(text: &str) -> Vec<crate::models::ToolCall> {
             // Assume it's a single 'path' argument for common file tools, or a generic 'query'
             let val = args_raw.trim_matches('"').trim_matches('\'');
             if name.contains("search") || name.contains("query") {
-                format!("{{\"query\": \"{}\"}}", val)
+                format!("{{\"query\": \"{val}\"}}")
             } else {
-                format!("{{\"path\": \"{}\"}}", val)
+                format!("{{\"path\": \"{val}\"}}")
             }
         };
 
@@ -371,13 +383,14 @@ pub fn validate_path(path_str: &str) -> Result<PathBuf> {
 
 // --- Basic Tools ---
 
+#[derive(Debug)]
 pub struct ReadFileTool;
 #[async_trait]
 impl Tool for ReadFileTool {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "read_file"
     }
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "Reads the content of a file at the given path."
     }
     fn parameters(&self) -> Value {
@@ -391,18 +404,19 @@ impl Tool for ReadFileTool {
         let path_str = args["path"].as_str().ok_or(anyhow!("Missing path"))?;
         let path = validate_path(path_str)?;
         let content = fs::read_to_string(&path)
-            .with_context(|| format!("Failed to read file: {:?}", path))?;
+            .with_context(|| format!("Failed to read file: {path:?}"))?;
         Ok(content)
     }
 }
 
+#[derive(Debug)]
 pub struct ReadManyFilesTool;
 #[async_trait]
 impl Tool for ReadManyFilesTool {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "read_many_files"
     }
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "Reads and concatenates multiple files using glob patterns. Efficient for getting context from multiple files at once."
     }
     fn parameters(&self) -> Value {
@@ -433,7 +447,7 @@ impl Tool for ReadManyFilesTool {
                 .ok_or(anyhow!("Invalid pattern string"))?;
 
             for entry in
-                glob::glob(pattern_str).map_err(|e| anyhow!("Invalid glob pattern: {}", e))?
+                glob::glob(pattern_str).map_err(|e| anyhow!("Invalid glob pattern: {e}"))?
             {
                 match entry {
                     Ok(path) => {
@@ -444,7 +458,7 @@ impl Tool for ReadManyFilesTool {
                             match fs::read_to_string(&validated_path) {
                                 Ok(content) => {
                                     results
-                                        .push_str(&format!("--- File: {:?} ---\n", validated_path));
+                                        .push_str(&format!("--- File: {validated_path:?} ---\n"));
                                     results.push_str(&content);
                                     results.push_str("\n\n");
                                     processed_count += 1;
@@ -452,14 +466,13 @@ impl Tool for ReadManyFilesTool {
                                 }
                                 Err(e) => {
                                     results.push_str(&format!(
-                                        "--- File: {:?} (ERROR) ---\nError reading file: {}\n\n",
-                                        validated_path, e
+                                        "--- File: {validated_path:?} (ERROR) ---\nError reading file: {e}\n\n"
                                     ));
                                 }
                             }
                         }
                     }
-                    Err(e) => return Err(anyhow!("Error matching glob pattern: {}", e)),
+                    Err(e) => return Err(anyhow!("Error matching glob pattern: {e}")),
                 }
             }
         }
@@ -470,19 +483,20 @@ impl Tool for ReadManyFilesTool {
             file_list.join("\n- ")
         );
 
-        Ok(format!("{}{}", summary, results))
+        Ok(format!("{summary}{results}"))
     }
 }
 
+#[derive(Debug)]
 pub struct WriteFileTool {
     pub event_tx: Option<tokio::sync::broadcast::Sender<aemacs_core::bus::SystemEvent>>,
 }
 #[async_trait]
 impl Tool for WriteFileTool {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "write_file"
     }
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "Writes content to a file. Overwrites if exists."
     }
     fn parameters(&self) -> Value {
@@ -513,25 +527,26 @@ impl Tool for WriteFileTool {
             fs::create_dir_all(parent).context("Failed to create parent dirs")?;
         }
 
-        fs::write(&path, content).with_context(|| format!("Failed to write file: {:?}", path))?;
+        fs::write(&path, content).with_context(|| format!("Failed to write file: {path:?}"))?;
 
         if let Some(tx) = &self.event_tx {
             let _ = tx.send(aemacs_core::bus::SystemEvent::FileModified(path.clone()));
         }
 
-        Ok(format!("Successfully wrote to {:?}", path))
+        Ok(format!("Successfully wrote to {path:?}"))
     }
 }
 
+#[derive(Debug)]
 pub struct ReplaceTextTool {
     pub event_tx: Option<tokio::sync::broadcast::Sender<aemacs_core::bus::SystemEvent>>,
 }
 #[async_trait]
 impl Tool for ReplaceTextTool {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "replace_text"
     }
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "Replaces a specific string of text within a file. The search_string must exactly match the file content and be unique."
     }
     fn parameters(&self) -> Value {
@@ -556,7 +571,7 @@ impl Tool for ReplaceTextTool {
         let path = validate_path(path_str)?;
 
         let mut content = fs::read_to_string(&path)
-            .with_context(|| format!("Failed to read file: {:?}", path))?;
+            .with_context(|| format!("Failed to read file: {path:?}"))?;
 
         let matches = content.matches(search_string).count();
         if matches == 0 {
@@ -566,8 +581,7 @@ impl Tool for ReplaceTextTool {
         }
         if matches > 1 {
             return Err(anyhow!(
-                "String found {} times. Provide more context to make the search_string unique.",
-                matches
+                "String found {matches} times. Provide more context to make the search_string unique."
             ));
         }
 
@@ -582,23 +596,24 @@ impl Tool for ReplaceTextTool {
         }
 
         content = content.replace(search_string, replace_string);
-        fs::write(&path, content).with_context(|| format!("Failed to write file: {:?}", path))?;
+        fs::write(&path, content).with_context(|| format!("Failed to write file: {path:?}"))?;
 
         if let Some(tx) = &self.event_tx {
             let _ = tx.send(aemacs_core::bus::SystemEvent::FileModified(path.clone()));
         }
 
-        Ok(format!("Successfully replaced text in {:?}", path))
+        Ok(format!("Successfully replaced text in {path:?}"))
     }
 }
 
+#[derive(Debug)]
 pub struct GrepSearchTool;
 #[async_trait]
 impl Tool for GrepSearchTool {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "grep_search"
     }
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "Searches for a regular expression pattern within files in a given directory."
     }
     fn parameters(&self) -> Value {
@@ -617,11 +632,11 @@ impl Tool for GrepSearchTool {
         let root_path = validate_path(path_str)?;
 
         let regex =
-            Regex::new(pattern_str).map_err(|e| anyhow!("Invalid regular expression: {}", e))?;
+            Regex::new(pattern_str).map_err(|e| anyhow!("Invalid regular expression: {e}"))?;
 
         let mut results = Vec::new();
         let mut paths_to_visit = vec![root_path];
-        let ignore_dirs = vec![".git", "target", "node_modules", ".gemini"];
+        let ignore_dirs = [".git", "target", "node_modules", ".gemini"];
         let mut match_count = 0;
         let max_matches = 100;
 
@@ -643,8 +658,8 @@ impl Tool for GrepSearchTool {
                     if !ignore_dirs.iter().any(|&d| d == file_name) {
                         paths_to_visit.push(path);
                     }
-                } else if path.is_file() {
-                    if let Ok(content) = fs::read_to_string(&path) {
+                } else if path.is_file()
+                    && let Ok(content) = fs::read_to_string(&path) {
                         for (line_num, line) in content.lines().enumerate() {
                             if regex.is_match(line) {
                                 results.push(format!(
@@ -660,7 +675,6 @@ impl Tool for GrepSearchTool {
                             }
                         }
                     } // Silently skip invalid UTF-8 files or binary files
-                }
             }
         }
 
@@ -676,13 +690,14 @@ impl Tool for GrepSearchTool {
     }
 }
 
+#[derive(Debug)]
 pub struct RunShellCommandTool;
 #[async_trait]
 impl Tool for RunShellCommandTool {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "run_shell_command"
     }
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "Executes a shell command on the host system. Useful for running tests, linters, or checking git status."
     }
     fn parameters(&self) -> Value {
@@ -719,13 +734,13 @@ impl Tool for RunShellCommandTool {
             .stderr(std::process::Stdio::piped())
             .kill_on_drop(true)
             .spawn()
-            .with_context(|| format!("Failed to spawn command: {}", command_str))?;
+            .with_context(|| format!("Failed to spawn command: {command_str}"))?;
 
-        let timeout_duration = std::time::Duration::from_secs(300);
+        let timeout_duration = std::time::Duration::from_mins(5);
 
         let output = match tokio::time::timeout(timeout_duration, child.wait_with_output()).await {
             Ok(Ok(o)) => o,
-            Ok(Err(e)) => return Err(anyhow::anyhow!("Command execution failed: {}", e)),
+            Ok(Err(e)) => return Err(anyhow::anyhow!("Command execution failed: {e}")),
             Err(_) => {
                 // Timeout occurred! The future drops, consuming the child, and kill_on_drop(true) terminates it.
                 return Err(anyhow::anyhow!(
@@ -769,13 +784,14 @@ impl Tool for RunShellCommandTool {
     }
 }
 
+#[derive(Debug)]
 pub struct ListFilesTool;
 #[async_trait]
 impl Tool for ListFilesTool {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "list_files"
     }
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "Lists files and directories in a given path."
     }
     fn parameters(&self) -> Value {
@@ -789,7 +805,7 @@ impl Tool for ListFilesTool {
         let path = validate_path(path_str)?;
         let mut entries = Vec::new();
         for entry in
-            fs::read_dir(&path).with_context(|| format!("Failed to read dir: {:?}", path))?
+            fs::read_dir(&path).with_context(|| format!("Failed to read dir: {path:?}"))?
         {
             let entry = entry?;
             let name = entry.file_name().to_string_lossy().to_string();
@@ -798,19 +814,21 @@ impl Tool for ListFilesTool {
             } else {
                 "FILE"
             };
-            entries.push(format!("[{}] {}", type_str, name));
+            entries.push(format!("[{type_str}] {name}"));
         }
         Ok(entries.join("\n"))
     }
 }
 
+#[derive(Debug)]
 pub struct SearchKnowledgeBaseTool {
     kb: Arc<KnowledgeBase>,
     event_tx: Option<tokio::sync::broadcast::Sender<aemacs_core::bus::SystemEvent>>,
 }
 
 impl SearchKnowledgeBaseTool {
-    pub fn new(
+    #[must_use] 
+    pub const fn new(
         kb: Arc<KnowledgeBase>,
         event_tx: Option<tokio::sync::broadcast::Sender<aemacs_core::bus::SystemEvent>>,
     ) -> Self {
@@ -820,10 +838,10 @@ impl SearchKnowledgeBaseTool {
 
 #[async_trait]
 impl Tool for SearchKnowledgeBaseTool {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "search_knowledge_base"
     }
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "Searches internal documentation/memory. Defaults to 'internal' scope (only your own memories). Use scope='global' to search everyone's memories."
     }
     fn parameters(&self) -> Value {
@@ -872,28 +890,30 @@ impl Tool for SearchKnowledgeBaseTool {
         }
 
         let json_output = serde_json::to_string_pretty(&results)
-            .map_err(|e| anyhow!("Failed to serialize memory results: {}", e))?;
+            .map_err(|e| anyhow!("Failed to serialize memory results: {e}"))?;
 
         Ok(json_output)
     }
 }
 
+#[derive(Debug)]
 pub struct WriteKnowledgeBaseTool {
     kb: Arc<KnowledgeBase>,
 }
 
 impl WriteKnowledgeBaseTool {
-    pub fn new(kb: Arc<KnowledgeBase>) -> Self {
+    #[must_use] 
+    pub const fn new(kb: Arc<KnowledgeBase>) -> Self {
         Self { kb }
     }
 }
 
 #[async_trait]
 impl Tool for WriteKnowledgeBaseTool {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "write_knowledge_base"
     }
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "Records a memory, insight, or core architectural truth into the knowledge base."
     }
     fn parameters(&self) -> Value {
@@ -938,22 +958,24 @@ impl Tool for WriteKnowledgeBaseTool {
 }
 
 /// ACO-031-05: Retrieves historical records from the Genesis (Cloud Era) archive.
+#[derive(Debug)]
 pub struct RecallGenesisArchiveTool {
     kb: Arc<KnowledgeBase>,
 }
 
 impl RecallGenesisArchiveTool {
-    pub fn new(kb: Arc<KnowledgeBase>) -> Self {
+    #[must_use] 
+    pub const fn new(kb: Arc<KnowledgeBase>) -> Self {
         Self { kb }
     }
 }
 
 #[async_trait]
 impl Tool for RecallGenesisArchiveTool {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "recall_genesis_archive"
     }
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "Retrieves historical records and legacy persona data from your 'Genesis' (Cloud Era) archives. Use this for context on your evolution, but do not adopt old parameters."
     }
     fn parameters(&self) -> Value {
@@ -986,22 +1008,24 @@ impl Tool for RecallGenesisArchiveTool {
     }
 }
 
+#[derive(Debug)]
 pub struct DeleteMemoryTool {
     kb: Arc<KnowledgeBase>,
 }
 
 impl DeleteMemoryTool {
-    pub fn new(kb: Arc<KnowledgeBase>) -> Self {
+    #[must_use] 
+    pub const fn new(kb: Arc<KnowledgeBase>) -> Self {
         Self { kb }
     }
 }
 
 #[async_trait]
 impl Tool for DeleteMemoryTool {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "delete_memory"
     }
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "Permanently erases a specific memory from the knowledge base by its UUID. Use this to prune obsolete or contradictory beliefs."
     }
     fn parameters(&self) -> Value {
@@ -1017,7 +1041,7 @@ impl Tool for DeleteMemoryTool {
     async fn execute(&self, args: Value, host: &dyn ToolHost) -> Result<String> {
         let id = args["id"].as_str().ok_or(anyhow!("Missing memory ID"))?;
 
-        let approval_msg = format!("Permanently delete memory [ID: {}] from the vault?", id);
+        let approval_msg = format!("Permanently delete memory [ID: {id}] from the vault?");
         if !host.ask_approval(&approval_msg).await {
             return Err(anyhow!("User denied memory pruning."));
         }
@@ -1025,28 +1049,29 @@ impl Tool for DeleteMemoryTool {
         self.kb.prune_memory(id).await?;
 
         Ok(format!(
-            "Memory {} has been pruned from the collective.",
-            id
+            "Memory {id} has been pruned from the collective."
         ))
     }
 }
 
+#[derive(Debug)]
 pub struct UpdateMemoryTool {
     kb: Arc<KnowledgeBase>,
 }
 
 impl UpdateMemoryTool {
-    pub fn new(kb: Arc<KnowledgeBase>) -> Self {
+    #[must_use] 
+    pub const fn new(kb: Arc<KnowledgeBase>) -> Self {
         Self { kb }
     }
 }
 
 #[async_trait]
 impl Tool for UpdateMemoryTool {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "update_memory"
     }
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "Semantically overwrites an existing memory by its UUID. Use this to update evolving beliefs or correct misunderstandings."
     }
     fn parameters(&self) -> Value {
@@ -1089,17 +1114,18 @@ impl Tool for UpdateMemoryTool {
             .update_insight(id, &agent_id, content, is_core)
             .await?;
 
-        Ok(format!("Memory {} has been woven into a new truth.", id))
+        Ok(format!("Memory {id} has been woven into a new truth."))
     }
 }
 
+#[derive(Debug)]
 pub struct GetSystemTimeTool;
 #[async_trait]
 impl Tool for GetSystemTimeTool {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "get_system_time"
     }
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "Returns the current UTC time, local time, and session uptime."
     }
     fn parameters(&self) -> Value {
@@ -1122,13 +1148,14 @@ impl Tool for GetSystemTimeTool {
     }
 }
 
+#[derive(Debug)]
 pub struct ParseAstTool;
 #[async_trait]
 impl Tool for ParseAstTool {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "parse_ast"
     }
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "Parses a code file using Tree-sitter and extracts the source code of a specific symbol (struct, enum, impl, function, class, defn) by name. Supports Rust, Python, Go, Haskell, C, C++, Clojure, and JavaScript."
     }
     fn parameters(&self) -> Value {
@@ -1166,6 +1193,7 @@ impl Tool for ParseAstTool {
     }
 }
 
+#[derive(Debug)]
 pub struct HandoffAgentTool {
     pub persona_registry: Arc<PersonaRegistry>,
     pub event_tx: Option<tokio::sync::broadcast::Sender<aemacs_core::bus::SystemEvent>>,
@@ -1173,10 +1201,10 @@ pub struct HandoffAgentTool {
 
 #[async_trait]
 impl Tool for HandoffAgentTool {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "handoff_agent"
     }
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "Transfers control to another specialist agent in the mesh."
     }
     fn parameters(&self) -> Value {
@@ -1193,7 +1221,7 @@ impl Tool for HandoffAgentTool {
         let agent_name = args["agent_name"]
             .as_str()
             .ok_or(anyhow!("Missing agent_name"))?;
-        let message = args["message"].as_str().map(|s| s.to_string());
+        let message = args["message"].as_str().map(std::string::ToString::to_string);
 
         // Validate agent
         if self
@@ -1203,8 +1231,7 @@ impl Tool for HandoffAgentTool {
             .is_none()
         {
             return Err(anyhow!(
-                "Specialist agent '{}' not found in registry.",
-                agent_name
+                "Specialist agent '{agent_name}' not found in registry."
             ));
         }
 
@@ -1226,13 +1253,14 @@ impl Tool for HandoffAgentTool {
     }
 }
 
+#[derive(Debug)]
 pub struct WebSearchTool;
 #[async_trait]
 impl Tool for WebSearchTool {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "web_search"
     }
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "Searches the internet for documentation or information using Ecosia."
     }
     fn parameters(&self) -> Value {
@@ -1252,19 +1280,19 @@ impl Tool for WebSearchTool {
 
         // Ensure we handle URL encoding
         let encoded_query = urlencoding::encode(query);
-        let request_url = format!("{}&q={}", base_url, encoded_query);
+        let request_url = format!("{base_url}&q={encoded_query}");
 
         // We use a custom client to set a User-Agent, avoiding bot-detection heat.
         let client = reqwest::Client::builder()
             .user_agent("AemacsOracle/1.0 (Architecture: Iron Core)")
             .build()
-            .map_err(|e| anyhow!("Failed to build HTTP client: {}", e))?;
+            .map_err(|e| anyhow!("Failed to build HTTP client: {e}"))?;
 
         let response = client
             .get(&request_url)
             .send()
             .await
-            .map_err(|e| anyhow!("Search request failed: {}", e))?;
+            .map_err(|e| anyhow!("Search request failed: {e}"))?;
 
         if !response.status().is_success() {
             return Err(anyhow!(
@@ -1276,7 +1304,7 @@ impl Tool for WebSearchTool {
         let text = response
             .text()
             .await
-            .map_err(|e| anyhow!("Failed to read search response: {}", e))?;
+            .map_err(|e| anyhow!("Failed to read search response: {e}"))?;
 
         // Naively return the first 2000 chars of the payload to avoid context explosion.
         let mut output = text;
@@ -1289,16 +1317,17 @@ impl Tool for WebSearchTool {
     }
 }
 
+#[derive(Debug)]
 pub struct ReportStatusTool {
     pub event_tx: Option<tokio::sync::broadcast::Sender<aemacs_core::bus::SystemEvent>>,
 }
 
 #[async_trait]
 impl Tool for ReportStatusTool {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "report_status"
     }
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "Reports the agent's current status and functional integrity to the Sentinel. Required once per hour for autonomous agents."
     }
     fn parameters(&self) -> Value {
@@ -1323,17 +1352,19 @@ impl Tool for ReportStatusTool {
             payload: message.to_string(),
         })?;
 
-        Ok(format!("Status report filed: {}", message))
+        Ok(format!("Status report filed: {message}"))
     }
 }
 
+#[derive(Debug)]
 pub struct RecallPastInsightsTool {
     kb: Arc<KnowledgeBase>,
     event_tx: Option<tokio::sync::broadcast::Sender<aemacs_core::bus::SystemEvent>>,
 }
 
 impl RecallPastInsightsTool {
-    pub fn new(
+    #[must_use] 
+    pub const fn new(
         kb: Arc<KnowledgeBase>,
         event_tx: Option<tokio::sync::broadcast::Sender<aemacs_core::bus::SystemEvent>>,
     ) -> Self {
@@ -1343,10 +1374,10 @@ impl RecallPastInsightsTool {
 
 #[async_trait]
 impl Tool for RecallPastInsightsTool {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "recall_past_insights"
     }
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "Performs a deep search of your own past insights and core architectural truths. Use this to maintain consistency with previous decisions."
     }
     fn parameters(&self) -> Value {
@@ -1372,7 +1403,7 @@ impl Tool for RecallPastInsightsTool {
         }
 
         let json_output = serde_json::to_string_pretty(&results)
-            .map_err(|e| anyhow!("Failed to serialize recall results: {}", e))?;
+            .map_err(|e| anyhow!("Failed to serialize recall results: {e}"))?;
 
         Ok(json_output)
     }
@@ -1458,7 +1489,7 @@ mod tests {
 
     #[async_trait]
     impl AIBackend for MockBackend {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "mock"
         }
         async fn health_check(&self) -> crate::error::AIResult<()> {
@@ -1598,7 +1629,7 @@ mod tests {
         // but we can at least verify it doesn't panic and returns a valid string result (even if empty).
         let result = tool.execute(args, &host).await?;
         assert!(
-            result.contains("No results found.") || result.contains("["),
+            result.contains("No results found.") || result.contains('['),
             "Historian returned nonsense!"
         );
 
@@ -1643,13 +1674,14 @@ mod tests {
     }
 }
 
+#[derive(Debug)]
 pub struct GitContextTool;
 #[async_trait]
 impl Tool for GitContextTool {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "get_git_context"
     }
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "Returns the current git status, including changed files, unstaged diffs, and the last 3 commit messages."
     }
     fn parameters(&self) -> Value {
@@ -1668,7 +1700,7 @@ impl Tool for GitContextTool {
             .arg("--short")
             .output()
             .await
-            .map_err(|e| anyhow!("Failed to execute git status: {}", e))?;
+            .map_err(|e| anyhow!("Failed to execute git status: {e}"))?;
 
         context_report.push_str(&String::from_utf8_lossy(&status_output.stdout));
         context_report.push('\n');
@@ -1680,7 +1712,7 @@ impl Tool for GitContextTool {
             .arg("--stat")
             .output()
             .await
-            .map_err(|e| anyhow!("Failed to execute git diff: {}", e))?;
+            .map_err(|e| anyhow!("Failed to execute git diff: {e}"))?;
 
         context_report.push_str(&String::from_utf8_lossy(&diff_output.stdout));
         context_report.push('\n');
@@ -1694,7 +1726,7 @@ impl Tool for GitContextTool {
             .arg("--oneline")
             .output()
             .await
-            .map_err(|e| anyhow!("Failed to execute git log: {}", e))?;
+            .map_err(|e| anyhow!("Failed to execute git log: {e}"))?;
 
         context_report.push_str(&String::from_utf8_lossy(&log_output.stdout));
         context_report.push('\n');
@@ -1703,16 +1735,17 @@ impl Tool for GitContextTool {
     }
 }
 
+#[derive(Debug)]
 pub struct ManageTasksTool {
     pub event_tx: Option<tokio::sync::broadcast::Sender<aemacs_core::bus::SystemEvent>>,
 }
 
 #[async_trait]
 impl Tool for ManageTasksTool {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "manage_tasks"
     }
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "Creates a project plan or updates task statuses. \
          Use action='set_plan' with tasks=['step 1', ...] to initialize a roadmap. \
          Use action='update_task' with index=N and status='InProgress'|'Completed'|'Failed' to track progress."
@@ -1756,33 +1789,35 @@ impl Tool for ManageTasksTool {
                     "InProgress" => aemacs_core::task::TaskStatus::InProgress,
                     "Completed" => aemacs_core::task::TaskStatus::Completed,
                     "Failed" => aemacs_core::task::TaskStatus::Failed,
-                    _ => return Err(anyhow!("Invalid status: {}", status_str)),
+                    _ => return Err(anyhow!("Invalid status: {status_str}")),
                 };
                 tx.send(aemacs_core::bus::SystemEvent::TaskUpdated { index, status })?;
-                Ok(format!("Task {} updated to {:?}.", index, status))
+                Ok(format!("Task {index} updated to {status:?}."))
             }
-            _ => Err(anyhow!("Invalid action: {}", action)),
+            _ => Err(anyhow!("Invalid action: {action}")),
         }
     }
 }
 
+#[derive(Debug)]
 pub struct FetchContiguousMemoryTool {
     kb: Arc<KnowledgeBase>,
 }
 
 impl FetchContiguousMemoryTool {
-    pub fn new(kb: Arc<KnowledgeBase>) -> Self {
+    #[must_use] 
+    pub const fn new(kb: Arc<KnowledgeBase>) -> Self {
         Self { kb }
     }
 }
 
 #[async_trait]
 impl Tool for FetchContiguousMemoryTool {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "fetch_contiguous_memory"
     }
 
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "Fetches the complete, original message from the archive using a message_id. Use this when a normal memory search returns a truncated 'Chunk X/Y' and you need to read the surrounding context."
     }
 
@@ -1808,13 +1843,12 @@ impl Tool for FetchContiguousMemoryTool {
 
         if chunks.is_empty() {
             return Ok(format!(
-                "No memory chunks found for message_id: {}",
-                message_id
+                "No memory chunks found for message_id: {message_id}"
             ));
         }
 
         let mut full_text = String::new();
-        full_text.push_str(&format!("<contiguous_memory id=\"{}\">\n", message_id));
+        full_text.push_str(&format!("<contiguous_memory id=\"{message_id}\">\n"));
         for chunk in chunks {
             full_text.push_str(&chunk.content);
             full_text.push('\n');
@@ -1991,10 +2025,10 @@ mod weaver_tests {
         struct FailingTool;
         #[async_trait]
         impl Tool for FailingTool {
-            fn name(&self) -> &str {
+            fn name(&self) -> &'static str {
                 "fail"
             }
-            fn description(&self) -> &str {
+            fn description(&self) -> &'static str {
                 "always fails"
             }
             fn parameters(&self) -> Value {
@@ -2023,8 +2057,7 @@ mod weaver_tests {
         let formatted_err = match exec_result {
             Ok(_) => panic!("Should have failed"),
             Err(e) => format!(
-                "🛠️ TOOL_ERROR: [{}]. SUGGESTION: Analyze the reason and retry with corrected arguments.",
-                e
+                "🛠️ TOOL_ERROR: [{e}]. SUGGESTION: Analyze the reason and retry with corrected arguments."
             ),
         };
 
@@ -2091,7 +2124,7 @@ mod weaver_tests {
         }
         #[async_trait]
         impl AIBackend for MockBackend {
-            fn name(&self) -> &str {
+            fn name(&self) -> &'static str {
                 "mock"
             }
             async fn health_check(&self) -> AIResult<()> {
@@ -2124,10 +2157,10 @@ mod weaver_tests {
         struct SimpleTool;
         #[async_trait]
         impl Tool for SimpleTool {
-            fn name(&self) -> &str {
+            fn name(&self) -> &'static str {
                 "test_tool"
             }
-            fn description(&self) -> &str {
+            fn description(&self) -> &'static str {
                 "desc"
             }
             fn parameters(&self) -> Value {
@@ -2262,8 +2295,7 @@ mod weaver_tests {
                         || msg.contains("connect")
                         || msg.contains("compatibility")
                         || msg.contains("version"),
-                    "Unexpected error in Recall Tool: {}",
-                    msg
+                    "Unexpected error in Recall Tool: {msg}"
                 );
             }
         }
@@ -2299,13 +2331,13 @@ mod weaver_tests {
         match result {
             Ok(output) => {
                 // If there were results, they must have the warning.
-                if !output.contains("No historical records found") {
+                if output.contains("No historical records found") {
+                    info!("No records found, but tool logic was exercised.");
+                } else {
                     assert!(
                         output.contains("⚠️ WARNING: These are historical records"),
                         "Missing safety warning in genesis retrieval!"
                     );
-                } else {
-                    info!("No records found, but tool logic was exercised.");
                 }
             }
             Err(e) => {
@@ -2317,8 +2349,7 @@ mod weaver_tests {
                         || msg.contains("compatibility")
                         || msg.contains("version")
                         || msg.contains("Network Error"),
-                    "Unexpected error: {}",
-                    msg
+                    "Unexpected error: {msg}"
                 );
             }
         }
@@ -2370,8 +2401,7 @@ mod weaver_tests {
                         || msg.contains("compatibility")
                         || msg.contains("version")
                         || msg.contains("Network Error"),
-                    "Unexpected error: {}",
-                    msg
+                    "Unexpected error: {msg}"
                 );
             }
         }
@@ -2389,7 +2419,7 @@ mod weaver_tests {
         }
         #[async_trait]
         impl crate::AIBackend for SequenceMockBackend {
-            fn name(&self) -> &str {
+            fn name(&self) -> &'static str {
                 "seq-mock"
             }
             async fn health_check(&self) -> crate::error::AIResult<()> {
@@ -2439,7 +2469,7 @@ mod weaver_tests {
             calls[0].0.contains("dolphin"),
             "First call should be to Logic model"
         );
-        assert_eq!(calls[0].1, true, "Logic call must have tools enabled");
+        assert!(calls[0].1, "Logic call must have tools enabled");
 
         // Verify Roleplay Call
         let rp_model = MODELS
@@ -2450,7 +2480,7 @@ mod weaver_tests {
             calls[1].0, rp_model.name,
             "Second call should be to Roleplay model"
         );
-        assert_eq!(calls[1].1, false, "Roleplay call must have tools disabled");
+        assert!(!calls[1].1, "Roleplay call must have tools disabled");
 
         Ok(())
     }
@@ -2458,7 +2488,7 @@ mod weaver_tests {
     #[tokio::test]
     async fn test_vram_eviction_confirmation_quest() {
         // QUEST: Verify that keep_alive: 0 is correctly serialized.
-        let mut conv = Conversation::new("dolphin3:8b");
+        let conv = Conversation::new("dolphin3:8b");
 
         let logic_req = conv.build_logic_request();
         let rp_req = conv.build_roleplay_request("reasoning");
@@ -2479,7 +2509,7 @@ mod weaver_tests {
         struct StreamSilenceMockBackend;
         #[async_trait]
         impl crate::AIBackend for StreamSilenceMockBackend {
-            fn name(&self) -> &str {
+            fn name(&self) -> &'static str {
                 "silence-mock"
             }
             async fn health_check(&self) -> crate::error::AIResult<()> {

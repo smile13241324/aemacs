@@ -47,6 +47,7 @@ pub fn get_config() -> &'static UserConfig {
 }
 
 /// Returns the standard physical path to the configuration file.
+#[must_use] 
 pub fn get_config_path() -> Option<PathBuf> {
     dirs::home_dir().map(|mut path| {
         path.push(".aemacs");
@@ -56,13 +57,11 @@ pub fn get_config_path() -> Option<PathBuf> {
 }
 
 /// Loads the user configuration from the default path.
+#[must_use] 
 pub fn load_user_config() -> UserConfig {
-    let path = match get_config_path() {
-        Some(p) => p,
-        None => {
-            log::warn!("Could not determine home directory. Using default config.");
-            return UserConfig::default();
-        }
+    let Some(path) = get_config_path() else {
+        log::warn!("Could not determine home directory. Using default config.");
+        return UserConfig::default();
     };
 
     load_config_from_path(&path)
@@ -70,9 +69,10 @@ pub fn load_user_config() -> UserConfig {
 
 /// Loads the configuration from a specific physical path.
 /// It handles file missing, read errors, and format corruption by falling back to defaults.
+#[must_use] 
 pub fn load_config_from_path(path: &PathBuf) -> UserConfig {
     if !path.exists() {
-        log::info!("No config file found at {:?}. Using default config.", path);
+        log::info!("No config file found at {path:?}. Using default config.");
         return UserConfig::default();
     }
 
@@ -80,12 +80,12 @@ pub fn load_config_from_path(path: &PathBuf) -> UserConfig {
         Ok(contents) => match ron::from_str(&contents) {
             Ok(config) => config,
             Err(e) => {
-                log::error!("Failed to parse {:?}: {}. Using default config.", path, e);
+                log::error!("Failed to parse {path:?}: {e}. Using default config.");
                 UserConfig::default()
             }
         },
         Err(e) => {
-            log::error!("Failed to read {:?}: {}. Using default config.", path, e);
+            log::error!("Failed to read {path:?}: {e}. Using default config.");
             UserConfig::default()
         }
     }
@@ -93,31 +93,32 @@ pub fn load_config_from_path(path: &PathBuf) -> UserConfig {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use std::io::Write;
     use tempfile::NamedTempFile;
 
     #[test]
     fn test_load_config_ron_success() {
-        let mut file = NamedTempFile::new().unwrap();
+        let mut file = NamedTempFile::new().expect("Should not fail in test");
         // A complete config provided by the user
         writeln!(
             file,
             "UserConfig(hardware_tier: Some(\"HIGH\"), ollama_url: Some(\"http://remote:11434\"), qdrant_url: Some(\"http://remote:6334\"))"
         )
-        .unwrap();
+        .expect("Should not fail in test");
 
         let config = load_config_from_path(&file.path().to_path_buf());
-        assert_eq!(config.hardware_tier.unwrap(), "HIGH");
-        assert_eq!(config.ollama_url.unwrap(), "http://remote:11434");
-        assert_eq!(config.qdrant_url.unwrap(), "http://remote:6334");
+        assert_eq!(config.hardware_tier.expect("Should not fail in test"), "HIGH");
+        assert_eq!(config.ollama_url.expect("Should not fail in test"), "http://remote:11434");
+        assert_eq!(config.qdrant_url.expect("Should not fail in test"), "http://remote:6334");
     }
 
     #[test]
     fn test_load_config_partial_fallback() {
-        let mut file = NamedTempFile::new().unwrap();
+        let mut file = NamedTempFile::new().expect("Should not fail in test");
         // User only provided the tier, URLs are missing
-        writeln!(file, "UserConfig(hardware_tier: Some(\"MEDIUM\"))").unwrap();
+        writeln!(file, "UserConfig(hardware_tier: Some(\"MEDIUM\"))").expect("Should not fail in test");
 
         let mut config = load_config_from_path(&file.path().to_path_buf());
 
@@ -129,14 +130,14 @@ mod tests {
             config.qdrant_url = Some("http://localhost:6334".to_string());
         }
 
-        assert_eq!(config.hardware_tier.unwrap(), "MEDIUM");
+        assert_eq!(config.hardware_tier.expect("Should not fail in test"), "MEDIUM");
         assert_eq!(
-            config.ollama_url.unwrap(),
+            config.ollama_url.expect("Should not fail in test"),
             "http://localhost:11434",
             "Ollama URL failed to fall back!"
         );
         assert_eq!(
-            config.qdrant_url.unwrap(),
+            config.qdrant_url.expect("Should not fail in test"),
             "http://localhost:6334",
             "Qdrant URL failed to fall back!"
         );
@@ -148,22 +149,22 @@ mod tests {
         let config = load_config_from_path(&path);
 
         // A missing file returns UserConfig::default() directly
-        assert_eq!(config.hardware_tier.unwrap(), "LOW");
-        assert_eq!(config.ollama_url.unwrap(), "http://localhost:11434");
-        assert_eq!(config.qdrant_url.unwrap(), "http://localhost:6334");
+        assert_eq!(config.hardware_tier.expect("Should not fail in test"), "LOW");
+        assert_eq!(config.ollama_url.expect("Should not fail in test"), "http://localhost:11434");
+        assert_eq!(config.qdrant_url.expect("Should not fail in test"), "http://localhost:6334");
     }
 
     #[test]
     fn test_load_config_fallback_on_invalid_ron() {
-        let mut file = NamedTempFile::new().unwrap();
+        let mut file = NamedTempFile::new().expect("Should not fail in test");
         // Corrupt file
-        writeln!(file, "Invalid(format: !![[").unwrap();
+        writeln!(file, "Invalid(format: !![[").expect("Should not fail in test");
 
         let config = load_config_from_path(&file.path().to_path_buf());
 
         // An invalid file returns UserConfig::default() directly
-        assert_eq!(config.hardware_tier.unwrap(), "LOW");
-        assert_eq!(config.ollama_url.unwrap(), "http://localhost:11434");
-        assert_eq!(config.qdrant_url.unwrap(), "http://localhost:6334");
+        assert_eq!(config.hardware_tier.expect("Should not fail in test"), "LOW");
+        assert_eq!(config.ollama_url.expect("Should not fail in test"), "http://localhost:11434");
+        assert_eq!(config.qdrant_url.expect("Should not fail in test"), "http://localhost:6334");
     }
 }

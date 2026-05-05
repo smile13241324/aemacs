@@ -32,7 +32,7 @@ pub fn init() -> Result<()> {
     info!("⚙️ [CORE] Initializing System Kernel...");
 
     let version = env!("CARGO_PKG_VERSION");
-    info!("⚙️ [CORE] Kernel Version {} ready.", version);
+    info!("⚙️ [CORE] Kernel Version {version} ready.");
 
     Ok(())
 }

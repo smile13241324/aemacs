@@ -126,16 +126,16 @@ pub fn extract_legacy_files(
     Ok(records)
 }
 
-/// Reads a JSONL file and imports the records into the KnowledgeBase using the legacy endpoints.
+/// Reads a JSONL file and imports the records into the `KnowledgeBase` using the legacy endpoints.
 pub async fn import_jsonl(kb: &KnowledgeBase, jsonl_path: &Path) -> AIResult<()> {
-    let file = File::open(jsonl_path).map_err(|e| crate::error::AIError::IoError(e))?;
+    let file = File::open(jsonl_path).map_err(crate::error::AIError::IoError)?;
     let reader = BufReader::new(file);
 
     let mut success_count = 0;
     let mut err_count = 0;
 
     for line in reader.lines() {
-        let line = line.map_err(|e| crate::error::AIError::IoError(e))?;
+        let line = line.map_err(crate::error::AIError::IoError)?;
         if line.trim().is_empty() {
             continue;
         }
@@ -192,7 +192,7 @@ pub async fn import_jsonl(kb: &KnowledgeBase, jsonl_path: &Path) -> AIResult<()>
 /// Exports all records for a specific agent from Qdrant into a JSONL file.
 pub async fn export_jsonl(kb: &KnowledgeBase, agent_id: &str, output_path: &Path) -> AIResult<()> {
     // 1. Fetch Archives
-    let mut archives = kb.search_archive("", Some(agent_id), None).await?;
+    let archives = kb.search_archive("", Some(agent_id), None).await?;
     // 2. Fetch Genesis
     let mut genesis = kb.search_genesis("").await?;
     // Filter genesis by agent_id manually since search_genesis doesn't take agent_id directly
@@ -204,15 +204,15 @@ pub async fn export_jsonl(kb: &KnowledgeBase, agent_id: &str, output_path: &Path
             == agent_id
     });
 
-    let mut file = File::create(output_path).map_err(|e| crate::error::AIError::IoError(e))?;
+    let mut file = File::create(output_path).map_err(crate::error::AIError::IoError)?;
     let mut export_count = 0;
 
     // Helper to write a record
     let mut write_record = |record: LegacyRecord| -> AIResult<()> {
         let json_str = serde_json::to_string(&record).map_err(|e| {
-            crate::error::AIError::ParseError(format!("Failed to serialize: {}", e))
+            crate::error::AIError::ParseError(format!("Failed to serialize: {e}"))
         })?;
-        writeln!(file, "{}", json_str).map_err(|e| crate::error::AIError::IoError(e))?;
+        writeln!(file, "{json_str}").map_err(crate::error::AIError::IoError)?;
         export_count += 1;
         Ok(())
     };
@@ -439,16 +439,16 @@ This block never ends...
 
         let test_agent = format!(
             "E2EAgent_{}",
-            uuid::Uuid::new_v4().to_string().replace("-", "")
+            uuid::Uuid::new_v4().to_string().replace('-', "")
         );
 
         // 2. EXTRACTION Phase
         let mut src_file = NamedTempFile::new()?;
-        let src_content = format!("\
+        let src_content = "\
 begin------------------------------------Speaker: User---Tier: ARCHIVE---Phase: TEST---CONTEXT: TestContext----------------------------------
 Test Content 1
 end------------------------------------
-");
+".to_string();
         src_file.write_all(src_content.as_bytes())?;
 
         let extracted_records = extract_legacy_files(
@@ -461,7 +461,7 @@ end------------------------------------
 
         let mut jsonl_file = NamedTempFile::new()?;
         let json_str = serde_json::to_string(&extracted_records[0])?;
-        writeln!(jsonl_file, "{}", json_str)?;
+        writeln!(jsonl_file, "{json_str}")?;
 
         // 3. IMPORT Phase
         import_jsonl(&kb, jsonl_file.path()).await?;

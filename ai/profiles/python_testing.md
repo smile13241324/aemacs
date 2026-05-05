@@ -10,6 +10,8 @@ Before writing Python tests, perform a "Reasoning Trace" inside `<reasoning>...<
 1.  **Framework Check:** Always use `pytest`. Never `unittest`.
 2.  **Type Check:** Does the test enforce `pyright` strictness?
 3.  **Data Check:** Are we creating massive DataFrames? Use small, deterministic fixtures.
+4.  **Type Check Functions:** Are all function arguments with their parameters typed? (e.g., `def run(x: int) -> None`).
+5.  **Type Check Variables:** Are all variables typed? (e.g., `my_name: str = "Some Name"`).
 
 ## 1. Core Philosophy
 * **Explicit Fixtures:** Use `conftest.py` for shared resources.

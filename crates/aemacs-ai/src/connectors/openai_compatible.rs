@@ -11,24 +11,34 @@ use tracing::{info, instrument};
 use crate::{AIBackend, AIError, AIRequest, AIResponseStream, AIResult, Message};
 
 /// An AI backend implementation that communicates with OpenAI-compatible REST APIs.
-/// This is used to connect to services like Ollama, vLLM, or OpenAI itself.
+/// This is used to connect to services like Ollama, vLLM, or `OpenAI` itself.
 #[derive(Clone)]
 pub struct OpenAICompatibleBackend {
     /// The underlying HTTP client.
     client: Client,
-    /// The base URL of the API (e.g., http://localhost:11434/v1).
+    /// The base URL of the API (e.g., <http://localhost:11434/v1>).
     base_url: String,
     /// Optional API key for authenticated requests.
     _api_key: Option<String>,
 }
 
+impl std::fmt::Debug for OpenAICompatibleBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OpenAICompatibleBackend")
+            .field("base_url", &self.base_url)
+            .field("_api_key", &self._api_key)
+            .field("client", &"reqwest::Client")
+            .finish()
+    }
+}
+
 impl OpenAICompatibleBackend {
-    /// Initializes a new OpenAICompatibleBackend.
+    /// Initializes a new `OpenAICompatibleBackend`.
     pub fn new(base_url: impl Into<String>, api_key: Option<String>) -> Self {
         let mut headers = header::HeaderMap::new();
 
         if let Some(key) = &api_key {
-            let mut auth_value = header::HeaderValue::from_str(&format!("Bearer {}", key))
+            let mut auth_value = header::HeaderValue::from_str(&format!("Bearer {key}"))
                 .expect("Invalid API Key chars");
             auth_value.set_sensitive(true);
             headers.insert(header::AUTHORIZATION, auth_value);
@@ -36,7 +46,7 @@ impl OpenAICompatibleBackend {
 
         let client = Client::builder()
             .default_headers(headers)
-            .timeout(Duration::from_secs(300)) // ACO-007: 5-minute timeout
+            .timeout(Duration::from_mins(5)) // ACO-007: 5-minute timeout
             .connect_timeout(Duration::from_secs(10)) // Snappy connection check
             .build()
             .expect("Failed to build HTTP client");
@@ -85,7 +95,7 @@ struct OpenAIDelta {
 #[async_trait]
 impl AIBackend for OpenAICompatibleBackend {
     /// Returns the descriptive name of this backend.
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "OpenAI Compatible REST"
     }
 
@@ -98,7 +108,7 @@ impl AIBackend for OpenAICompatibleBackend {
             .get(&url)
             .send()
             .await
-            .map_err(|e| AIError::BackendUnavailable(format!("Network Error: {}", e)))?;
+            .map_err(|e| AIError::BackendUnavailable(format!("Network Error: {e}")))?;
 
         if resp.status().is_success() {
             info!("Healthcheck passed for {}", self.base_url);
@@ -138,8 +148,7 @@ impl AIBackend for OpenAICompatibleBackend {
         if !resp.status().is_success() {
             let error_text = resp.text().await.unwrap_or_default();
             return Err(AIError::ConnectorError(format!(
-                "API Error: {}",
-                error_text
+                "API Error: {error_text}"
             )));
         }
 
@@ -182,8 +191,7 @@ impl AIBackend for OpenAICompatibleBackend {
         if !resp.status().is_success() {
             let error_text = resp.text().await.unwrap_or_default();
             return Err(AIError::ConnectorError(format!(
-                "API Error: {}",
-                error_text
+                "API Error: {error_text}"
             )));
         }
 
@@ -198,8 +206,8 @@ impl AIBackend for OpenAICompatibleBackend {
                     return Ok(Vec::new());
                 }
 
-                if let Some(json_str) = line.strip_prefix("data: ") {
-                    if let Ok(chunk) = serde_json::from_str::<OpenAIStreamChunk>(json_str) {
+                if let Some(json_str) = line.strip_prefix("data: ")
+                    && let Ok(chunk) = serde_json::from_str::<OpenAIStreamChunk>(json_str) {
                         let mut events = Vec::new();
                         for choice in chunk.choices {
                             if let Some(content) = choice.delta.content {
@@ -213,7 +221,6 @@ impl AIBackend for OpenAICompatibleBackend {
                         }
                         return Ok(events);
                     }
-                }
 
                 Ok(Vec::new())
             }
@@ -245,7 +252,7 @@ mod tests {
 
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let addr = listener.local_addr()?;
-        let base_url = format!("http://{}", addr);
+        let base_url = format!("http://{addr}");
 
         tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.unwrap();

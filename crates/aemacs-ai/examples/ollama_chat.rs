@@ -18,27 +18,27 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let backend = OpenAICompatibleBackend::new("http://localhost:11434/v1", None);
 
     match backend.health_check().await {
-        Ok(_) => println!("✅ Ollama is online and healthy!"),
+        Ok(()) => println!("✅ Ollama is online and healthy!"),
         Err(e) => {
             eprintln!("❌ Could not connect to Ollama. Is 'ollama serve' running?");
-            eprintln!("   Error: {}", e);
+            eprintln!("   Error: {e}");
             return Ok(());
         }
     }
 
     let request = if let Some(path) = image_path {
-        println!("📸 Image detected: {}", path);
+        println!("📸 Image detected: {path}");
         println!("   Loading and encoding...");
 
         let image_data = std::fs::read(path)?;
         let b64 = BASE64_STANDARD.encode(image_data);
-        let data_url = format!("data:image/jpeg;base64,{}", b64); // Assumption: jpeg/png works with generic header often
+        let data_url = format!("data:image/jpeg;base64,{b64}"); // Assumption: jpeg/png works with generic header often
 
         println!("   Model: llama3.2-vision");
         Conversation::new("llama3.2-vision")
             .with_system("You are a vision assistant.")
             .with_user_with_image("Describe this image in detail.", data_url)
-            .build()
+            .build_logic_request()
     } else {
         println!("📝 Text mode.");
         println!("   Model: dolphin3:8b");
@@ -47,7 +47,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 "You are Æmacs, a helpful coding assistant embedded in a Rust IDE. Be concise.",
             )
             .with_user("Hello! Can you explain what a Monad and a Monoid is in detail?")
-            .build()
+            .build_logic_request()
     };
 
     println!("\n🚀 Sending Request...\n");
@@ -59,12 +59,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
         match result {
             Ok(event) => {
                 if let aemacs_ai::StreamEvent::Content(content) = event {
-                    print!("{}", content);
+                    print!("{content}");
                     io::stdout().flush()?;
                 }
             }
             Err(e) => {
-                eprintln!("\n❌ Stream Error: {}", e);
+                eprintln!("\n❌ Stream Error: {e}");
                 break;
             }
         }

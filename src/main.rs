@@ -21,8 +21,7 @@ fn main() -> Result<()> {
     if args.iter().any(|arg| arg == "--server") {
         let rt = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
-            .build()
-            .expect("Failed to create server runtime");
+            .build()?;
 
         return rt.block_on(async {
             info!("🌑 [SERVER] Headless Sovereign Mode detected.");
@@ -56,8 +55,8 @@ fn main() -> Result<()> {
 
             // B. AI Infrastructure
             let kb = Arc::new(KnowledgeBase::new(
-                config.qdrant_url.as_deref().unwrap(),
-                config.ollama_url.as_deref().unwrap(),
+                config.qdrant_url.as_deref().ok_or_else(|| anyhow::anyhow!("Missing qdrant_url"))?,
+                config.ollama_url.as_deref().ok_or_else(|| anyhow::anyhow!("Missing ollama_url"))?,
                 aemacs_ai::rag::Environment::Production,
             )?);
             let tokio_handle = tokio::runtime::Handle::current();
@@ -68,7 +67,7 @@ fn main() -> Result<()> {
                 Some(bus.tx.clone()),
             ));
             let backend = Arc::new(OpenAICompatibleBackend::new(
-                &format!("{}/v1", config.ollama_url.as_deref().unwrap()),
+                format!("{}/v1", config.ollama_url.as_deref().ok_or_else(|| anyhow::anyhow!("Missing ollama_url"))?),
                 None,
             ));
 
@@ -83,7 +82,7 @@ fn main() -> Result<()> {
             let bus_watcher = bus.clone();
             tokio::spawn(async move {
                 if let Err(e) = watcher.run(bus_watcher).await {
-                    log::warn!("👁️ FileWatcher failed: {}", e);
+                    log::warn!("👁️ FileWatcher failed: {e}");
                 }
             });
 
@@ -105,7 +104,7 @@ fn main() -> Result<()> {
     // --- GUI Mode (Default) ---
     let file_to_open = if args.len() > 1 {
         let path = std::path::PathBuf::from(&args[1]);
-        info!("📂 [CLI] Requesting to open file: {:?}", path);
+        info!("📂 [CLI] Requesting to open file: {path:?}");
         Some(path)
     } else {
         None

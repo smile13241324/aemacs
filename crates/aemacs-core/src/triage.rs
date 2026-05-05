@@ -9,9 +9,11 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time::Instant;
 
-/// The TriageRouter acts as a semantic filter and debouncer for system signals.
+/// The `TriageRouter` acts as a semantic filter and debouncer for system signals.
+///
 /// It prevents the Neural Engine from being overwhelmed by rapid events and translates
 /// raw system signals into high-level autonomous intents.
+#[derive(Debug)]
 pub struct TriageRouter {
     /// The system event bus for listening and emitting enriched events.
     bus: EventBus,
@@ -22,8 +24,9 @@ pub struct TriageRouter {
 }
 
 impl TriageRouter {
-    /// Initializes a new TriageRouter with the specified debounce window.
-    pub fn new(bus: EventBus, debounce_duration: Duration) -> Self {
+    /// Initializes a new `TriageRouter` with the specified debounce window.
+    #[must_use] 
+    pub const fn new(bus: EventBus, debounce_duration: Duration) -> Self {
         Self {
             bus,
             debounce_duration,
@@ -32,6 +35,7 @@ impl TriageRouter {
     }
 
     /// Configures the authorized sources for the triage engine, enabling signal filtering.
+    #[must_use] 
     pub fn with_authorized_sources(mut self, sources: Vec<String>) -> Self {
         self.authorized_sources = Some(sources);
         self
@@ -67,7 +71,7 @@ impl TriageRouter {
                             last_signal_time = Instant::now();
                         }
                     }
-                    _ = tokio::time::sleep(Duration::from_millis(50)) => {
+                    () = tokio::time::sleep(Duration::from_millis(50)) => {
                         if !pending_signals.is_empty() && last_signal_time.elapsed() >= debounce_dur {
                             // Process and emit
                             if pending_signals.len() > 5 {
@@ -106,18 +110,15 @@ impl TriageRouter {
 
         // Main Listener
         while let Ok(event) = rx.recv().await {
-            match &event {
-                SystemEvent::Signal {
+            if let SystemEvent::Signal {
                     source, event_type, ..
-                } => {
-                    // Avoid recursive loops from our own emitted intents
-                    if source == "TriageRouter" || event_type == "AutonomousIntent" {
-                        continue;
-                    }
-                    // Pass to debouncer
-                    let _ = signal_tx.send(event.clone()).await;
+                } = &event {
+                // Avoid recursive loops from our own emitted intents
+                if source == "TriageRouter" || event_type == "AutonomousIntent" {
+                    continue;
                 }
-                _ => {}
+                // Pass to debouncer
+                let _ = signal_tx.send(event.clone()).await;
             }
         }
 
@@ -125,6 +126,7 @@ impl TriageRouter {
     }
 
     /// Evaluates a system event and attempts to map it to a high-level intent.
+    #[must_use] 
     pub fn triage_event(&self, event: SystemEvent) -> Option<SignalContext> {
         Self::triage_event_internal(&self.authorized_sources, event)
     }
@@ -141,26 +143,24 @@ impl TriageRouter {
                 payload,
             } => {
                 // ACO-030: Verify Authorization
-                if let Some(authorized) = authorized_sources {
-                    if !authorized.iter().any(|s| source.contains(s)) {
+                if let Some(authorized) = authorized_sources
+                    && !authorized.iter().any(|s| source.contains(s)) {
                         warn!(
-                            "🧠 [TRIAGE] Dropping signal from unauthorized source: {}",
-                            source
+                            "🧠 [TRIAGE] Dropping signal from unauthorized source: {source}"
                         );
                         return None;
                     }
-                }
 
                 match event_type.as_str() {
                     "FileSaved" => {
                         // ACO-029-03: Contextual Flooding (Payload now contains snippet)
                         let parts: Vec<&str> = payload.split("@@").collect();
-                        let path_str = parts.get(0).unwrap_or(&"").to_string();
-                        let snippet = parts.get(1).map(|s| s.to_string());
+                        let path_str = parts.first().unwrap_or(&"").to_string();
+                        let snippet = parts.get(1).map(std::string::ToString::to_string);
 
                         let mut metadata = HashMap::new();
                         if let Ok(lang) = SupportedLanguage::from_path(Path::new(&path_str)) {
-                            metadata.insert("language".to_string(), format!("{:?}", lang));
+                            metadata.insert("language".to_string(), format!("{lang:?}"));
                         }
 
                         Some(SignalContext {
@@ -228,6 +228,7 @@ impl TriageRouter {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use crate::bus::EventBus;
 
@@ -248,7 +249,7 @@ mod tests {
             bus.tx.send(SystemEvent::Signal {
                 source: "Test".to_string(),
                 event_type: "FileSaved".to_string(),
-                payload: format!("file_{}.rs", i),
+                payload: format!("file_{i}.rs"),
             })?;
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
@@ -256,18 +257,11 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         let mut found_bulk = false;
-        while let Ok(event) = rx.try_recv() {
-            if let SystemEvent::Signal {
-                event_type,
-                payload,
-                ..
-            } = event
-            {
-                if event_type == "AutonomousIntent" {
-                    let ctx: SignalContext = serde_json::from_str(&payload)?;
-                    if ctx.intent == AutonomousIntent::BulkUpdate {
-                        found_bulk = true;
-                    }
+        while let Ok(SystemEvent::Signal { event_type, payload, .. }) = rx.try_recv() {
+            if event_type == "AutonomousIntent" {
+                let ctx: SignalContext = serde_json::from_str(&payload)?;
+                if ctx.intent == AutonomousIntent::BulkUpdate {
+                    found_bulk = true;
                 }
             }
         }
@@ -299,22 +293,14 @@ mod tests {
 
         let mut found_fix = false;
         for _ in 0..10 {
-            if let Ok(Ok(event)) = tokio::time::timeout(Duration::from_secs(1), rx.recv()).await {
-                if let SystemEvent::Signal {
-                    event_type,
-                    payload,
-                    ..
-                } = event
-                {
-                    if event_type == "AutonomousIntent" {
-                        let ctx: SignalContext = serde_json::from_str(&payload)?;
-                        if ctx.intent == AutonomousIntent::FixBuildError {
-                            found_fix = true;
-                            break;
-                        }
+            if let Ok(Ok(SystemEvent::Signal { event_type, payload, .. })) = tokio::time::timeout(Duration::from_secs(1), rx.recv()).await
+                && event_type == "AutonomousIntent" {
+                    let ctx: SignalContext = serde_json::from_str(&payload)?;
+                    if ctx.intent == AutonomousIntent::FixBuildError {
+                        found_fix = true;
+                        break;
                     }
                 }
-            }
         }
 
         assert!(
@@ -346,22 +332,14 @@ mod tests {
 
         let mut found_intent = false;
         for _ in 0..10 {
-            if let Ok(Ok(event)) = tokio::time::timeout(Duration::from_secs(1), rx.recv()).await {
-                if let SystemEvent::Signal {
-                    event_type,
-                    payload,
-                    ..
-                } = event
-                {
-                    if event_type == "AutonomousIntent" {
-                        let ctx: SignalContext = serde_json::from_str(&payload)?;
-                        assert_eq!(ctx.intent, AutonomousIntent::ReviewChange);
-                        assert!(ctx.snippet.as_ref().unwrap().contains(email_body));
-                        found_intent = true;
-                        break;
-                    }
+            if let Ok(Ok(SystemEvent::Signal { event_type, payload, .. })) = tokio::time::timeout(Duration::from_secs(1), rx.recv()).await
+                && event_type == "AutonomousIntent" {
+                    let ctx: SignalContext = serde_json::from_str(&payload)?;
+                    assert_eq!(ctx.intent, AutonomousIntent::ReviewChange);
+                    assert!(ctx.snippet.as_ref().expect("Should not fail in test").contains(email_body));
+                    found_intent = true;
+                    break;
                 }
-            }
         }
 
         assert!(
@@ -407,19 +385,12 @@ mod tests {
         // Wait for router processing (debounce 50ms + slack)
         tokio::time::sleep(Duration::from_millis(500)).await;
 
-        while let Ok(event) = rx.try_recv() {
-            if let SystemEvent::Signal {
-                event_type,
-                payload,
-                ..
-            } = event
-            {
-                if event_type == "AutonomousIntent" {
-                    let ctx: SignalContext = serde_json::from_str(&payload)?;
-                    intent_count += 1;
-                    if ctx.intent == AutonomousIntent::RoutineCheck {
-                        found_authorized = true;
-                    }
+        while let Ok(SystemEvent::Signal { event_type, payload, .. }) = rx.try_recv() {
+            if event_type == "AutonomousIntent" {
+                let ctx: SignalContext = serde_json::from_str(&payload)?;
+                intent_count += 1;
+                if ctx.intent == AutonomousIntent::RoutineCheck {
+                    found_authorized = true;
                 }
             }
         }

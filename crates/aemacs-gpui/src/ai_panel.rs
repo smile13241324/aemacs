@@ -23,7 +23,7 @@ use aemacs_ai::rag::KnowledgeBase;
 
 /// Represents a request from the AI Mesh to the host UI environment.
 /// This is used to prompt the user for approvals or additional information.
-pub enum HostRequest {
+pub(crate) enum HostRequest {
     /// Requests explicit user approval for a tool action.
     Approval {
         /// Description of the action requiring approval.
@@ -42,7 +42,7 @@ pub enum HostRequest {
 
 /// Implements the `ToolHost` trait for the graphical interface.
 /// It bridges the asynchronous agent execution with the synchronous GPUI windowing system.
-pub struct GuiHost {
+pub(crate) struct GuiHost {
     /// Channel for sending requests to the UI thread.
     pub request_tx: async_channel::Sender<HostRequest>,
     /// The system event bus for emitting telemetry signals.
@@ -111,9 +111,9 @@ impl ToolHost for GuiHost {
     }
 }
 
-/// The AiPanel is the primary interactive interface for the Æmacs Mesh.
+/// The `AiPanel` is the primary interactive interface for the Æmacs Mesh.
 /// It handles model selection, agent switching, message history, and the integrated chat interface.
-pub struct AiPanel {
+pub(crate) struct AiPanel {
     /// The editor entity used for the user's chat input.
     pub input_editor: Entity<Editor>,
     /// State for the chat input's list view.
@@ -172,7 +172,7 @@ pub struct AiPanel {
 
 /// Defines the possible states of agent activity, determining the appearance of the cognition pulse.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CognitiveStatus {
+pub(crate) enum CognitiveStatus {
     /// The agent is inactive and waiting for input.
     Idle,
     /// The logic hemisphere is performing analysis or tool execution.
@@ -301,7 +301,7 @@ fn parse_markdown_blocks(text: &str) -> Vec<MarkdownBlock> {
 }
 
 impl AiPanel {
-    pub fn new(
+    pub(crate) fn new(
         cx: &mut App,
         window_handle: gpui::AnyWindowHandle,
         host_tx: async_channel::Sender<HostRequest>,
@@ -336,7 +336,7 @@ impl AiPanel {
             let message_scroll_handle = gpui::ScrollHandle::new();
             let input_scroll_handle = gpui::ScrollHandle::new();
 
-            AiPanel {
+            Self {
                 input_editor,
                 input_list_state,
                 focus_handle,
@@ -420,16 +420,14 @@ impl AiPanel {
                                         }
 
                                         // Check if AI is currently generating
-                                        if let Some(last_msg) = this.messages.last() {
-                                            if last_msg.role == "AI" && last_msg.content.is_empty() {
+                                        if let Some(last_msg) = this.messages.last()
+                                            && last_msg.role == "AI" && last_msg.content.is_empty() {
                                                 return; // Drop signal if busy
                                             }
-                                        }
 
                                         if event_type == "BufferModified" {
                                             let observation = format!(
-                                                "Observation (from {}): The following file was just modified:\n{}",
-                                                source, payload
+                                                "Observation (from {source}): The following file was just modified:\n{payload}"
                                             );
 
                                             this.messages.push(ChatMessage::new(
@@ -446,7 +444,7 @@ impl AiPanel {
                                                     let mut cx = cx.clone();
                                                     async move {
                                                         if let Some(persona) = persona_registry.get_persona("marjin").await {
-                                                            let _ = panel.update(&mut cx, |this, cx: &mut Context<Self>| {
+                                                            let _ = panel.update(&mut cx, |this, cx: &mut Context<'_, Self>| {
                                                                 this.active_persona_name = Some("marjin".to_string());
                                                                 this.conversation.set_persona(persona);
                                                                 this.trigger_ai_response(cx);
@@ -482,11 +480,11 @@ impl AiPanel {
                 });
 
                 // Wait for the task to finish if it was successfully spawned
-                if let Ok(task) = check_result {
-                    if let Ok(Err(_)) = task.await {
+                if let Ok(task) = check_result
+                    && let Ok(Err(_)) = task.await {
                         let _ = cx.update(|app: &mut App| {
                             if let Some(panel) = panel_weak_check.upgrade() {
-                                let _ = panel.update(app, |this, cx| {
+                                let () = panel.update(app, |this, cx| {
                                     this.messages.push(ChatMessage::new(
                                         "System",
                                         "❌ [BACKEND OFFLINE] Ollama is not responding at http://localhost:11434/v1. Specialists are currently disabled."
@@ -496,7 +494,6 @@ impl AiPanel {
                             }
                         });
                     }
-                }
             }
         }).detach();
 
@@ -504,17 +501,17 @@ impl AiPanel {
     }
 
     /// Updates the local task list (ACO-034)
-    pub fn update_tasks(&mut self, tasks: Vec<aemacs_core::task::Task>, cx: &mut Context<Self>) {
+    pub(crate) fn update_tasks(&mut self, tasks: Vec<aemacs_core::task::Task>, cx: &mut Context<'_, Self>) {
         self.tasks = tasks;
         cx.notify();
     }
 
     /// Handles a programmatic persona switch from the dispatcher (ACO-010).
-    pub fn handoff_persona(
+    pub(crate) fn handoff_persona(
         &mut self,
         name: String,
         message: Option<String>,
-        cx: &mut Context<Self>,
+        cx: &mut Context<'_, Self>,
     ) {
         let name_lower = name.to_lowercase();
         if let Some(persona) =
@@ -538,7 +535,7 @@ impl AiPanel {
         }
     }
 
-    fn trigger_ai_response(&mut self, cx: &mut Context<Self>) {
+    fn trigger_ai_response(&mut self, cx: &mut Context<'_, Self>) {
         // Prepare AI Message Placeholder
         self.messages.push(ChatMessage::new("AI", ""));
         self.status = CognitiveStatus::Thinking;
@@ -570,17 +567,16 @@ impl AiPanel {
                 match event {
                     AgentEvent::StreamChunk(chunk) => {
                         panel.status = CognitiveStatus::Streaming;
-                        if let Some(last_msg) = panel.messages.last_mut() {
-                            if last_msg.role == "AI" {
+                        if let Some(last_msg) = panel.messages.last_mut()
+                            && last_msg.role == "AI" {
                                 last_msg.update_content(last_msg.content.clone() + &chunk);
                             }
-                        }
                         panel
                             .message_scroll_handle
                             .set_offset(gpui::point(px(0.0), px(999999.0)));
                     }
                     AgentEvent::ToolStarted(name) => {
-                        panel.current_action = Some(format!("Executing {}...", name));
+                        panel.current_action = Some(format!("Executing {name}..."));
                     }
                     AgentEvent::ToolFinished(_name, _success) => {
                         panel.current_action = None;
@@ -610,14 +606,13 @@ impl AiPanel {
                         }
                     }
                     AgentEvent::Error(e) => {
-                        panel.status = CognitiveStatus::Errored(e.to_string());
-                        if let Some(last_msg) = panel.messages.last_mut() {
-                            if last_msg.role == "AI" {
+                        panel.status = CognitiveStatus::Errored(e.clone());
+                        if let Some(last_msg) = panel.messages.last_mut()
+                            && last_msg.role == "AI" {
                                 last_msg.role = "System".to_string();
-                                last_msg.update_content(format!("❌ AI Error: {}", e));
+                                last_msg.update_content(format!("❌ AI Error: {e}"));
                             }
-                        }
-                        log::error!("AI Task Failed: {}", e);
+                        log::error!("AI Task Failed: {e}");
                     }
                 }
                 cx.notify();
@@ -627,7 +622,7 @@ impl AiPanel {
     }
 
     /// Schedules the next frame of the cognition pulse animation.
-    fn animate_pulse(&mut self, cx: &mut Context<Self>) {
+    fn animate_pulse(&mut self, cx: &mut Context<'_, Self>) {
         if matches!(self.status, CognitiveStatus::Idle) {
             return;
         }
@@ -638,7 +633,7 @@ impl AiPanel {
         let _ = cx.update_window(window_handle, move |_, window, _cx| {
             window.on_next_frame(move |_, cx| {
                 if let Some(panel) = handle.upgrade() {
-                    let _ = panel.update(cx, |this, cx| {
+                    let () = panel.update(cx, |this, cx| {
                         // Adjust speed based on status
                         let delta = match this.status {
                             CognitiveStatus::Thinking => 0.015,
@@ -653,7 +648,7 @@ impl AiPanel {
         });
     }
 
-    fn render_agent_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_agent_selector(&self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let active_persona = self.active_persona_name.clone();
 
         div()
@@ -705,7 +700,7 @@ impl AiPanel {
                                     {
                                         let _ = panel.update(
                                             &mut cx,
-                                            |this, cx: &mut Context<Self>| {
+                                            |this, cx: &mut Context<'_, Self>| {
                                                 this.active_persona_name = Some(name_lower);
                                                 this.conversation.set_persona(persona);
                                                 cx.notify();
@@ -721,7 +716,7 @@ impl AiPanel {
             ))
     }
 
-    fn render_tier_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_tier_selector(&self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let selected_tier = self.selected_tier;
 
         div()
@@ -830,7 +825,7 @@ impl AiPanel {
                                 div()
                                     .text_size(px(11.0))
                                     .text_color(rgb(0x61afef))
-                                    .child(logic_model.map(|m| m.label).unwrap_or("Unknown")),
+                                    .child(logic_model.map_or("Unknown", |m| m.label)),
                             ),
                     )
                     .child(
@@ -848,7 +843,7 @@ impl AiPanel {
                                 div()
                                     .text_size(px(11.0))
                                     .text_color(rgb(0x98c379))
-                                    .child(voice_model.map(|m| m.label).unwrap_or("Unknown")),
+                                    .child(voice_model.map_or("Unknown", |m| m.label)),
                             ),
                     ),
             )
@@ -857,18 +852,18 @@ impl AiPanel {
                 div()
                     .text_size(px(10.0))
                     .text_color(rgb(0xabb2bf))
-                    .child(logic_model.map(|m| m.model_description).unwrap_or("")),
+                    .child(logic_model.map_or("", |m| m.model_description)),
             )
             .child(
                 div()
                     .text_size(px(9.0))
                     .italic()
                     .text_color(rgb(0x5c6370))
-                    .child(logic_model.map(|m| m.license_constraints).unwrap_or("")),
+                    .child(logic_model.map_or("", |m| m.license_constraints)),
             )
     }
 
-    fn render_context_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_context_selector(&self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let logic_model = self.available_models.iter().find(|m| {
             m.tier == self.selected_tier && m.role == aemacs_ai::models::ModelRole::Logic
         });
@@ -888,7 +883,7 @@ impl AiPanel {
                 div().flex().flex_wrap().gap(px(4.0)).children(
                     aemacs_ai::models::CONTEXT_OPTIONS
                         .iter()
-                        .filter(|&&opt| logic_model.map(|m| opt <= m.max_context).unwrap_or(false))
+                        .filter(|&&opt| logic_model.is_some_and(|m| opt <= m.max_context))
                         .map(|&opt| {
                             let is_selected = opt == current_context;
                             div()
@@ -941,11 +936,9 @@ impl AiPanel {
             .find(|m| m.tier == tier && m.role == aemacs_ai::models::ModelRole::Roleplay);
 
         let logic_est = logic_model
-            .map(|m| m.base_vram_gb + (self.selected_context as f32 / 1024.0) * m.kv_rate_gb_per_1k)
-            .unwrap_or(0.0);
+            .map_or(0.0, |m| (self.selected_context as f32 / 1024.0).mul_add(m.kv_rate_gb_per_1k, m.base_vram_gb));
         let voice_est = voice_model
-            .map(|m| m.base_vram_gb + (self.selected_context as f32 / 1024.0) * m.kv_rate_gb_per_1k)
-            .unwrap_or(0.0);
+            .map_or(0.0, |m| (self.selected_context as f32 / 1024.0).mul_add(m.kv_rate_gb_per_1k, m.base_vram_gb));
 
         let total_est = if logic_est > voice_est {
             logic_est
@@ -957,10 +950,10 @@ impl AiPanel {
             .text_size(px(10.0))
             .text_color(rgb(0xbd93f9))
             .italic()
-            .child(format!("Sequential VRAM Peak: {:.2} GB", total_est))
+            .child(format!("Sequential VRAM Peak: {total_est:.2} GB"))
     }
 
-    fn render_cognition_pulse(&self, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_cognition_pulse(&self, _cx: &mut Context<'_, Self>) -> impl IntoElement {
         let status = &self.status;
         let is_active = !matches!(status, CognitiveStatus::Idle);
 
@@ -976,7 +969,7 @@ impl AiPanel {
         };
 
         // Simulated Sine-wave pulsing for opacity (intensity)
-        let pulse_opacity = (self.shimmer_offset * std::f32::consts::PI * 2.0).sin() * 0.3 + 0.7;
+        let pulse_opacity = (self.shimmer_offset * std::f32::consts::PI * 2.0).sin().mul_add(0.3, 0.7);
         let final_opacity = intensity * pulse_opacity;
 
         div()
@@ -1008,7 +1001,7 @@ impl AiPanel {
         &mut self,
         event: &KeyDownEvent,
         _window: &mut Window,
-        cx: &mut Context<Self>,
+        cx: &mut Context<'_, Self>,
     ) {
         let keystroke = &event.keystroke;
         let mode = self.input_editor.read(cx).mode;
@@ -1017,13 +1010,12 @@ impl AiPanel {
             if mode == Mode::Normal || !keystroke.modifiers.shift {
                 self.send_message(cx);
                 return;
-            } else {
-                self.input_editor.update(cx, |editor, _| {
-                    let _ = editor.run(Command::InsertNewline);
-                });
-                cx.notify();
-                return;
             }
+            self.input_editor.update(cx, |editor, _| {
+                let _ = editor.run(Command::InsertNewline);
+            });
+            cx.notify();
+            return;
         }
 
         if let Some(cmd) = resolve_key_command(keystroke, mode) {
@@ -1034,13 +1026,13 @@ impl AiPanel {
         }
     }
 
-    fn send_message(&mut self, cx: &mut Context<Self>) {
+    fn send_message(&mut self, cx: &mut Context<'_, Self>) {
         let raw_text = self.input_editor.read(cx).buffer.text();
         if raw_text.trim().is_empty() {
             return;
         }
 
-        let mut text = raw_text.clone();
+        let mut text = raw_text;
         let mut switched = false;
 
         // --- Statute Lexer (@) (ACO-018) ---
@@ -1081,7 +1073,7 @@ impl AiPanel {
                                 self.conversation.set_profile(profile_content);
                                 self.messages.push(ChatMessage::new(
                                     "System",
-                                    format!("📖 Profile loaded: {}", path_str),
+                                    format!("📖 Profile loaded: {path_str}"),
                                 ));
                                 // Strip the tag from the final message text
                                 let start = mat.start();
@@ -1091,14 +1083,14 @@ impl AiPanel {
                             } else {
                                 self.messages.push(ChatMessage::new(
                                     "System",
-                                    format!("⚠️ Profile at '{}' is not a text file.", path_str),
+                                    format!("⚠️ Profile at '{path_str}' is not a text file."),
                                 ));
                             }
                         }
                         Err(e) => {
                             self.messages.push(ChatMessage::new(
                                 "System",
-                                format!("⚠️ Failed to load profile: {} ({})", path_str, e),
+                                format!("⚠️ Failed to load profile: {path_str} ({e})"),
                             ));
                         }
                     }
@@ -1106,7 +1098,7 @@ impl AiPanel {
                 Err(e) => {
                     self.messages.push(ChatMessage::new(
                         "System",
-                        format!("⚠️ Invalid profile path: {} ({})", path_str, e),
+                        format!("⚠️ Invalid profile path: {path_str} ({e})"),
                     ));
                 }
             }
@@ -1133,14 +1125,14 @@ impl AiPanel {
                             } else {
                                 self.messages.push(ChatMessage::new(
                                     "System",
-                                    format!("⚠️ Material at '{}' is not a text file.", path_str),
+                                    format!("⚠️ Material at '{path_str}' is not a text file."),
                                 ));
                             }
                         }
                         Err(e) => {
                             self.messages.push(ChatMessage::new(
                                 "System",
-                                format!("⚠️ Failed to load material: {} ({})", path_str, e),
+                                format!("⚠️ Failed to load material: {path_str} ({e})"),
                             ));
                         }
                     }
@@ -1148,7 +1140,7 @@ impl AiPanel {
                 Err(e) => {
                     self.messages.push(ChatMessage::new(
                         "System",
-                        format!("⚠️ Invalid material path: {} ({})", path_str, e),
+                        format!("⚠️ Invalid material path: {path_str} ({e})"),
                     ));
                 }
             }
@@ -1163,8 +1155,7 @@ impl AiPanel {
                     .and_then(|s| s.to_str())
                     .unwrap_or("");
                 text.push_str(&format!(
-                    "#### File: {}\n```{}\n{}\n```\n",
-                    path, ext, content
+                    "#### File: {path}\n```{ext}\n{content}\n```\n"
                 ));
             }
         }
@@ -1174,8 +1165,7 @@ impl AiPanel {
             let (cmd, remainder) = text.split_once(' ').unwrap_or((text.as_str(), ""));
             let agent_name = cmd.trim_start_matches('/').to_lowercase();
 
-            if let Some(_) =
-                futures::executor::block_on(self.persona_registry.get_persona(&agent_name))
+            if futures::executor::block_on(self.persona_registry.get_persona(&agent_name)).is_some()
             {
                 self.active_persona_name = Some(agent_name);
                 text = remainder.to_string();
@@ -1185,8 +1175,7 @@ impl AiPanel {
                 self.messages.push(ChatMessage::new(
                     "System",
                     format!(
-                        "⚠️ Unknown agent: /{}. Type a valid specialist name.",
-                        agent_name
+                        "⚠️ Unknown agent: /{agent_name}. Type a valid specialist name."
                     ),
                 ));
                 self.input_editor.update(cx, |editor, _| {
@@ -1209,7 +1198,7 @@ impl AiPanel {
                 .to_uppercase();
             self.messages.push(ChatMessage::new(
                 "System",
-                format!("Agent switched to: {}", persona_display),
+                format!("Agent switched to: {persona_display}"),
             ));
         } else {
             return;
@@ -1250,7 +1239,7 @@ impl AiPanel {
 }
 
 impl Render for AiPanel {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let editor = self.input_editor.read(cx);
         let line_count = editor.line_count();
         let (line, _col) = editor.cursor_position();
@@ -1258,10 +1247,7 @@ impl Render for AiPanel {
 
         let current_count = self.input_list_state.item_count();
 
-        if current_count != line_count {
-            // Structural change: full redraw needed
-            self.input_list_state.splice(0..current_count, line_count);
-        } else {
+        if current_count == line_count {
             // Typing change: partial redraw
             if cursor_line == self.last_cursor_line {
                 self.input_list_state
@@ -1274,6 +1260,9 @@ impl Render for AiPanel {
                     self.input_list_state.splice(max_line..max_line + 1, 1);
                 }
             }
+        } else {
+            // Structural change: full redraw needed
+            self.input_list_state.splice(0..current_count, line_count);
         }
         self.last_cursor_line = cursor_line;
 
@@ -1534,6 +1523,7 @@ impl Render for AiPanel {
     }
 }
 
+#[cfg(test)]
 mod tests {
     use super::*;
     use regex::Regex;
@@ -1547,14 +1537,14 @@ mod tests {
         let find_statute_indices = |text: &str| {
             statute_regex
                 .find_iter(text)
-                .filter(|m: &regex::Match| {
+                .filter(|m: &regex::Match<'_>| {
                     let start = m.start();
                     if start > 0 && text.as_bytes()[start - 1] == b'@' {
                         return false;
                     }
                     true
                 })
-                .map(|m: regex::Match| (m.start(), m.end()))
+                .map(|m: regex::Match<'_>| (m.start(), m.end()))
                 .collect::<Vec<(usize, usize)>>()
         };
 
@@ -1598,7 +1588,7 @@ mod tests {
         // 1. Extract Statute
         let statute_matches: Vec<_> = statute_regex
             .find_iter(&text)
-            .filter(|m: &regex::Match| {
+            .filter(|m: &regex::Match<'_>| {
                 let start = m.start();
                 if start > 0 && text.as_bytes()[start - 1] == b'@' {
                     return false;
@@ -1616,12 +1606,12 @@ mod tests {
         // 3. Execute Stripping (Simulating the reverse-iteration logic used in send_message)
         let mut all_tags: Vec<_> = statute_matches
             .iter()
-            .map(|m: &regex::Match| (m.start(), m.end()))
+            .map(|m: &regex::Match<'_>| (m.start(), m.end()))
             .collect();
         all_tags.extend(
             material_matches
                 .iter()
-                .map(|m: &regex::Match| (m.start(), m.end())),
+                .map(|m: &regex::Match<'_>| (m.start(), m.end())),
         );
         all_tags.sort_by_key(|k| k.0);
 

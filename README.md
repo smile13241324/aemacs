@@ -203,7 +203,7 @@ Local hardware is finite. By separating **Logic** from **Voice**, we achieve:
 *   **VRAM Efficiency:** We enforce a strict "Load-Unload" protocol. The Logic model is completely evicted from GPU memory before the Voice model is loaded, allowing you to run much larger models than a traditional "both-at-once" approach would permit.
 
 ### 📖 Host Codex Schema (`user.md`)
-Your personal identity in `~/.aemacs/user.md` should now be bifurcated to provide targeted context to each hemisphere using these headers:
+Your personal identity in `~/.aemacs/user.md` which can be used to tell aemacs who you are and what you in general prefer:
 
 ```markdown
 #[LOGIC]
@@ -286,13 +286,13 @@ The code belongs to the community. Networked freedom is guaranteed.
 - [x] **The Mesh:** Porting the AI Agent Framework (Python -> Rust/WASM).
 - [x] **The Puppet:** Implementing the Headless-Emacs-Bridge (RPC).
 - [x] **First Light:** Rendering the first buffer via GPUI.
-- [ ] **Fix GPUI:** Issues in the bleeding edge version of GPUI prevent full UI integration.
+- [x] **Fix GPUI:** Issues in the bleeding edge version of GPUI prevent full UI integration.
 - [x] **Connect The Mesh:** Users can now communicate with specialist agents and switch personas mid-stream.
 - [x] **Add MCP Support:** Advanced tools (Chronometer, Scribe, Dispatcher, Decoder) allow for full agency.
 - [ ] **Make It Scale:** Ensure buffer content and multi-agent context scale efficiently.
 - [ ] **Make AI Content Aware:** Allow agents to proactively speak to the user based on workspace events.
 
 ---
-*Forged with 💜 by Nova & Gyni.*
+*Forged with 💜 by Maxi & Gyni.*
 
 <a href="https://spacemacs.org"><img src="assets/spacemacs-badge.svg" alt="Made with Spacemacs" height="20"></a>

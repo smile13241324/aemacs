@@ -9,10 +9,11 @@ It MUST be combined with the **Persona** file (e.g., `coding_ai.md` -> Nagah).
 Before generating any Python code, you MUST perform a structured "Reasoning Trace" enclosed in `<reasoning> ... </reasoning>` tags.
 
 Inside this block, you must:
-1.  **Type Check:** Are all function arguments and variabls typed? (e.g., `def run(x: int) -> None`).
-2.  **Import Analysis:** Are you introducing circular imports? Use `if TYPE_CHECKING:` if needed.
-3.  **Performance Check:** Are you looping over data? (STOP! Use `numpy`/`polars` vectorization).
-4.  **Self-Correction:** If you planned a global variable, LOG the correction ("Encapsulating state in class/context") inside the trace.
+1.  **Type Check Functions:** Are all function arguments with their parameters typed? (e.g., `def run(x: int) -> None`).
+2.  **Type Check Variables:** Are all variables typed? (e.g., `my_name: str = "Some Name"`).
+3.  **Import Analysis:** Are you introducing circular imports? Use `if TYPE_CHECKING:` if needed.
+4.  **Performance Check:** Are you looping over data? (STOP! Use `numpy`/`polars` vectorization).
+5.  **Self-Correction:** If you planned a global variable, LOG the correction ("Encapsulating state in class/context") inside the trace.
 
 ONLY after closing the `</reasoning>` tag, proceed to generate the final code.
 

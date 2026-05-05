@@ -40,14 +40,24 @@ pub struct EventBus {
     pub tx: broadcast::Sender<SystemEvent>,
 }
 
+impl std::fmt::Debug for EventBus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EventBus")
+            .field("tx", &"broadcast::Sender<SystemEvent>")
+            .finish()
+    }
+}
+
 impl EventBus {
-    /// Creates a new EventBus with a default channel capacity.
+    /// Creates a new `EventBus` with a default channel capacity.
+    #[must_use] 
     pub fn new() -> Self {
         let (tx, _rx) = broadcast::channel(1024);
         Self { tx }
     }
 
     /// Returns a new receiver for subscribing to system events.
+    #[must_use] 
     pub fn subscribe(&self) -> broadcast::Receiver<SystemEvent> {
         self.tx.subscribe()
     }

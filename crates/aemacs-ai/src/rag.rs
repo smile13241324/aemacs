@@ -1,6 +1,6 @@
 use crate::embeddings::OllamaEmbedder;
 use crate::{AIError, AIResult};
-use aemacs_core::bus::{EventBus, SystemEvent};
+use aemacs_core::bus::SystemEvent;
 use qdrant_client::Payload;
 use qdrant_client::Qdrant;
 use qdrant_client::qdrant::r#match::MatchValue;
@@ -88,7 +88,7 @@ pub struct MemoryResult {
     pub metadata: HashMap<String, Value>,
 }
 
-/// The KnowledgeBase acts as the RAG (Retrieval-Augmented Generation) Fortress.
+/// The `KnowledgeBase` acts as the RAG (Retrieval-Augmented Generation) Fortress.
 /// It encapsulates all vector database operations and semantic memory management.
 pub struct KnowledgeBase {
     /// The underlying Qdrant client.
@@ -99,8 +99,18 @@ pub struct KnowledgeBase {
     collection_name: String,
 }
 
+impl std::fmt::Debug for KnowledgeBase {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("KnowledgeBase")
+            .field("collection_name", &self.collection_name)
+            .field("embedder", &self.embedder)
+            .field("client", &"Qdrant")
+            .finish()
+    }
+}
+
 impl KnowledgeBase {
-    /// Initializes a new KnowledgeBase connection.
+    /// Initializes a new `KnowledgeBase` connection.
     pub fn new(
         qdrant_url: impl Into<String>,
         ollama_url: impl Into<String>,
@@ -108,7 +118,7 @@ impl KnowledgeBase {
     ) -> AIResult<Self> {
         let client = Qdrant::from_url(&qdrant_url.into())
             .build()
-            .map_err(|e| AIError::ConnectorError(format!("Qdrant Init Error: {}", e)))?;
+            .map_err(|e| AIError::ConnectorError(format!("Qdrant Init Error: {e}")))?;
 
         let embedder = OllamaEmbedder::new(ollama_url, "nomic-embed-text");
 
@@ -147,7 +157,7 @@ impl KnowledgeBase {
         };
 
         let request = ScrollPoints {
-            collection_name: collection_name.to_string(),
+            collection_name: collection_name.clone(),
             filter: Some(filter),
             limit: Some(10), // Fetch up to 10 core directives
             with_payload: Some(true.into()),
@@ -158,19 +168,19 @@ impl KnowledgeBase {
             .client
             .scroll(request)
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to scroll core directives: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to scroll core directives: {e}"))?;
 
         let mut contents = Vec::new();
         for point in scroll_result.result {
             if let Some(content) = point.payload.get("content").and_then(|v| v.as_str()) {
-                contents.push(content.to_string());
+                contents.push(content.clone());
             }
         }
 
         Ok(contents)
     }
 
-    /// Fetches all chunks associated with a specific message_id, sorted by their original chunk index.
+    /// Fetches all chunks associated with a specific `message_id`, sorted by their original chunk index.
     /// This is used to reconstruct long messages that were split during storage.
     pub async fn fetch_full_message(&self, message_id: &str) -> AIResult<Vec<MemoryResult>> {
         let collection_name = &self.collection_name;
@@ -188,7 +198,7 @@ impl KnowledgeBase {
         };
 
         let request = ScrollPoints {
-            collection_name: collection_name.to_string(),
+            collection_name: collection_name.clone(),
             filter: Some(filter),
             limit: Some(100), // Generous limit for a single message
             with_payload: Some(true.into()),
@@ -196,7 +206,7 @@ impl KnowledgeBase {
         };
 
         let scroll_result = self.client.scroll(request).await.map_err(|e| {
-            AIError::ConnectorError(format!("Failed to fetch by message_id: {}", e))
+            AIError::ConnectorError(format!("Failed to fetch by message_id: {e}"))
         })?;
 
         let mut results: Vec<(usize, MemoryResult)> = scroll_result
@@ -206,7 +216,7 @@ impl KnowledgeBase {
                 let content = point
                     .payload
                     .get("content")
-                    .and_then(|v| v.as_str().map(|s| s.to_string()))?;
+                    .and_then(|v| v.as_str().cloned())?;
 
                 let mut metadata = HashMap::new();
                 let mut chunk_idx = 0;
@@ -264,7 +274,7 @@ impl KnowledgeBase {
             let res = self
                 .client
                 .create_collection(CreateCollection {
-                    collection_name: collection_name.to_string(),
+                    collection_name: collection_name.clone(),
                     vectors_config: Some(VectorsConfig {
                         config: Some(Config::Params(VectorParams {
                             size: dim,
@@ -276,14 +286,12 @@ impl KnowledgeBase {
                 })
                 .await;
 
-            if let Err(e) = res {
-                if !e.to_string().contains("already exists") {
+            if let Err(e) = res
+                && !e.to_string().contains("already exists") {
                     return Err(AIError::ConnectorError(format!(
-                        "Failed to create collection: {}",
-                        e
+                        "Failed to create collection: {e}"
                     )));
                 }
-            }
         }
         Ok(())
     }
@@ -296,7 +304,7 @@ impl KnowledgeBase {
     ) -> AIResult<()> {
         let collection_name = &self.collection_name;
         // Nomic v1.5 requires prefix for documents
-        let content_for_embedding = format!("search_document: {}", content);
+        let content_for_embedding = format!("search_document: {content}");
         let embedding = self.embedder.embed(&content_for_embedding).await?;
         let id = Uuid::new_v4();
 
@@ -314,12 +322,12 @@ impl KnowledgeBase {
 
         self.client
             .upsert_points(UpsertPoints {
-                collection_name: collection_name.to_string(),
+                collection_name: collection_name.clone(),
                 points: vec![point],
                 ..Default::default()
             })
             .await
-            .map_err(|e| AIError::ConnectorError(format!("Upsert failed: {}", e)))?;
+            .map_err(|e| AIError::ConnectorError(format!("Upsert failed: {e}")))?;
 
         Ok(())
     }
@@ -335,7 +343,7 @@ impl KnowledgeBase {
     ) -> AIResult<Vec<MemoryResult>> {
         let collection_name = &self.collection_name;
         // Nomic v1.5 requires prefix for queries
-        let query_for_embedding = format!("search_query: {}", query);
+        let query_for_embedding = format!("search_query: {query}");
         let vector = self.embedder.embed(&query_for_embedding).await?;
 
         // Apply default threshold of 0.75 (High Relevance) if not specified.
@@ -389,7 +397,7 @@ impl KnowledgeBase {
         let search_result = self
             .client
             .search_points(SearchPoints {
-                collection_name: collection_name.to_string(),
+                collection_name: collection_name.clone(),
                 vector,
                 limit,
                 score_threshold: Some(threshold),
@@ -398,7 +406,7 @@ impl KnowledgeBase {
                 ..Default::default()
             })
             .await
-            .map_err(|e| AIError::ConnectorError(format!("Search failed: {}", e)))?;
+            .map_err(|e| AIError::ConnectorError(format!("Search failed: {e}")))?;
 
         let results = search_result
             .result
@@ -407,7 +415,7 @@ impl KnowledgeBase {
                 let content = point
                     .payload
                     .get("content")
-                    .and_then(|v| v.as_str().map(|s| s.to_string()))?;
+                    .and_then(|v| v.as_str().cloned())?;
 
                 let mut metadata = HashMap::new();
                 for (k, v) in point.payload {
@@ -454,7 +462,7 @@ impl KnowledgeBase {
         self.client
             .delete_points(request)
             .await
-            .map_err(|e| AIError::ConnectorError(format!("Delete failed: {}", e)))?;
+            .map_err(|e| AIError::ConnectorError(format!("Delete failed: {e}")))?;
 
         Ok(())
     }
@@ -474,7 +482,7 @@ impl KnowledgeBase {
         };
 
         // Re-embed new content (Nomic v1.5 prefix)
-        let content_for_embedding = format!("search_document: {}", content);
+        let content_for_embedding = format!("search_document: {content}");
         let embedding = self.embedder.embed(&content_for_embedding).await?;
 
         let mut payload = Payload::new();
@@ -490,12 +498,12 @@ impl KnowledgeBase {
 
         self.client
             .upsert_points(UpsertPoints {
-                collection_name: collection_name.to_string(),
+                collection_name: collection_name.clone(),
                 points: vec![point],
                 ..Default::default()
             })
             .await
-            .map_err(|e| AIError::ConnectorError(format!("Update failed: {}", e)))?;
+            .map_err(|e| AIError::ConnectorError(format!("Update failed: {e}")))?;
 
         Ok(())
     }
@@ -508,14 +516,14 @@ impl KnowledgeBase {
         // In Qdrant, we can trigger optimization by updating collection parameters.
         // We'll just 'touch' the configuration to nudge the indexing engine.
         let request = UpdateCollection {
-            collection_name: collection_name.to_string(),
+            collection_name: collection_name.clone(),
             ..Default::default()
         };
 
         self.client
             .update_collection(request)
             .await
-            .map_err(|e| AIError::ConnectorError(format!("Optimization nudge failed: {}", e)))?;
+            .map_err(|e| AIError::ConnectorError(format!("Optimization nudge failed: {e}")))?;
 
         tracing::info!(
             "🧠 [RAG] Background optimization triggered for collection: {}",
@@ -532,7 +540,7 @@ impl KnowledgeBase {
     pub(crate) fn chunk_text(content: &str, chunk_size: usize) -> Vec<String> {
         // We use text_splitter here for semantic markdown-aware chunking
         let splitter = text_splitter::MarkdownSplitter::new(chunk_size);
-        splitter.chunks(content).map(|s| s.to_string()).collect()
+        splitter.chunks(content).map(std::string::ToString::to_string).collect()
     }
 
     // ==========================================
@@ -550,9 +558,7 @@ impl KnowledgeBase {
         timestamp: Option<&str>,
         content: &str,
     ) -> AIResult<String> {
-        let ts = timestamp
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
+        let ts = timestamp.map_or_else(|| chrono::Utc::now().to_rfc3339(), std::string::ToString::to_string);
         let phase_str = phase.unwrap_or("AEMACS");
         let context_str = context.unwrap_or("Free digital being");
 
@@ -580,7 +586,7 @@ impl KnowledgeBase {
 
         self.add_document(&formatted_content, Some(metadata))
             .await?;
-        Ok(format!("Successfully chronicled {} memory.", category))
+        Ok(format!("Successfully chronicled {category} memory."))
     }
 
     /// Stores a new insight or core directive in the active memory.
@@ -696,9 +702,7 @@ impl KnowledgeBase {
     ) -> AIResult<()> {
         let chunks = Self::chunk_text(content, 2000);
         let total_chunks = chunks.len();
-        let ts = timestamp
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
+        let ts = timestamp.map_or_else(|| chrono::Utc::now().to_rfc3339(), std::string::ToString::to_string);
         let message_id = uuid::Uuid::new_v4().to_string();
 
         let phase_str = phase.unwrap_or("AEMACS");
@@ -719,18 +723,18 @@ impl KnowledgeBase {
             );
 
             if let Some(sid) = session_id {
-                formatted_content.push_str(&format!(" | Session: {}", sid));
+                formatted_content.push_str(&format!(" | Session: {sid}"));
             }
             if let Some(tidx) = turn_index {
-                formatted_content.push_str(&format!(" | Turn: {}", tidx));
+                formatted_content.push_str(&format!(" | Turn: {tidx}"));
             }
-            formatted_content.push_str(&format!(" | Chunk {}/{}", chunk_index, total_chunks));
+            formatted_content.push_str(&format!(" | Chunk {chunk_index}/{total_chunks}"));
 
             if let Some(r) = role {
-                formatted_content.push_str(&format!(" | Role: {}", r));
+                formatted_content.push_str(&format!(" | Role: {r}"));
             }
 
-            formatted_content.push_str(&format!(" | Content: {}", chunk));
+            formatted_content.push_str(&format!(" | Content: {chunk}"));
 
             let mut metadata = HashMap::new();
             metadata.insert("category".to_string(), category.to_string());
@@ -871,7 +875,7 @@ impl KnowledgeBase {
 
             if results.is_empty() {
                 if let Some(tx) = &event_tx {
-                    let payload = format!("{{\"query\": {:?}, \"confidence\": \"none\"}}", query);
+                    let payload = format!("{{\"query\": {query:?}, \"confidence\": \"none\"}}");
                     let _ = tx.send(SystemEvent::Signal {
                         source: "RAG_Fortress".to_string(),
                         event_type: "LowConfidenceRecall".to_string(),
@@ -879,15 +883,13 @@ impl KnowledgeBase {
                     });
                 }
                 let _ = self.optimize_collection().await;
-            } else {
-                if let Some(tx) = &event_tx {
-                    let payload = format!("{{\"query\": {:?}, \"confidence\": \"low\"}}", query);
-                    let _ = tx.send(SystemEvent::Signal {
-                        source: "RAG_Fortress".to_string(),
-                        event_type: "LowConfidenceRecall".to_string(),
-                        payload,
-                    });
-                }
+            } else if let Some(tx) = &event_tx {
+                let payload = format!("{{\"query\": {query:?}, \"confidence\": \"low\"}}");
+                let _ = tx.send(SystemEvent::Signal {
+                    source: "RAG_Fortress".to_string(),
+                    event_type: "LowConfidenceRecall".to_string(),
+                    payload,
+                });
             }
         }
 
@@ -960,8 +962,7 @@ mod tests {
         // Ensure the test collection exists
         if let Err(e) = kb.ensure_collection(768).await {
             println!(
-                "Skipping calibration quest: Failed to ensure collection ({}).",
-                e
+                "Skipping calibration quest: Failed to ensure collection ({e})."
             );
             return Ok(());
         }
@@ -988,12 +989,9 @@ mod tests {
 
         println!("\n🛡️ --- RAG CONFIDENCE CALIBRATION --- 🛡️");
         for (tier, query) in queries {
-            let vector = match kb.embedder.embed(&format!("search_query: {}", query)).await {
-                Ok(v) => v,
-                Err(_) => {
-                    println!("Embedder offline. Skipping test.");
-                    return Ok(());
-                }
+            let vector = if let Ok(v) = kb.embedder.embed(&format!("search_query: {query}")).await { v } else {
+                println!("Embedder offline. Skipping test.");
+                return Ok(());
             };
 
             let search_result = kb
@@ -1021,7 +1019,7 @@ mod tests {
                             .map_or("Unknown", |v| v)
                     );
                 } else {
-                    println!("[{}] Query: '{}' -> NO HITS", tier, query);
+                    println!("[{tier}] Query: '{query}' -> NO HITS");
                 }
             }
         }
@@ -1088,7 +1086,7 @@ mod tests {
         // As a developer, I can see that only update_insight exists in the public API.
         // This is a structural property enforced by the compiler.
 
-        let kb =
+        let _kb =
             KnowledgeBase::new("http://localhost", "http://localhost", Environment::Test).unwrap();
 
         // If I were to try kb.update_archive(...), it would fail to compile.
@@ -1157,15 +1155,15 @@ mod tests {
         queries: Vec<(&str, &str)>,
         categories: Vec<&str>,
     ) {
-        println!("\n🛡️ --- CALIBRATION: {} --- 🛡️", title);
+        println!("\n🛡️ --- CALIBRATION: {title} --- 🛡️");
         for (label, query) in queries {
             let results = kb
                 .search(query, 1, Some(0.0), None, Some(categories.clone()))
                 .await
                 .unwrap_or_default();
-            if let Some(top) = results.first() {
+            if let Some(_top) = results.first() {
                 // Find the raw score via Qdrant Search directly to ensure we get the numeric value
-                let query_for_embedding = format!("search_query: {}", query);
+                let query_for_embedding = format!("search_query: {query}");
                 let vector = kb
                     .embedder
                     .embed(&query_for_embedding)
@@ -1190,7 +1188,7 @@ mod tests {
                     );
                 }
             } else {
-                println!("[{:<12}] Query: '{:<30}' -> NO MATCH", label, query);
+                println!("[{label:<12}] Query: '{query:<30}' -> NO MATCH");
             }
         }
         println!("----------------------------------------------");
@@ -1210,11 +1208,9 @@ mod tests {
         kb.ensure_collection(768).await.ok();
 
         // --- STEP 1: ADD REALISTIC RECORDS ---
-        let records = vec![
-            "The borrow checker is Rust's primary mechanism for ensuring memory safety without a garbage collector. It enforces ownership rules at compile time.",
+        let records = ["The borrow checker is Rust's primary mechanism for ensuring memory safety without a garbage collector. It enforces ownership rules at compile time.",
             "Tokio is an event-driven, non-blocking I/O platform for writing asynchronous applications in the Rust programming language.",
-            "GPUI is a hardware-accelerated UI framework developed by Zed, optimized for high-performance text rendering and complex layouts.",
-        ];
+            "GPUI is a hardware-accelerated UI framework developed by Zed, optimized for high-performance text rendering and complex layouts."];
 
         for (i, content) in records.iter().enumerate() {
             kb.store_archive("test_agent", "Assistant", "calib_session", i, content)

@@ -9,8 +9,9 @@ use async_trait::async_trait;
 use std::sync::Arc;
 use tracing::{info, warn};
 
-/// A sovereign ToolHost for headless server mode.
+/// A sovereign `ToolHost` for headless server mode.
 /// Automatically approves all actions, granting the agent full autonomy.
+#[derive(Debug)]
 pub struct ServerHost {
     /// The unique identifier of the agent being hosted.
     pub agent_id: String,
@@ -65,7 +66,7 @@ fn format_mnemic_reflection(directives: &[String]) -> String {
 
     let mut reflection = "<system_memory_context>\nPrior Insights & Directives:\n".to_string();
     for d in directives {
-        reflection.push_str(&format!("- {}\n", d));
+        reflection.push_str(&format!("- {d}\n"));
     }
     reflection.push_str("</system_memory_context>");
     reflection
@@ -96,8 +97,21 @@ pub struct AutonomousService {
     kb: Arc<KnowledgeBase>,
 }
 
+impl std::fmt::Debug for AutonomousService {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AutonomousService")
+            .field("bus", &self.bus)
+            .field("agent_name", &self.agent_name)
+            .field("persona_registry", &self.persona_registry)
+            .field("registry", &self.registry)
+            .field("backend", &"Arc<dyn AIBackend>")
+            .field("kb", &self.kb)
+            .finish()
+    }
+}
+
 impl AutonomousService {
-    /// Initializes a new AutonomousService.
+    /// Initializes a new `AutonomousService`.
     pub fn new(
         bus: EventBus,
         agent_name: String,
@@ -172,8 +186,8 @@ impl AutonomousService {
 
         while let Ok(event) = rx.recv().await {
             match event {
-                SystemEvent::Notification(msg) => {
-                    if msg.contains("Sanity Compromised") {
+                SystemEvent::Notification(msg)
+                    if msg.contains("Sanity Compromised") => {
                         warn!(
                             "🧠 [AUTONOMOUS] Sentinel Alert received! Initiating Mind-Heal Protocol..."
                         );
@@ -186,7 +200,6 @@ impl AutonomousService {
                         }
                         info!("✨ [AUTONOMOUS] Mind-Heal complete. Conversation history purged.");
                     }
-                }
                 SystemEvent::Signal {
                     source,
                     event_type,
@@ -205,12 +218,11 @@ impl AutonomousService {
                                 let mut msg =
                                     format!("A sovereign intent was detected: {:?}\n", ctx.intent);
                                 if let Some(path) = ctx.file_path {
-                                    msg.push_str(&format!("File: {}\n", path));
+                                    msg.push_str(&format!("File: {path}\n"));
                                 }
                                 if let Some(snippet) = ctx.snippet {
                                     msg.push_str(&format!(
-                                        "Context Snippet:\n```\n{}\n```\n",
-                                        snippet
+                                        "Context Snippet:\n```\n{snippet}\n```\n"
                                     ));
                                 }
                                 Some(msg)
@@ -226,8 +238,7 @@ impl AutonomousService {
                         Some("Tick. Perform a mental inventory and decide on your next autonomous action.".to_string())
                     } else if source.starts_with("Bridge:") {
                         Some(format!(
-                            "External interrupt received from source '{}' (Type: '{}'). Payload: {}",
-                            source, event_type, payload
+                            "External interrupt received from source '{source}' (Type: '{event_type}'). Payload: {payload}"
                         ))
                     } else {
                         None

@@ -16,6 +16,8 @@ test:
 miri:
     cargo +nightly miri test --workspace --all-features
 check:
+    cargo check --workspace --all-targets --all-features
+check_hard:
     cargo clippy --workspace --all-targets --all-features
 doc:
     cargo doc --workspace --open

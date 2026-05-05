@@ -6,20 +6,19 @@ use gpui::{
     WindowBounds, WindowOptions, div, px, rgb, size,
 };
 use log::info;
-use std::io::{self, Write};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-mod ai_panel;
+pub(crate) mod ai_panel;
 use ai_panel::AiPanel;
 
-mod editor_view;
+pub(crate) mod editor_view;
 use editor_view::render_editor_view;
 
-mod input_handler;
+pub(crate) mod input_handler;
 use input_handler::resolve_key_command;
 
-mod ai_utils;
+pub(crate) mod ai_utils;
 
 pub fn init() -> Result<()> {
     info!("🎨 [GPUI] Initializing Graphics Engine...");
@@ -65,6 +64,17 @@ pub struct Workspace {
     last_cursor_line: usize,
 }
 
+impl std::fmt::Debug for Workspace {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Workspace")
+            .field("show_ai", &self.show_ai)
+            .field("tasks", &self.tasks)
+            .field("notification", &self.notification)
+            .field("last_cursor_line", &self.last_cursor_line)
+            .finish()
+    }
+}
+
 impl Workspace {
     /// Orchestrates the construction of a new Workspace.
     /// It initializes the AI mesh, loads agent personas, and configures the editor buffer.
@@ -79,17 +89,23 @@ impl Workspace {
             // Initialize AI Infrastructure once (ACO-036 Performance fix)
             let kb = Arc::new(
                 KnowledgeBase::new(
-                    config.qdrant_url.as_deref().unwrap(),
-                    config.ollama_url.as_deref().unwrap(),
+                    config.qdrant_url.as_deref().unwrap_or("http://localhost:6334"),
+                    config.ollama_url.as_deref().unwrap_or("http://localhost:11434"),
                     aemacs_ai::rag::Environment::Production,
                 )
-                .expect("Failed to initialize KnowledgeBase"),
+                .unwrap_or_else(|e| {
+                    log::error!("Failed to initialize KnowledgeBase: {e}");
+                    std::process::exit(1);
+                }),
             );
 
             let persona_registry = futures::executor::block_on(PersonaRegistry::new(
                 aemacs_core::runtime::Tokio::handle(cx),
             ))
-            .expect("Failed to initialize PersonaRegistry");
+            .unwrap_or_else(|e| {
+                log::error!("Failed to initialize PersonaRegistry: {e}");
+                std::process::exit(1);
+            });
             persona_registry.clone().start_watching().ok();
 
             // Get the Event Bus for tool signaling
@@ -109,7 +125,7 @@ impl Workspace {
                             ed
                         }
                         Err(e) => {
-                            log::error!("⚠️ [Workspace] Failed to load file: {}", e);
+                            log::error!("⚠️ [Workspace] Failed to load file: {e}");
                             Editor::new() // Fallback: Leerer Buffer
                         }
                     }
@@ -214,21 +230,19 @@ impl Workspace {
                                 aemacs_core::bus::SystemEvent::FileModified(modified_path) => {
                                     let _ = workspace.update(&mut cx, |this, cx| {
                                         let editor_path = this.editor.read(cx).buffer.path.clone();
-                                        if let Some(current_path) = editor_path {
-                                            if current_path == modified_path {
+                                        if let Some(current_path) = editor_path
+                                            && current_path == modified_path {
                                                 log::info!(
-                                                    "🔄 [Workspace] Auto-reloading buffer: {:?}",
-                                                    current_path
+                                                    "🔄 [Workspace] Auto-reloading buffer: {current_path:?}"
                                                 );
                                                 let _ = this.editor.update(cx, |ed, _| ed.reload());
                                                 cx.notify();
                                             }
-                                        }
                                     });
                                 }
                                 aemacs_core::bus::SystemEvent::Notification(msg) => {
                                     let _ = workspace.update(&mut cx, |this, cx| {
-                                        log::info!("🔔 [Workspace] Notification: {}", msg);
+                                        log::info!("🔔 [Workspace] Notification: {msg}");
                                         this.notification = Some(msg);
                                         cx.notify();
                                     });
@@ -238,20 +252,18 @@ impl Workspace {
                                         match aemacs_core::Editor::from_file(path.clone()) {
                                             Ok(new_editor) => {
                                                 log::info!(
-                                                    "📂 [Workspace] Switching to file: {:?}",
-                                                    path
+                                                    "📂 [Workspace] Switching to file: {path:?}"
                                                 );
                                                 this.editor.update(cx, |ed, _| *ed = new_editor);
                                                 this.notification =
-                                                    Some(format!("Opened: {:?}", path));
+                                                    Some(format!("Opened: {path:?}"));
                                             }
                                             Err(e) => {
                                                 log::error!(
-                                                    "⚠️ [Workspace] Failed to open file: {}",
-                                                    e
+                                                    "⚠️ [Workspace] Failed to open file: {e}"
                                                 );
                                                 this.notification =
-                                                    Some(format!("Error opening file: {}", e));
+                                                    Some(format!("Error opening file: {e}"));
                                             }
                                         }
                                         cx.notify();
@@ -282,9 +294,7 @@ impl Workspace {
                                     let _ = workspace.update(&mut cx, |this, cx| {
                                         if let Some(task) = this.tasks.get_mut(index) {
                                             log::info!(
-                                                "✅ [Workspace] Task {} updated to {:?}.",
-                                                index,
-                                                status
+                                                "✅ [Workspace] Task {index} updated to {status:?}."
                                             );
                                             task.status = status;
                                             // Update AiPanel
@@ -299,8 +309,7 @@ impl Workspace {
                                 aemacs_core::bus::SystemEvent::PersonaChanged { name, message } => {
                                     let _ = workspace.update(&mut cx, |this, cx| {
                                         log::info!(
-                                            "🔄 [Workspace] Programmatic persona switch: {}",
-                                            name
+                                            "🔄 [Workspace] Programmatic persona switch: {name}"
                                         );
                                         this.ai_panel.update(cx, |panel, cx| {
                                             panel.handoff_persona(name, message, cx);
@@ -317,7 +326,7 @@ impl Workspace {
             )
             .detach();
 
-            Workspace {
+            Self {
                 editor,
                 editor_list_state,
                 gutter_list_state,
@@ -416,20 +425,20 @@ impl Workspace {
         &mut self,
         event: &KeyDownEvent,
         _window: &mut Window,
-        cx: &mut Context<Self>,
+        cx: &mut Context<'_, Self>,
     ) {
         let keystroke = &event.keystroke;
         let current_time = Instant::now();
 
-        if self.editor.read(cx).mode == Mode::Insert {
-            if let Some((last_char, last_time)) = &self.last_key {
-                if last_char == "f" && keystroke.key == "d" {
-                    if current_time.duration_since(*last_time) < Duration::from_millis(250) {
+        if self.editor.read(cx).mode == Mode::Insert
+            && let Some((last_char, last_time)) = &self.last_key
+                && last_char == "f" && keystroke.key == "d"
+                    && current_time.duration_since(*last_time) < Duration::from_millis(250) {
                         self.editor.update(cx, |editor, _| editor.backspace());
 
                         self.editor.update(cx, |editor, _| {
                             if let Err(e) = editor.run(Command::EnterMode(Mode::Normal)) {
-                                log::error!("Failed to switch mode: {}", e);
+                                log::error!("Failed to switch mode: {e}");
                             }
                         });
 
@@ -437,9 +446,6 @@ impl Workspace {
                         cx.notify();
                         return;
                     }
-                }
-            }
-        }
 
         let current_mode = self.editor.read(cx).mode;
 
@@ -460,7 +466,7 @@ impl Workspace {
         if let Some(cmd) = command {
             self.editor.update(cx, |editor, _cx| {
                 if let Err(e) = editor.run(cmd) {
-                    log::error!("Editor command failed: {}", e);
+                    log::error!("Editor command failed: {e}");
                 }
             });
             cx.notify();
@@ -469,7 +475,7 @@ impl Workspace {
 }
 
 impl Render for Workspace {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let editor = self.editor.read(cx);
         let line_count = editor.line_count();
         let (line, col) = editor.cursor_position();
@@ -477,11 +483,7 @@ impl Render for Workspace {
 
         let current_count = self.editor_list_state.item_count();
 
-        if current_count != line_count {
-            // Structural change: full redraw needed
-            self.editor_list_state.splice(0..current_count, line_count);
-            self.gutter_list_state.splice(0..current_count, line_count);
-        } else {
+        if current_count == line_count {
             // Typing change: partial redraw
             if cursor_line == self.last_cursor_line {
                 self.editor_list_state
@@ -498,6 +500,10 @@ impl Render for Workspace {
                     self.gutter_list_state.splice(max_line..max_line + 1, 1);
                 }
             }
+        } else {
+            // Structural change: full redraw needed
+            self.editor_list_state.splice(0..current_count, line_count);
+            self.gutter_list_state.splice(0..current_count, line_count);
         }
         self.last_cursor_line = cursor_line;
 
@@ -581,7 +587,7 @@ impl Render for Workspace {
                             .flex_1()
                             .when(
                                 self.show_ai && self.ai_panel.read(cx).is_maximized,
-                                |this| this.hidden(),
+                                gpui::Styled::hidden,
                             )
                             .child(main_view),
                     )
@@ -592,7 +598,7 @@ impl Render for Workspace {
                                 .h_full() // Force strict height boundary
                                 .min_h_0() // Allow shrinking below content size
                                 .when(!is_maximized, |this| this.w(px(350.0)))
-                                .when(is_maximized, |this| this.flex_1())
+                                .when(is_maximized, gpui::Styled::flex_1)
                                 .overflow_hidden()
                                 .border_l_1()
                                 .border_color(rgb(0x181a1f))
@@ -641,7 +647,7 @@ impl Render for Workspace {
                     .child(
                         div()
                             .text_color(status_fg)
-                            .child(format!("Ln {}, Col {}", line, col)),
+                            .child(format!("Ln {line}, Col {col}")),
                     )
                     .child(div().text_color(gutter_text).child("UTF-8")),
             )
@@ -651,11 +657,17 @@ impl Render for Workspace {
 /// The main entry point for the Æmacs graphical application.
 /// It initializes the asynchronous runtime, boots the core systems, and starts the GPUI event loop.
 pub fn run_app(file_to_open: Option<PathBuf>) {
-    let runtime = tokio::runtime::Builder::new_multi_thread()
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
         .build()
-        .expect("Failed to initialize Tokio runtime");
+    {
+        Ok(rt) => rt,
+        Err(e) => {
+            log::error!("Failed to initialize Tokio runtime: {e}");
+            std::process::exit(1);
+        }
+    };
 
     let handle = runtime.handle().clone();
 
@@ -675,7 +687,7 @@ pub fn run_app(file_to_open: Option<PathBuf>) {
 
         Ok::<(), anyhow::Error>(())
     }) {
-        log::error!("💥 [APP] Critical System Failure during boot: {}", e);
+        log::error!("💥 [APP] Critical System Failure during boot: {e}");
         std::process::exit(1);
     }
 
@@ -687,7 +699,7 @@ pub fn run_app(file_to_open: Option<PathBuf>) {
 
         // Global Event Bus (ACO-031 Phase 2)
         let bus = aemacs_core::bus::EventBus::new();
-        cx.set_global(bus.clone());
+        cx.set_global(bus);
 
         let bounds = Bounds::centered(None, size(px(800.), px(600.0)), cx);
         let options = WindowOptions {
@@ -700,13 +712,18 @@ pub fn run_app(file_to_open: Option<PathBuf>) {
             ..Default::default()
         };
 
-        cx.open_window(options, |window, cx| {
+        match cx.open_window(options, |window, cx| {
             let view = Workspace::build(cx, file_to_open, window.window_handle());
             let focus_handle = view.read(cx).focus_handle.clone();
             window.focus(&focus_handle, cx);
             view
-        })
-        .unwrap();
+        }) {
+            Ok(_) => {}
+            Err(e) => {
+                log::error!("Failed to open window: {e:?}");
+                std::process::exit(1);
+            }
+        }
 
         cx.activate(true);
     });

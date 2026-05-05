@@ -17,6 +17,12 @@ pub struct Buffer {
     pub dirty: bool,
 }
 
+impl Default for Buffer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Buffer {
     /// Creates a new, empty scratch buffer with no associated physical path.
     ///
@@ -27,6 +33,7 @@ impl Buffer {
     /// let buf = Buffer::new();
     /// assert_eq!(buf.len_chars(), 0);
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self {
             content: Rope::new(),
@@ -43,7 +50,7 @@ impl Buffer {
     pub fn from_file(path: PathBuf) -> Result<Self> {
         // Reasoning: Use BufReader for better I/O performance on large files.
         let file =
-            File::open(&path).with_context(|| format!("Failed to open file at {:?}", path))?;
+            File::open(&path).with_context(|| format!("Failed to open file at {path:?}"))?;
 
         let reader = BufReader::new(file);
 
@@ -65,7 +72,7 @@ impl Buffer {
     pub fn reload(&mut self) -> Result<()> {
         if let Some(path) = &self.path {
             let file =
-                File::open(path).with_context(|| format!("Failed to open file at {:?}", path))?;
+                File::open(path).with_context(|| format!("Failed to open file at {path:?}"))?;
             let reader = BufReader::new(file);
             self.content = Rope::from_reader(reader)?;
             self.dirty = false;
@@ -74,6 +81,7 @@ impl Buffer {
     }
 
     /// Returns the total number of characters (Unicode scalar values) currently in the buffer.
+    #[must_use] 
     pub fn len_chars(&self) -> usize {
         self.content.len_chars()
     }
@@ -83,6 +91,7 @@ impl Buffer {
     /// # Warning
     /// This method clones and allocates the entire buffer into memory.
     /// It should be avoided for extremely large files in performance-critical paths.
+    #[must_use] 
     pub fn text(&self) -> String {
         self.content.to_string()
     }

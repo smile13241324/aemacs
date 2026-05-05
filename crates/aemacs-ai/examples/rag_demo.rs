@@ -12,7 +12,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let kb = match KnowledgeBase::new(qdrant_url, ollama_url, aemacs_ai::rag::Environment::Test) {
         Ok(kb) => kb,
         Err(e) => {
-            eprintln!("❌ Failed to initialize KnowledgeBase: {}", e);
+            eprintln!("❌ Failed to initialize KnowledgeBase: {e}");
             eprintln!("   Ensure Qdrant is running on port 6334 and Ollama on 11434.");
             return Ok(());
         }
@@ -33,7 +33,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     ];
 
     for (i, doc) in docs.into_iter().enumerate() {
-        print!("   -> Indexing: '{}' ... ", doc);
+        print!("   -> Indexing: '{doc}' ... ");
         kb.store_archive("demo_agent", "Assistant", "demo_session", i, doc)
             .await?;
         println!("Done.");
@@ -41,7 +41,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // 4. Search
     let query = "Who designs the blueprints?";
-    println!("\n🔍 Searching for: '{}'", query);
+    println!("\n🔍 Searching for: '{query}'");
 
     // Search for a good answer with a similarity threshold of 0.7
     let results: Vec<aemacs_ai::rag::MemoryResult> = kb.search_archive(query, None, None).await?;

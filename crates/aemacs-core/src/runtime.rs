@@ -5,11 +5,17 @@ pub use tokio::task::JoinError;
 
 /// Initializes the Tokio wrapper using a new Tokio runtime.
 pub fn init(cx: &mut App) {
-    let runtime = tokio::runtime::Builder::new_multi_thread()
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
         .build()
-        .expect("Failed to initialize Tokio");
+    {
+        Ok(rt) => rt,
+        Err(e) => {
+            log::error!("Failed to initialize Tokio: {e}");
+            std::process::exit(1);
+        }
+    };
 
     cx.set_global(GlobalTokio::new(RuntimeHolder::Owned(runtime)));
 }
@@ -19,20 +25,22 @@ pub fn init_from_handle(cx: &mut App, handle: tokio::runtime::Handle) {
     cx.set_global(GlobalTokio::new(RuntimeHolder::Shared(handle)));
 }
 
+#[derive(Debug)]
 enum RuntimeHolder {
     Owned(tokio::runtime::Runtime),
     Shared(tokio::runtime::Handle),
 }
 
 impl RuntimeHolder {
-    pub fn handle(&self) -> &tokio::runtime::Handle {
+    pub(crate) fn handle(&self) -> &tokio::runtime::Handle {
         match self {
-            RuntimeHolder::Owned(runtime) => runtime.handle(),
-            RuntimeHolder::Shared(handle) => handle,
+            Self::Owned(runtime) => runtime.handle(),
+            Self::Shared(handle) => handle,
         }
     }
 }
 
+#[derive(Debug)]
 struct GlobalTokio {
     runtime: RuntimeHolder,
 }
@@ -40,11 +48,12 @@ struct GlobalTokio {
 impl Global for GlobalTokio {}
 
 impl GlobalTokio {
-    fn new(runtime: RuntimeHolder) -> Self {
+    const fn new(runtime: RuntimeHolder) -> Self {
         Self { runtime }
     }
 }
 
+#[derive(Debug)]
 pub struct Tokio {}
 
 impl Tokio {
@@ -82,7 +91,7 @@ struct Defer<F: FnOnce()>(Option<F>);
 impl<F: FnOnce()> Drop for Defer<F> {
     fn drop(&mut self) {
         if let Some(f) = self.0.take() {
-            f()
+            f();
         }
     }
 }

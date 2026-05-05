@@ -32,6 +32,7 @@ pub struct Editor {
 
 impl Editor {
     /// Initializes a new, empty Editor instance with a single cursor at the start.
+    #[must_use] 
     pub fn new() -> Self {
         Self {
             buffer: Buffer::new(),
@@ -144,13 +145,13 @@ impl Editor {
         let max_len = self.buffer.len_chars();
 
         for selection in &mut self.selections {
-            if !selection.is_empty() {
-                // Collapse selection to the right end
-                *selection = Selection::point(selection.end());
-            } else {
+            if selection.is_empty() {
                 // Move cursor right
                 let new_pos = std::cmp::min(selection.head + 1, max_len);
                 *selection = Selection::point(new_pos);
+            } else {
+                // Collapse selection to the right end
+                *selection = Selection::point(selection.end());
             }
             selection.wanted_column = None;
         }
@@ -159,13 +160,13 @@ impl Editor {
     /// Moves all cursors one character to the left, clamping at the start of the buffer.
     pub fn move_left(&mut self) {
         for selection in &mut self.selections {
-            if !selection.is_empty() {
-                // Collapse selection to the left start
-                *selection = Selection::point(selection.start());
-            } else {
+            if selection.is_empty() {
                 // Move cursor left
                 let new_pos = selection.head.saturating_sub(1);
                 *selection = Selection::point(new_pos);
+            } else {
+                // Collapse selection to the left start
+                *selection = Selection::point(selection.start());
             }
             selection.wanted_column = None;
         }
@@ -208,6 +209,7 @@ impl Editor {
     }
 
     /// Returns the primary selection, which is usually the first one in the list.
+    #[must_use] 
     pub fn primary_cursor(&self) -> Selection {
         *self.selections.first().unwrap_or(&Selection::point(0))
     }
@@ -311,7 +313,7 @@ impl Editor {
                 self.buffer.dirty = true;
             } else if start < max_len {
                 // Case B: Simple Delete
-                self.buffer.content.remove(start..start + 1);
+                self.buffer.content.remove(start..=start);
                 *selection = Selection::point(start);
                 self.buffer.dirty = true;
             }
@@ -324,6 +326,7 @@ impl Editor {
     }
 
     /// Returns the current position of the primary cursor as (1-based Line, 1-based Column).
+    #[must_use] 
     pub fn cursor_position(&self) -> (usize, usize) {
         let max_chars = self.buffer.len_chars();
         let head = std::cmp::min(self.primary_cursor().head, max_chars);
@@ -344,6 +347,7 @@ impl Editor {
     }
 
     /// Returns the number of lines currently in the buffer.
+    #[must_use] 
     pub fn line_count(&self) -> usize {
         self.buffer.content.len_lines()
     }
@@ -351,6 +355,7 @@ impl Editor {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use crate::keymap::KeymapRegistry;
 
@@ -619,7 +624,7 @@ mod tests {
         assert_eq!(editor.buffer.text(), "");
 
         // 3. Switch to Insert Mode ('i')
-        let cmd = keymap.resolve(editor.mode, "i").unwrap();
+        let cmd = keymap.resolve(editor.mode, "i").expect("Should not fail in test");
         editor.run(cmd)?;
         assert_eq!(editor.mode, crate::mode::Mode::Insert);
 
@@ -638,7 +643,7 @@ mod tests {
         assert_eq!(editor.buffer.text(), "hi");
 
         // 5. Back to Normal Mode ('esc')
-        let cmd = keymap.resolve(editor.mode, "esc").unwrap();
+        let cmd = keymap.resolve(editor.mode, "esc").expect("Should not fail in test");
         editor.run(cmd)?;
         assert_eq!(editor.mode, crate::mode::Mode::Normal);
 
@@ -646,14 +651,14 @@ mod tests {
         // Cursor is at end ("hi"). Move left once to be on 'i'.
         editor.run(Command::MoveLeft)?;
 
-        let cmd = keymap.resolve(editor.mode, "x").unwrap();
+        let cmd = keymap.resolve(editor.mode, "x").expect("Should not fail in test");
         editor.run(cmd)?; // Should delete 'i'
 
         // Verify delete happened
         assert_eq!(editor.buffer.text(), "h");
 
         // 7. Test Undo ('u')
-        let cmd = keymap.resolve(editor.mode, "u").unwrap();
+        let cmd = keymap.resolve(editor.mode, "u").expect("Should not fail in test");
         editor.run(cmd)?;
 
         // Should be restored to "hi"
@@ -689,8 +694,7 @@ mod tests {
         // We use 10ms as a very safe "Quest-worthy" threshold.
         assert!(
             duration.as_millis() < 10,
-            "The Dragon of Latency has struck! Mutation took {:?}.",
-            duration
+            "The Dragon of Latency has struck! Mutation took {duration:?}."
         );
 
         // Verify line count integrity

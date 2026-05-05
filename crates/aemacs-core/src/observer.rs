@@ -18,13 +18,14 @@ pub trait ReactiveObserver: Send + Sync {
 }
 
 /// A periodic heartbeat observer that wakes up autonomous agents at fixed intervals.
+#[derive(Debug)]
 pub struct TimePulseObserver {
     pub interval_seconds: u64,
 }
 
 #[async_trait]
 impl ReactiveObserver for TimePulseObserver {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "TimePulseObserver"
     }
 
@@ -56,7 +57,7 @@ impl ReactiveObserver for TimePulseObserver {
                 payload,
             };
 
-            if let Err(_) = bus.tx.send(system_event) {
+            if bus.tx.send(system_event).is_err() {
                 warn!("EventBus disconnected. {} shutting down.", self.name());
                 break;
             }
@@ -67,13 +68,14 @@ impl ReactiveObserver for TimePulseObserver {
 }
 
 /// ACO-026: Watches the filesystem for changes and emits signals to wake the agent.
+#[derive(Debug)]
 pub struct FileWatcherObserver {
     pub path: PathBuf,
 }
 
 #[async_trait]
 impl ReactiveObserver for FileWatcherObserver {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "FileWatcherObserver"
     }
 
@@ -123,7 +125,7 @@ impl ReactiveObserver for FileWatcherObserver {
                     payload,
                 };
 
-                if let Err(_) = bus.tx.send(system_event) {
+                if bus.tx.send(system_event).is_err() {
                     warn!("EventBus disconnected. {} shutting down.", self.name());
                     return Ok(());
                 }
@@ -135,6 +137,7 @@ impl ReactiveObserver for FileWatcherObserver {
 }
 
 /// ACO-030: Monitors an IMAP mailbox for new task intents from authorized senders.
+#[derive(Debug)]
 pub struct EmailObserver {
     pub server: String,
     pub port: u16,
@@ -145,7 +148,7 @@ pub struct EmailObserver {
 
 #[async_trait]
 impl ReactiveObserver for EmailObserver {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "EmailObserver"
     }
 
@@ -157,12 +160,13 @@ impl ReactiveObserver for EmailObserver {
 
         // Placeholder loop to keep the observer alive
         loop {
-            tokio::time::sleep(Duration::from_secs(3600)).await;
+            tokio::time::sleep(Duration::from_hours(1)).await;
         }
     }
 }
 
 /// ACO-030: Monitors a Matrix room for mentions and direct messages.
+#[derive(Debug)]
 pub struct ChatObserver {
     pub homeserver: String,
     pub access_token: String,
@@ -170,7 +174,7 @@ pub struct ChatObserver {
 
 #[async_trait]
 impl ReactiveObserver for ChatObserver {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "ChatObserver"
     }
 
@@ -182,7 +186,7 @@ impl ReactiveObserver for ChatObserver {
 
         // Placeholder loop to keep the observer alive
         loop {
-            tokio::time::sleep(Duration::from_secs(3600)).await;
+            tokio::time::sleep(Duration::from_hours(1)).await;
         }
     }
 }
@@ -218,7 +222,7 @@ mod tests {
             assert_eq!(source, "TimePulseObserver");
             assert_eq!(event_type, "TimePulse");
         } else {
-            panic!("Received unexpected event type from TimePulseObserver!");
+            return Err(anyhow::anyhow!("Received unexpected event type from TimePulseObserver!"));
         }
 
         // 2. Wait for second tick
@@ -226,7 +230,7 @@ mod tests {
         if let SystemEvent::Signal { event_type, .. } = event {
             assert_eq!(event_type, "TimePulse");
         } else {
-            panic!("Second tick failed to arrive!");
+            return Err(anyhow::anyhow!("Second tick failed to arrive!"));
         }
 
         Ok(())
@@ -261,21 +265,19 @@ mod tests {
         // but here it's a fresh bus. However, notify might emit multiple events.
         let mut found_content = false;
         for _ in 0..10 {
-            if let Ok(Ok(event)) = tokio::time::timeout(Duration::from_secs(1), rx.recv()).await {
-                if let SystemEvent::Signal {
-                    source,
-                    event_type,
-                    payload,
-                } = event
+            if let Ok(Ok(SystemEvent::Signal {
+                source,
+                event_type,
+                payload,
+            })) = tokio::time::timeout(Duration::from_secs(1), rx.recv()).await
+                && source == "FileSystem"
+                    && event_type == "FileSaved"
+                    && payload.contains("@@")
+                    && payload.contains(content)
                 {
-                    if source == "FileSystem" && event_type == "FileSaved" {
-                        if payload.contains("@@") && payload.contains(content) {
-                            found_content = true;
-                            break;
-                        }
-                    }
+                    found_content = true;
+                    break;
                 }
-            }
         }
 
         assert!(

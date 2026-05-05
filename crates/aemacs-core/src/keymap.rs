@@ -9,7 +9,8 @@ pub struct KeymapRegistry {
 }
 
 impl KeymapRegistry {
-    /// Initializes a new KeymapRegistry populated with default Vim-like bindings.
+    /// Initializes a new `KeymapRegistry` populated with default Vim-like bindings.
+    #[must_use] 
     pub fn new() -> Self {
         let mut registry = Self::default();
         registry.register_defaults();
@@ -52,6 +53,7 @@ impl KeymapRegistry {
     /// Returns `Some(Command)` if a match is found in the registry.
     /// Returns `None` if no binding exists, which the input handler typically interprets as a signal
     /// to insert the character literally (if in Insert mode) or ignore it (if in Normal mode).
+    #[must_use] 
     pub fn resolve(&self, mode: Mode, input: &str) -> Option<Command> {
         self.maps.get(&(mode, input.to_string())).cloned()
     }

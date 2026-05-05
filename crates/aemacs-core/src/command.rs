@@ -1,6 +1,6 @@
 /// The fundamental atomic actions the editor can perform.
 /// This is the "language" that both the user (via keys) and the AI (via intent) speak.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     /// Move the primary cursor one character to the right.
     MoveRight,

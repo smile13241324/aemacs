@@ -34,12 +34,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
         match result {
             Ok(event) => {
                 if let aemacs_ai::StreamEvent::Content(content) = event {
-                    print!("{}", content);
+                    print!("{content}");
                     io::stdout().flush()?;
                 }
             }
             Err(e) => {
-                eprintln!("\n❌ Stream Error: {}", e);
+                eprintln!("\n❌ Stream Error: {e}");
                 break;
             }
         }

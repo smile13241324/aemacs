@@ -13,6 +13,16 @@ pub struct OllamaEmbedder {
     model: String,
 }
 
+impl std::fmt::Debug for OllamaEmbedder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OllamaEmbedder")
+            .field("base_url", &self.base_url)
+            .field("model", &self.model)
+            .field("client", &"reqwest::Client")
+            .finish()
+    }
+}
+
 #[derive(Serialize)]
 struct EmbeddingRequest<'a> {
     model: &'a str,
@@ -25,7 +35,7 @@ struct EmbeddingResponse {
 }
 
 impl OllamaEmbedder {
-    /// Initializes a new OllamaEmbedder.
+    /// Initializes a new `OllamaEmbedder`.
     pub fn new(base_url: impl Into<String>, model: impl Into<String>) -> Self {
         Self {
             client: Client::new(),
@@ -64,8 +74,7 @@ impl OllamaEmbedder {
             }
 
             return Err(AIError::ConnectorError(format!(
-                "Embedding Error ({}): {}",
-                status, err_text
+                "Embedding Error ({status}): {err_text}"
             )));
         }
 

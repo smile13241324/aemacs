@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Defines the possible states of a task within a project plan.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TaskStatus {
     /// The task has been defined but work has not yet started.
     Pending,

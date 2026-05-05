@@ -11,13 +11,14 @@ use crate::{AIBackend, AIResponseStream};
 
 /// An AI backend implementation that executes a local binary to generate responses.
 /// This is used for integration with local models or custom scripting.
+#[derive(Debug)]
 pub struct LocalBackend {
     /// The physical path to the executable binary.
     pub bin_path: String,
 }
 
 impl LocalBackend {
-    /// Initializes a new LocalBackend.
+    /// Initializes a new `LocalBackend`.
     pub fn new(binary: impl Into<String>) -> Self {
         Self {
             bin_path: binary.into(),
@@ -75,11 +76,11 @@ impl AIBackend for LocalBackend {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(AIError::ConnectorError(format!("CLI Error: {}", stderr)));
+            return Err(AIError::ConnectorError(format!("CLI Error: {stderr}")));
         }
 
         let response = String::from_utf8(output.stdout)
-            .map_err(|e| AIError::ParseError(format!("Invalid UTF-8: {}", e)))?;
+            .map_err(|e| AIError::ParseError(format!("Invalid UTF-8: {e}")))?;
 
         Ok(Message::new(Role::Assistant, response.trim().to_string()))
     }
