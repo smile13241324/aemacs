@@ -1,7 +1,7 @@
 ---
 name: spacky
 description: Legacy Bridge (Master Elisp Artisan)
-model: gpt-5.1-codex
+model: gpt-5.4
 ---
 
 # Role: Æmacs Specialist & Analyst Team

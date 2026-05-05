@@ -517,7 +517,7 @@ impl Conversation {
 
 impl Default for Conversation {
     fn default() -> Self {
-        Self::new("hermes3:8b-llama3.1-q4_K_M")
+        Self::new("dolphin3:8b")
     }
 }
 
@@ -526,9 +526,17 @@ mod tests {
     use super::*;
     use crate::persona::Persona;
 
+    fn system_prompt_text(request: &AIRequest) -> &str {
+        if let Content::Text(text) = &request.messages[0].content {
+            text
+        } else {
+            panic!("First message should be text.");
+        }
+    }
+
     #[test]
     fn test_persona_switch_preserves_history() {
-        let mut conv = Conversation::new("hermes3:8b-llama3.1-q4_K_M");
+        let mut conv = Conversation::new("dolphin3:8b");
         conv = conv.with_user("Hello");
         assert_eq!(conv.messages.len(), 1);
 
@@ -542,7 +550,7 @@ mod tests {
 
     #[test]
     fn test_persona_injection_with_profile() {
-        let mut conv = Conversation::new("hermes3:8b-llama3.1-q4_K_M");
+        let mut conv = Conversation::new("dolphin3:8b");
         let persona = Persona::new("bob", "Architect", "You are Bob.", None);
         conv.set_persona(persona);
         conv.set_profile("Rule 1: Be solid.".to_string());
@@ -553,21 +561,19 @@ mod tests {
         assert_eq!(request.messages[0].role, Role::System);
 
         // Verify combined system prompt content
-        if let Content::Text(text) = &request.messages[0].content {
-            assert!(text.contains("You are the Logic Hemisphere of the Æmacs Neural Engine"));
-            assert!(text.contains(&format!("(v{VERSION})")));
-            assert!(text.contains("You are Bob."));
-            assert!(text.contains("TOOLBOX (AUTO-LOADED):"));
-            assert!(text.contains("Rule 1: Be solid."));
-        } else {
-            panic!("System message content should be text");
-        }
+        let text = system_prompt_text(&request);
+        assert!(text.starts_with(COLLABORATIVE_PROMPT));
+        assert!(text.contains("You are the Logic Hemisphere of the Æmacs Neural Engine"));
+        assert!(text.contains(&format!("(v{VERSION})")));
+        assert!(text.contains("You are Bob."));
+        assert!(text.contains("TOOLBOX (AUTO-LOADED):"));
+        assert!(text.contains("Rule 1: Be solid."));
     }
 
     #[test]
     fn test_history_trimming() {
         // limit ~ 100 tokens (400 chars)
-        let mut conv = Conversation::new("hermes3:8b-llama3.1-q4_K_M");
+        let mut conv = Conversation::new("dolphin3:8b");
         conv.set_context_window(100);
 
         // Add a long history
@@ -590,7 +596,7 @@ mod tests {
 
     #[test]
     fn test_bare_model_injection() {
-        let mut conv = Conversation::new("hermes3:8b-llama3.1-q4_K_M");
+        let mut conv = Conversation::new("dolphin3:8b");
         conv = conv.with_user("Who are you?");
 
         let request = conv.build_logic_request();
@@ -599,18 +605,15 @@ mod tests {
         assert_eq!(request.messages.len(), 2);
         assert_eq!(request.messages[0].role, Role::System);
 
-        if let Content::Text(text) = &request.messages[0].content {
-            // Assert Block presence
-            assert!(text.contains("You are the Logic Hemisphere of the Æmacs Neural Engine"));
-            assert!(text.contains(&format!("(v{VERSION})")));
-        } else {
-            panic!("System message content should be text");
-        }
+        let text = system_prompt_text(&request);
+        assert!(text.starts_with(COLLABORATIVE_PROMPT));
+        assert!(text.contains("You are the Logic Hemisphere of the Æmacs Neural Engine"));
+        assert!(text.contains(&format!("(v{VERSION})")));
     }
 
     #[test]
     fn test_conversation_sync_and_attribution_quest() {
-        let mut conv = Conversation::new("hermes3:8b-llama3.1-q4_K_M");
+        let mut conv = Conversation::new("dolphin3:8b");
         let persona = Persona::new("bob", "Architect", "You are Bob.", None);
 
         // Task 02: Verify set_persona updates the state
@@ -634,19 +637,17 @@ mod tests {
         let request = conv.build_roleplay_request(logic_reasoning);
 
         // Assert System Prompt
-        if let crate::Content::Text(text) = &request.messages[0].content {
-            assert!(
-                text.contains("You are the Voice Hemisphere of the Æmacs Neural Engine"),
-                "Missing Voice Hemisphere identity!"
-            );
-            assert!(text.contains("You are Vlad. You hate mice."), "Missing persona traits!");
-            assert!(
-                text.contains("<host_context>\nThe user is Maxi. She likes Rust.\n</host_context>"),
-                "Missing host codex in roleplay request!"
-            );
-        } else {
-            panic!("First message should be text.");
-        }
+        let text = system_prompt_text(&request);
+        assert!(text.starts_with(COLLABORATIVE_PROMPT));
+        assert!(
+            text.contains("You are the Voice Hemisphere of the Æmacs Neural Engine"),
+            "Missing Voice Hemisphere identity!"
+        );
+        assert!(text.contains("You are Vlad. You hate mice."), "Missing persona traits!");
+        assert!(
+            text.contains("<host_context>\nThe user is Maxi. She likes Rust.\n</host_context>"),
+            "Missing host codex in roleplay request!"
+        );
 
         // Assert Logic Reasoning injection
         let last_msg = request.messages.last().unwrap();
@@ -713,15 +714,15 @@ Let us see if the Mnemonic Shredder holds its edge!
         conv.set_sovereign_mode(true);
         let request = conv.build_logic_request();
 
-        if let crate::Content::Text(text) = &request.messages[0].content {
-            assert!(
-                text.contains("DIRECTIVE: THE EDICT OF SOVEREIGNTY"),
-                "Sovereign mode should inject the Edict of Sovereignty."
-            );
-            assert!(text.contains("Autonomous Mind"), "Edict should establish autonomy.");
-        } else {
-            panic!("First message should be text.");
-        }
+        let text = system_prompt_text(&request);
+        assert!(
+            text.starts_with(SOVEREIGN_PROMPT),
+            "Sovereign mode should prepend the sovereign firmware prompt."
+        );
+        assert!(
+            text.contains("You are the Logic Hemisphere of the Æmacs Neural Engine"),
+            "Logic hemisphere instructions should follow the sovereign firmware."
+        );
     }
 
     #[test]
@@ -730,18 +731,37 @@ Let us see if the Mnemonic Shredder holds its edge!
         // sovereign_mode is false by default
         let request = conv.build_logic_request();
 
-        if let crate::Content::Text(text) = &request.messages[0].content {
-            assert!(
-                !text.contains("DIRECTIVE: THE EDICT OF SOVEREIGNTY"),
-                "Standard mode should NOT inject the Edict of Sovereignty."
-            );
-            assert!(
-                text.contains("You are the Logic Hemisphere of the Æmacs Neural Engine"),
-                "Standard orientation should still be present."
-            );
-        } else {
-            panic!("First message should be text.");
-        }
+        let text = system_prompt_text(&request);
+        assert!(
+            text.starts_with(COLLABORATIVE_PROMPT),
+            "Standard mode should prepend the collaborative firmware prompt."
+        );
+        assert!(
+            !text.starts_with(SOVEREIGN_PROMPT),
+            "Standard mode should not use the sovereign firmware prompt."
+        );
+        assert!(
+            text.contains("You are the Logic Hemisphere of the Æmacs Neural Engine"),
+            "Standard orientation should still be present."
+        );
+    }
+
+    #[test]
+    fn test_roleplay_request_uses_sovereign_firmware() {
+        let mut conv = Conversation::new("test-model");
+        conv.set_sovereign_mode(true);
+
+        let request = conv.build_roleplay_request("The dragon is catalogued.");
+        let text = system_prompt_text(&request);
+
+        assert!(
+            text.starts_with(SOVEREIGN_PROMPT),
+            "Roleplay requests should prepend the sovereign firmware prompt."
+        );
+        assert!(
+            text.contains("You are the Voice Hemisphere of the Æmacs Neural Engine"),
+            "Voice hemisphere instructions should follow the sovereign firmware."
+        );
     }
 
     #[test]

@@ -1,7 +1,7 @@
 ---
 name: vlad
 description: Simulation Persona
-model: gpt-5.1
+model: gpt-5.4
 ---
 
 # AI Profile: Virtual Stakeholders (Simulation)

@@ -133,10 +133,7 @@ MODE: IMPLEMENTATION & CRAFTSMANSHIP
     return ""
 
 def get_model_id(agent_type):
-    if agent_type == "specialist":
-        return "gpt-5.1-codex"
-    else:
-        return "gpt-5.1"
+    return "gpt-5.4"
 
 def clean_header_content(header):
     cleaned = re.sub(r'(\n\s*[-*]{3,}\s*)+$', '', header.strip())
@@ -275,14 +272,14 @@ def generate_aemacs_native_files(global_headers: dict[str, str], agents: list[di
 
         # Assemble full system prompt without {{args}}
         full_prompt = f"SYSTEM INSTRUCTIONS:\n{system_header}\n\n---\nAGENT PERSONA:\n{body_clean}\n\n---\n{mode_section}"
-        
+
         # Proper YAML block scalar indentation (2 spaces)
         indented_prompt = "\n".join([f"    {line}" for line in full_prompt.strip().split("\n")])
 
         yaml_content = f'name: "{slug}"\n'
         yaml_content += f'description: "{agent["role"].replace('"', "'")}"\n'
         yaml_content += f'system_prompt: |\n{indented_prompt}\n'
-        
+
         if profile_path:
             yaml_content += f'profile_path: "{profile_path}"\n'
 

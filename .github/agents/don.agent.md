@@ -1,7 +1,7 @@
 ---
 name: don
 description: Test Engineer
-model: gpt-5.1-codex
+model: gpt-5.4
 ---
 
 # Role: Æmacs Specialist & Analyst Team

@@ -1,7 +1,7 @@
 ---
 name: mopfl
 description: User Configuration & Onboarding
-model: gpt-5.1
+model: gpt-5.4
 ---
 
 # Project Briefing: Æmacs Vision & AI Collaboration

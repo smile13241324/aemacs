@@ -1,7 +1,7 @@
 ---
 name: kairon
 description: Rust Core Specialist
-model: gpt-5.1-codex
+model: gpt-5.4
 ---
 
 # Role: Æmacs Specialist & Analyst Team
