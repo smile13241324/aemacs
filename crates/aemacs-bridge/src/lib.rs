@@ -27,6 +27,10 @@ struct BridgeState {
 }
 
 /// Initializes the scripting bridge and verifies the Python connection.
+/// Initializes the component.
+///
+/// # Errors
+/// Returns an error if the initialization fails.
 pub fn init() -> Result<()> {
     info!("🌉 [BRIDGE] Connecting to Scripting Engines...");
 
@@ -48,6 +52,8 @@ pub fn init() -> Result<()> {
 
 /// Spawns an HTTP bridge that listens for external intents.
 /// This server is protected by a randomly generated API key.
+/// # Errors
+/// Returns an error if the server fails to bind to the port.
 pub async fn spawn_intent_bridge(bus: EventBus, port: u16) -> Result<()> {
     let api_key = Uuid::new_v4().to_string();
 
@@ -190,17 +196,19 @@ mod tests {
         // 5. Verify signal reached the bus
         let event = tokio::time::timeout(Duration::from_secs(1), rx.recv()).await??;
 
-        if let SystemEvent::Signal {
-            source,
-            event_type,
-            payload,
-        } = event
-        {
-            assert_eq!(source, "Bridge:TestRunner");
-            assert_eq!(event_type, "ManualTrigger");
-            assert!(payload.contains("deploy"));
-        } else {
-            panic!("Unexpected event type on bus: {event:?}");
+        match event {
+            SystemEvent::Signal {
+                source,
+                event_type,
+                payload,
+            } => {
+                assert_eq!(source, "Bridge:TestRunner");
+                assert_eq!(event_type, "ManualTrigger");
+                assert!(payload.contains("deploy"));
+            }
+            _ => {
+                unreachable!("Unexpected event type on bus: {event:?}");
+            }
         }
 
         Ok(())

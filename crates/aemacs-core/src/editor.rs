@@ -30,6 +30,12 @@ pub struct Editor {
     redo_stack: Vec<Snapshot>,
 }
 
+impl Default for Editor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Editor {
     /// Initializes a new, empty Editor instance with a single cursor at the start.
     #[must_use] 
@@ -43,7 +49,8 @@ impl Editor {
         }
     }
 
-    /// Loads a file from disk into a new Editor instance.
+    /// # Errors
+    /// Returns an error if the file cannot be loaded into the buffer.
     pub fn from_file(path: std::path::PathBuf) -> anyhow::Result<Self> {
         let buffer = Buffer::from_file(path)?;
         Ok(Self {
@@ -55,8 +62,8 @@ impl Editor {
         })
     }
 
-    /// Reloads the current buffer from disk, effectively discarding unsaved changes.
-    /// This also clears the undo/redo stacks to ensure consistency with the new disk state.
+    /// # Errors
+    /// Returns an error if the underlying file has been removed or is no longer accessible.
     pub fn reload(&mut self) -> anyhow::Result<()> {
         self.buffer.reload()?;
         self.undo_stack.clear();
@@ -119,7 +126,7 @@ impl Editor {
         let text_len = text.chars().count(); // Grapheme count approximation
 
         // Sort descending to process from back to front, preventing index invalidation.
-        self.selections.sort_by(|a, b| b.start().cmp(&a.start()));
+        self.selections.sort_by_key(|b| std::cmp::Reverse(b.start()));
 
         for selection in &mut self.selections {
             let start = selection.start();
@@ -178,7 +185,7 @@ impl Editor {
         self.save_snapshot();
 
         // Sort descending to prevent shifting indices during multi-cursor deletion.
-        self.selections.sort_by(|a, b| b.start().cmp(&a.start()));
+        self.selections.sort_by_key(|b| std::cmp::Reverse(b.start()));
 
         for selection in &mut self.selections {
             let start = selection.start();
@@ -198,7 +205,8 @@ impl Editor {
         }
     }
 
-    /// Synchronizes the current buffer state with its physical file on disk.
+    /// # Errors
+    /// Returns an error if the buffer has no path, or if disk I/O fails during writing or renaming.
     pub fn save(&mut self) -> anyhow::Result<()> {
         self.buffer.save()
     }
@@ -214,8 +222,8 @@ impl Editor {
         *self.selections.first().unwrap_or(&Selection::point(0))
     }
 
-    /// The primary dispatch point for executing editor commands.
-    /// This method is invoked by keybindings, agents, and other system signals.
+    /// # Errors
+    /// Returns an error if saving fails.
     pub fn run(&mut self, cmd: Command) -> anyhow::Result<()> {
         match cmd {
             // Navigation
@@ -298,7 +306,7 @@ impl Editor {
     /// If a range is selected, the entire selection is deleted.
     pub fn delete(&mut self) {
         self.save_snapshot();
-        self.selections.sort_by(|a, b| b.start().cmp(&a.start()));
+        self.selections.sort_by_key(|b| std::cmp::Reverse(b.start()));
 
         let max_len = self.buffer.len_chars();
 

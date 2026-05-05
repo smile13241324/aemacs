@@ -815,18 +815,18 @@ Let us see if the Mnemonic Shredder holds its edge!
 
     #[test]
     fn test_conversation_initializes_with_model_context_quest() {
-        // Hermes has a massive 128k context window (131072 tokens).
+        // Hermes has a massive 128k context window (131_072 tokens).
         let conv = Conversation::new("dolphin3:8b");
 
         assert_eq!(
-            conv.context_limit, 131072,
+            conv.context_limit, 131_072,
             "The Birthright Context failed! Internal limit was not set!"
         );
 
         let request = conv.build_logic_request();
         assert_eq!(
             request.options.unwrap().num_ctx,
-            Some(131072),
+            Some(131_072),
             "The Birthright Context failed! OllamaOptions was not set!"
         );
     }
@@ -842,14 +842,14 @@ Let us see if the Mnemonic Shredder holds its edge!
         conv.set_model("dolphin3:8b");
 
         assert_eq!(
-            conv.context_limit, 131072,
+            conv.context_limit, 131_072,
             "The Shape-Shifter's Memory failed! Internal limit did not update!"
         );
 
         let request = conv.build_logic_request();
         assert_eq!(
             request.options.unwrap().num_ctx,
-            Some(131072),
+            Some(131_072),
             "The Shape-Shifter's Memory failed! OllamaOptions did not update!"
         );
     }

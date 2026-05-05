@@ -25,7 +25,7 @@ impl SupportedLanguage {
         let ext = path
             .extension()
             .and_then(|s| s.to_str())
-            .ok_or_else(|| anyhow!("No file extension found for {path:?}"))?;
+            .ok_or_else(|| anyhow!("No file extension found for {}", path.display()))?;
 
         match ext.to_lowercase().as_str() {
             "rs" => Ok(Self::Rust),
@@ -130,7 +130,7 @@ pub fn extract_symbol(
 
     let tree = parser
         .parse(&source_code, None)
-        .ok_or_else(|| anyhow!("Failed to parse file: {path:?}"))?;
+        .ok_or_else(|| anyhow!("Failed to parse file: {}", path.display()))?;
 
     let query = Query::new(&ts_lang, query_str)?;
     let mut cursor = QueryCursor::new();
@@ -153,7 +153,7 @@ pub fn extract_symbol(
     }
 
     Err(anyhow!(
-        "Symbol '{symbol_name}' not found in {path:?} (Detected Language: {lang:?})"
+        "Symbol '{symbol_name}' not found in {} (Detected Language: {lang:?})", path.display()
     ))
 }
 

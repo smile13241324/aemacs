@@ -2,18 +2,18 @@ use crate::bus::{EventBus, SystemEvent};
 use anyhow::Result;
 use log::{info, warn};
 use notify::{RecursiveMode, Watcher};
-use std::path::PathBuf;
+use std::path::Path;
 
 /// The Global Watcher monitors the entire workspace for changes.
 pub struct GlobalWatcher {
-    _bus: EventBus,
+    bus: EventBus,
     watcher: Box<dyn Watcher + Send + Sync>,
 }
 
 impl std::fmt::Debug for GlobalWatcher {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("GlobalWatcher")
-            .field("bus", &self._bus)
+            .field("bus", &self.bus)
             .field("watcher", &"Box<dyn Watcher>")
             .finish()
     }
@@ -22,6 +22,9 @@ impl std::fmt::Debug for GlobalWatcher {
 impl GlobalWatcher {
     /// Initializes a new `GlobalWatcher` connected to the specified system event bus.
     /// It uses the platform's recommended watcher implementation (e.g., inotify, `FSEvents`).
+    ///
+    /// # Errors
+    /// Returns an error if the watcher cannot be initialized.
     pub fn new(bus: EventBus) -> Result<Self> {
         let bus_clone = bus.clone();
         let watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
@@ -42,7 +45,7 @@ impl GlobalWatcher {
         })?;
 
         Ok(Self {
-            _bus: bus,
+            bus,
             watcher: Box::new(watcher),
         })
     }
@@ -51,16 +54,19 @@ impl GlobalWatcher {
     ///
     /// # Errors
     /// Returns an error if the OS fails to initialize the watch on the specified path.
-    pub fn watch(&mut self, path: PathBuf) -> Result<()> {
-        info!("👁️  Watching workspace: {path:?}");
-        self.watcher.watch(&path, RecursiveMode::Recursive)?;
+    pub fn watch(&mut self, path: &Path) -> Result<()> {
+        info!("👁️  Watching workspace: {}", path.display());
+        self.watcher.watch(path, RecursiveMode::Recursive)?;
         Ok(())
     }
 }
 
 /// Spawns and configures a global watcher for the specified workspace root.
 /// The watcher will emit `FileModified` signals to the event bus whenever physical files are altered.
-pub fn spawn_global_watcher(bus: EventBus, workspace_root: PathBuf) -> Result<()> {
+///
+/// # Errors
+/// Returns an error if the watcher cannot be initialized or the path cannot be watched.
+pub fn spawn_global_watcher(bus: EventBus, workspace_root: &Path) -> Result<()> {
     let mut watcher = GlobalWatcher::new(bus)?;
     watcher.watch(workspace_root)?;
 
@@ -100,7 +106,7 @@ mod tests {
 
         // 2. Setup Watcher
         let mut watcher = GlobalWatcher::new(bus)?;
-        watcher.watch(tmp_dir.path().to_path_buf())?;
+        watcher.watch(tmp_dir.path())?;
 
         // 3. Trigger Modification
         // Note: Some OS watchers need a tiny moment to settle or have debouncing.

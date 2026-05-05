@@ -50,7 +50,7 @@ impl Buffer {
     pub fn from_file(path: PathBuf) -> Result<Self> {
         // Reasoning: Use BufReader for better I/O performance on large files.
         let file =
-            File::open(&path).with_context(|| format!("Failed to open file at {path:?}"))?;
+            File::open(&path).with_context(|| format!("Failed to open file at {}", path.display()))?;
 
         let reader = BufReader::new(file);
 
@@ -72,7 +72,7 @@ impl Buffer {
     pub fn reload(&mut self) -> Result<()> {
         if let Some(path) = &self.path {
             let file =
-                File::open(path).with_context(|| format!("Failed to open file at {path:?}"))?;
+                File::open(path).with_context(|| format!("Failed to open file at {}", path.display()))?;
             let reader = BufReader::new(file);
             self.content = Rope::from_reader(reader)?;
             self.dirty = false;

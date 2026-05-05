@@ -62,7 +62,7 @@ impl AIBackend for LocalBackend {
         let last_message = request
             .messages
             .last()
-            .ok_or(AIError::ConfigError("No messages in request".to_string()))?;
+            .ok_or_else(|| AIError::ConfigError("No messages in request".to_string()))?;
 
         info!("Sending request to local binary: {}", self.bin_path);
 
@@ -90,7 +90,7 @@ impl AIBackend for LocalBackend {
         let last_message = request
             .messages
             .last()
-            .ok_or(AIError::ConfigError("No messages in request".to_string()))?;
+            .ok_or_else(|| AIError::ConfigError("No messages in request".to_string()))?;
 
         info!("Starting stream from local binary: {}", self.bin_path);
 
@@ -102,7 +102,7 @@ impl AIBackend for LocalBackend {
             .spawn()
             .map_err(AIError::IoError)?;
 
-        let stdout = child.stdout.take().ok_or(AIError::ConnectorError(
+        let stdout = child.stdout.take().ok_or_else(|| AIError::ConnectorError(
             "Could not capture stdout".to_string(),
         ))?;
 

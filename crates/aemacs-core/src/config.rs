@@ -72,7 +72,7 @@ pub fn load_user_config() -> UserConfig {
 #[must_use] 
 pub fn load_config_from_path(path: &PathBuf) -> UserConfig {
     if !path.exists() {
-        log::info!("No config file found at {path:?}. Using default config.");
+        log::info!("No config file found at {}. Using default config.", path.display());
         return UserConfig::default();
     }
 
@@ -80,12 +80,12 @@ pub fn load_config_from_path(path: &PathBuf) -> UserConfig {
         Ok(contents) => match ron::from_str(&contents) {
             Ok(config) => config,
             Err(e) => {
-                log::error!("Failed to parse {path:?}: {e}. Using default config.");
+                log::error!("Failed to parse {}: {e}. Using default config.", path.display());
                 UserConfig::default()
             }
         },
         Err(e) => {
-            log::error!("Failed to read {path:?}: {e}. Using default config.");
+            log::error!("Failed to read {}: {e}. Using default config.", path.display());
             UserConfig::default()
         }
     }

@@ -60,13 +60,14 @@ impl ToolHost for ServerHost {
 /// Pure function to format mnemic directives into a system context block.
 /// This translates raw memory strings into a structured prompt injection.
 fn format_mnemic_reflection(directives: &[String]) -> String {
+    use std::fmt::Write;
     if directives.is_empty() {
         return "No core directives found in memory. Operate based on default persona.".to_string();
     }
 
     let mut reflection = "<system_memory_context>\nPrior Insights & Directives:\n".to_string();
     for d in directives {
-        reflection.push_str(&format!("- {d}\n"));
+        let _ = write!(reflection, "- {d}\n");
     }
     reflection.push_str("</system_memory_context>");
     reflection
@@ -74,10 +75,9 @@ fn format_mnemic_reflection(directives: &[String]) -> String {
 
 /// Aggregates recent insights and core truths from the RAG Fortress into a system prompt injection.
 async fn perform_mnemic_reflection(kb: &KnowledgeBase) -> String {
-    match kb.get_core_directives().await {
-        Ok(directives) => format_mnemic_reflection(&directives),
-        Err(_) => "Operate based on default persona.".to_string(),
-    }
+    kb.get_core_directives()
+        .await
+        .map_or_else(|_| "Operate based on default persona.".to_string(), |directives| format_mnemic_reflection(&directives))
 }
 
 /// The Orchestrator for headless Sovereign mode.
@@ -112,6 +112,7 @@ impl std::fmt::Debug for AutonomousService {
 
 impl AutonomousService {
     /// Initializes a new `AutonomousService`.
+    #[must_use]
     pub fn new(
         bus: EventBus,
         agent_name: String,
@@ -132,6 +133,9 @@ impl AutonomousService {
 
     /// Starts the sovereign execution loop.
     /// This function blocks until the service is terminated or an unrecoverable error occurs.
+    ///
+    /// # Errors
+    /// Returns an error if the agent cannot be started.
     pub async fn start(&self, interval_seconds: u64) -> Result<()> {
         info!(
             "🧠 [AUTONOMOUS] Starting Sovereign Service for agent: {}",
@@ -140,7 +144,7 @@ impl AutonomousService {
         println!("🚀 Sovereign Mode Active: Automated Tool Approval Enabled.");
 
         // 1. Ignite Life-Support
-        spawn_sentinel(self.bus.clone()).await?;
+        spawn_sentinel(self.bus.clone())?;
 
         // 2. Ignite Sensory Substrate (ACO-007, ACO-029)
         let heartbeat = TimePulseObserver { interval_seconds };
@@ -212,18 +216,16 @@ impl AutonomousService {
                     }
 
                     let trigger_message = if event_type == "AutonomousIntent" {
-                        match serde_json::from_str::<aemacs_core::signals::SignalContext>(&payload)
-                        {
+                        use std::fmt::Write;
+                        match serde_json::from_str::<aemacs_core::signals::SignalContext>(&payload) {
                             Ok(ctx) => {
-                                let mut msg =
+                                let mut msg = 
                                     format!("A sovereign intent was detected: {:?}\n", ctx.intent);
                                 if let Some(path) = ctx.file_path {
-                                    msg.push_str(&format!("File: {path}\n"));
+                                    let _ = write!(msg, "File: {path}\n");
                                 }
                                 if let Some(snippet) = ctx.snippet {
-                                    msg.push_str(&format!(
-                                        "Context Snippet:\n```\n{snippet}\n```\n"
-                                    ));
+                                    let _ = write!(msg, "Context Snippet:\n```\n{snippet}\n```\n");
                                 }
                                 Some(msg)
                             }
@@ -269,7 +271,7 @@ impl AutonomousService {
                         .await;
                     }
                 }
-                _ => {}
+                _ => {} // Ignore other event types
             }
         }
 

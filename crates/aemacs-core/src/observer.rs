@@ -102,22 +102,18 @@ impl ReactiveObserver for FileWatcherObserver {
 
                 // ACO-029-03: Contextual Flooding (Quick Read)
                 let snippet = if path.is_file() {
-                    match std::fs::read_to_string(&path) {
-                        Ok(content) => {
-                            let lines: Vec<&str> = content.lines().take(50).collect();
-                            Some(lines.join("\n"))
-                        }
-                        Err(_) => None,
-                    }
+                    std::fs::read_to_string(&path).map_or(None, |content| {
+                        let lines: Vec<&str> = content.lines().take(50).collect();
+                        Some(lines.join("\n"))
+                    })
                 } else {
                     None
                 };
 
-                let payload = if let Some(s) = snippet {
-                    format!("{}@@{}", rel_path.to_string_lossy(), s)
-                } else {
-                    rel_path.to_string_lossy().to_string()
-                };
+                let payload = snippet.map_or_else(
+                    || rel_path.to_string_lossy().to_string(),
+                    |s| format!("{}@@{}", rel_path.to_string_lossy(), s),
+                );
 
                 let system_event = SystemEvent::Signal {
                     source: "FileSystem".to_string(),

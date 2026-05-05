@@ -5,7 +5,10 @@ use std::time::{Duration, Instant};
 
 /// The Sentinel Daemon monitors autonomous agent sanity by tracking status reports.
 /// If an agent fails to report functional integrity for over 1 hour, it triggers a rescue notification.
-pub async fn spawn_sentinel(bus: EventBus) -> Result<()> {
+///
+/// # Errors
+/// Returns an error if the daemon cannot be spawned.
+pub fn spawn_sentinel(bus: EventBus) -> Result<()> {
     let bus_clone = bus.clone();
     spawn_sentinel_internal(
         bus,
@@ -15,17 +18,16 @@ pub async fn spawn_sentinel(bus: EventBus) -> Result<()> {
             let tx = bus_clone.tx.clone();
             let _ = tx.send(SystemEvent::Notification(msg));
         },
-    )
-    .await
+    );
+    Ok(())
 }
 
-async fn spawn_sentinel_internal<F>(
+fn spawn_sentinel_internal<F>(
     bus: EventBus,
     timeout: Duration,
     check_interval: Duration,
     on_alert: F,
-) -> Result<()>
-where
+) where
     F: Fn(String) + Send + Sync + 'static,
 {
     tokio::spawn(async move {
@@ -61,8 +63,6 @@ where
             tokio::time::sleep(check_interval).await;
         }
     });
-
-    Ok(())
 }
 
 #[cfg(test)]
@@ -84,8 +84,7 @@ mod tests {
         // Quest: Spawn the Sentinel with a short fuse and a local observer
         spawn_sentinel_internal(bus.clone(), timeout, check_interval, move |_| {
             *alert_clone.lock().expect("Should not fail in test") = true;
-        })
-        .await?;
+        });
 
         // 1. Verify Silence Detection
         tokio::time::sleep(Duration::from_millis(500)).await;

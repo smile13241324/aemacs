@@ -43,6 +43,9 @@ impl TriageRouter {
 
     /// Starts the triage engine loop.
     /// This method blocks while it listens to the event bus and manages the dampening field.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying receiver disconnected.
     pub async fn run(&self) -> Result<()> {
         info!(
             "🧠 [TRIAGE] Neural Bridge active. Debounce: {:?}",
@@ -90,8 +93,8 @@ impl TriageRouter {
                                 });
                             } else {
                                 // Process all pending signals individually
-                                for event in pending_signals.drain(..) {
-                                    if let Some(ctx) = Self::triage_event_internal(&auth_sources, event) {
+                                for event in std::mem::take(&mut pending_signals) {
+                                    if let Some(ctx) = Self::triage_event_internal(auth_sources.as_ref(), event) {
                                         let payload = serde_json::to_string(&ctx).unwrap_or_default();
                                         let _ = bus_out.send(SystemEvent::Signal {
                                             source: "TriageRouter".to_string(),
@@ -128,12 +131,12 @@ impl TriageRouter {
     /// Evaluates a system event and attempts to map it to a high-level intent.
     #[must_use] 
     pub fn triage_event(&self, event: SystemEvent) -> Option<SignalContext> {
-        Self::triage_event_internal(&self.authorized_sources, event)
+        Self::triage_event_internal(self.authorized_sources.as_ref(), event)
     }
 
     /// Internal logic for mapping raw signals to semantic intents, applying authorization filters.
     fn triage_event_internal(
-        authorized_sources: &Option<Vec<String>>,
+        authorized_sources: Option<&Vec<String>>,
         event: SystemEvent,
     ) -> Option<SignalContext> {
         match event {

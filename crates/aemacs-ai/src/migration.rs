@@ -66,7 +66,7 @@ pub fn extract_legacy_files(
         let mut current_tier = String::new();
         let mut current_phase = String::new();
         let mut current_context = String::new();
-        let mut current_content = String::new();
+        let mut block_content = String::new();
 
         for line in reader.lines() {
             let line = line?;
@@ -77,7 +77,7 @@ pub fn extract_legacy_files(
                 current_tier = caps.name("tier").unwrap().as_str().trim().to_string();
                 current_phase = caps.name("phase").unwrap().as_str().trim().to_string();
                 current_context = caps.name("context").unwrap().as_str().trim().to_string();
-                current_content.clear();
+                block_content.clear();
                 continue;
             }
 
@@ -95,7 +95,7 @@ pub fn extract_legacy_files(
                             phase: current_phase.clone(),
                             context: current_context.clone(),
                             timestamp: ts_str,
-                            content: current_content.trim().to_string(),
+                            content: block_content.trim().to_string(),
                         });
                     } else if current_tier == "GENESIS" {
                         records.push(LegacyRecord::Genesis {
@@ -103,7 +103,7 @@ pub fn extract_legacy_files(
                             phase: current_phase.clone(),
                             context: current_context.clone(),
                             timestamp: ts_str,
-                            content: current_content.trim().to_string(),
+                            content: block_content.trim().to_string(),
                         });
                     } else {
                         warn!("Unknown tier '{}' found, skipping block.", current_tier);
@@ -117,8 +117,8 @@ pub fn extract_legacy_files(
             }
 
             if in_block {
-                current_content.push_str(&line);
-                current_content.push('\n');
+                block_content.push_str(&line);
+                block_content.push('\n');
             }
         }
     }
@@ -155,6 +155,7 @@ pub async fn import_jsonl(kb: &KnowledgeBase, jsonl_path: &Path) -> AIResult<()>
                             &agent_id, &role, &phase, &context, &timestamp, &content,
                         )
                         .await
+                        .map(|_| ())
                     }
                     LegacyRecord::Genesis {
                         agent_id,

@@ -556,7 +556,7 @@ impl KnowledgeBase {
         phase: Option<&str>,
         context: Option<&str>,
         timestamp: Option<&str>,
-        content: &str,
+        payload: &str,
     ) -> AIResult<String> {
         let ts = timestamp.map_or_else(|| chrono::Utc::now().to_rfc3339(), std::string::ToString::to_string);
         let phase_str = phase.unwrap_or("AEMACS");
@@ -571,7 +571,7 @@ impl KnowledgeBase {
             origin,
             agent_id.to_uppercase(),
             ts,
-            content
+            payload
         );
 
         let mut metadata = HashMap::new();
@@ -593,7 +593,7 @@ impl KnowledgeBase {
     pub async fn store_insight(
         &self,
         agent_id: &str,
-        content: &str,
+        payload: &str,
         is_core: bool,
     ) -> AIResult<String> {
         let category = if is_core {
@@ -609,7 +609,7 @@ impl KnowledgeBase {
             None,
             None,
             None,
-            content,
+            payload,
         )
         .await
     }
@@ -621,8 +621,8 @@ impl KnowledgeBase {
         phase: &str,
         context: &str,
         timestamp: &str,
-        content: &str,
-    ) -> AIResult<String> {
+        payload: &str,
+        ) -> AIResult<String> {
         self.store_insight_internal(
             MemoryCategory::Genesis,
             MemoryEra::Cloud,
@@ -631,8 +631,8 @@ impl KnowledgeBase {
             Some(phase),
             Some(context),
             Some(timestamp),
-            content,
-        )
+            payload,
+            )
         .await
     }
 
@@ -641,7 +641,7 @@ impl KnowledgeBase {
         &self,
         id: &str,
         agent_id: &str,
-        content: &str,
+        payload: &str,
         is_core: bool,
     ) -> AIResult<()> {
         let category = if is_core {
@@ -664,7 +664,7 @@ impl KnowledgeBase {
             origin,
             agent_id.to_uppercase(),
             ts,
-            content
+            payload
         );
 
         let mut metadata = HashMap::new();
@@ -698,9 +698,9 @@ impl KnowledgeBase {
         session_id: Option<&str>,
         turn_index: Option<usize>,
         timestamp: Option<&str>,
-        content: &str,
+        payload: &str,
     ) -> AIResult<()> {
-        let chunks = Self::chunk_text(content, 2000);
+        let chunks = Self::chunk_text(payload, 2000);
         let total_chunks = chunks.len();
         let ts = timestamp.map_or_else(|| chrono::Utc::now().to_rfc3339(), std::string::ToString::to_string);
         let message_id = uuid::Uuid::new_v4().to_string();
@@ -797,8 +797,8 @@ impl KnowledgeBase {
         phase: &str,
         context: &str,
         timestamp: &str,
-        content: &str,
-    ) -> AIResult<()> {
+        payload: &str,
+        ) -> AIResult<String> {
         self.store_archive_internal(
             MemoryCategory::Archive,
             MemoryEra::Cloud,
@@ -810,9 +810,10 @@ impl KnowledgeBase {
             None,
             None,
             Some(timestamp),
-            content,
+            payload,
         )
-        .await
+        .await?;
+        Ok("Oracle record stored".to_string())
     }
 
     /// Searches for active behavioral insights and core directives.

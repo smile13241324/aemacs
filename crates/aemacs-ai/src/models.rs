@@ -270,7 +270,7 @@ pub const MODELS: &[ModelDefinition] = &[
         role: ModelRole::Creative,
         base_vram_gb: 5.0,
         kv_rate_gb_per_1k: 0.015,
-        max_context: 131072,
+        max_context: 131_072,
         license_constraints: "Llama 3.1 Community License. Free for commercial and freelance use. Restriction only applies if your product exceeds 700 million monthly active users.",
         model_description: "The Unrestricted Sparring Partner. Built on Llama 3.1 but explicitly fine-tuned for high emotional intelligence, creative lateral thinking, and zero refusals. The perfect lightweight choice for local, highly conversational Pair-Programming and deep architectural brainstorming without moralizing guardrails.",
         supports_tools: true,
@@ -282,7 +282,7 @@ pub const MODELS: &[ModelDefinition] = &[
         role: ModelRole::Roleplay,
         base_vram_gb: 4.9,
         kv_rate_gb_per_1k: 0.015,
-        max_context: 131072,
+        max_context: 131_072,
         license_constraints: "Llama 3.1 Community License. Free for commercial and freelance use. Restriction only applies if your product exceeds 700 million monthly active users.",
         model_description: "The Modernized Method Actor. Rebuilt entirely on the Llama 3.1 architecture, natively unlocking the massive 128k context window via optimized RoPE scaling. Exceptional at maintaining deep, persistent narrative states and complex persona heuristics without context collapse over prolonged sessions.",
         supports_tools: false,
@@ -309,7 +309,7 @@ pub const MODELS: &[ModelDefinition] = &[
         role: ModelRole::Roleplay,
         base_vram_gb: 7.5,
         kv_rate_gb_per_1k: 0.025,
-        max_context: 128000,
+        max_context: 128_000,
         license_constraints: "Apache 2.0 License. 100% free for unrestricted commercial and enterprise use.",
         model_description: "The Contextual Method Actor. Built on Mistral Nemo, offering a massive 128k context window crucial for maintaining long-running personas and deep narrative states without forgetting details. Renowned for generating vivid text and staying flawlessly in character across massive sessions.",
         supports_tools: false,
@@ -324,7 +324,7 @@ pub const MODELS: &[ModelDefinition] = &[
         role: ModelRole::Creative,
         base_vram_gb: 40.0,
         kv_rate_gb_per_1k: 0.050,
-        max_context: 131072,
+        max_context: 131_072,
         license_constraints: "Llama 3.3 Community License. Free for commercial and enterprise use.",
         model_description: "The SOTA Powerhouse. Distills the reasoning capabilities of Meta's massive 405B model into a highly efficient 70B footprint. While fully aligned, its sheer intelligence makes it the ultimate conversational sparring partner for complex code refactoring, deep architectural planning, and lateral problem-solving.",
         supports_tools: true,
@@ -336,14 +336,14 @@ pub const MODELS: &[ModelDefinition] = &[
         role: ModelRole::Roleplay,
         base_vram_gb: 40.0,
         kv_rate_gb_per_1k: 0.050,
-        max_context: 131072,
+        max_context: 131_072,
         license_constraints: "Llama 3.1 Community License. Free for commercial and enterprise use.",
         model_description: "The Enterprise Persona. The absolute pinnacle of open-weights roleplay. It provides the deep, lateral thinking and conversational nuance of legacy models like Miqu, but is built on a clean Llama 3.1 foundation, making it fully compliant and safe for corporate environments.",
         supports_tools: false,
     },
 ];
 
-pub const CONTEXT_OPTIONS: &[u32] = &[4096, 8192, 16384, 32768, 65536, 131072];
+pub const CONTEXT_OPTIONS: &[u32] = &[4096, 8192, 16384, 32768, 65536, 131_072];
 
 pub fn get_models_for_tier(tier_str: &str) -> Vec<&'static ModelDefinition> {
     let target_tier = match tier_str.to_uppercase().as_str() {

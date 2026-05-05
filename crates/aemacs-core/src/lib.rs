@@ -26,8 +26,11 @@ pub use keymap::KeymapRegistry;
 pub use mode::Mode;
 pub use selection::Selection;
 
-/// Initiliase the Iron Core.
+/// Initializes the Iron Core.
 /// Here global states, configs and the buffer manager will be loaded later.
+///
+/// # Errors
+/// Returns an error if the initialization fails.
 pub fn init() -> Result<()> {
     info!("⚙️ [CORE] Initializing System Kernel...");
 
