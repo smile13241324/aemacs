@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    fmt::Write as _,
     fs,
     path::{Component, PathBuf},
     sync::{Arc, OnceLock},
@@ -19,6 +20,10 @@ static SESSION_START: OnceLock<std::time::Instant> = OnceLock::new();
 /// Internal helper to track session uptime.
 fn get_session_start() -> std::time::Instant {
     *SESSION_START.get_or_init(std::time::Instant::now)
+}
+
+fn parse_task_index(index: u64) -> Result<usize> {
+    usize::try_from(index).context("Task index exceeds platform pointer width")
 }
 
 // --- Signals ---
@@ -103,6 +108,12 @@ impl std::fmt::Debug for ToolRegistry {
     }
 }
 
+impl Default for ToolRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ToolRegistry {
     /// Creates an empty `ToolRegistry`.
     #[must_use]
@@ -151,8 +162,8 @@ impl ToolRegistry {
 
     /// Retrieves a tool by its name.
     #[must_use]
-    pub fn get(&self, name: &str) -> Option<&Box<dyn Tool>> {
-        self.tools.get(name)
+    pub fn get(&self, name: &str) -> Option<&dyn Tool> {
+        self.tools.get(name).map(Box::as_ref)
     }
 
     /// Returns a list of JSON Schema definitions for all tools in the registry.
@@ -182,6 +193,10 @@ use futures::StreamExt;
 ///
 /// This function is the primary engine of agency in Æmacs.
 /// It modifies the conversation history in-place and returns the final synthesized prose.
+///
+/// # Errors
+/// Returns an error if model requests fail, fallback tool extraction cannot be prepared, or the
+/// roleplay phase fails to produce a final response.
 pub async fn run_agent_loop(
     backend: &(impl AIBackend + ?Sized),
     registry: &ToolRegistry,
@@ -211,12 +226,14 @@ pub async fn run_agent_loop(
 
         tracing::debug!("✅ [Logic Phase] Received response: {:?}", content);
 
-        let tool_calls = if let Some(calls) = &response_msg.tool_calls {
-            if calls.is_empty() { None } else { Some(calls.clone()) }
-        } else {
-            let fallback_calls = extract_tool_calls_from_prose(&content);
-            if fallback_calls.is_empty() { None } else { Some(fallback_calls) }
-        };
+        let tool_calls = response_msg.tool_calls.as_ref().map_or_else(
+            || {
+                extract_tool_calls_from_prose(&content).map(|fallback_calls| {
+                    if fallback_calls.is_empty() { None } else { Some(fallback_calls) }
+                })
+            },
+            |calls| Ok(if calls.is_empty() { None } else { Some(calls.clone()) }),
+        )?;
 
         // Add Logic's turn to internal history
         conversation.add_message(response_msg);
@@ -307,9 +324,17 @@ pub async fn run_agent_loop(
 
 /// ACO-021-03: Extracts tool calls from conversational text using regex fallback.
 /// This acts as a safety net for models that 'hallucinate' calls into prose.
-fn extract_tool_calls_from_prose(text: &str) -> Vec<crate::models::ToolCall> {
+///
+/// # Errors
+/// Returns an error if the static fallback regex cannot be compiled.
+fn extract_tool_calls_from_prose(text: &str) -> Result<Vec<crate::models::ToolCall>> {
+    static TOOL_CALL_REGEX: OnceLock<std::result::Result<Regex, regex::Error>> = OnceLock::new();
+
     // Regex matches: tool_name(arguments)
-    let re = Regex::new(r"([\w_]+)\s*\(([^)]*)\)").expect("Static regex is valid");
+    let re = TOOL_CALL_REGEX
+        .get_or_init(|| Regex::new(r"([\w_]+)\s*\(([^)]*)\)"))
+        .as_ref()
+        .map_err(|error| anyhow!("Failed to compile tool-call fallback regex: {error}"))?;
     let mut calls = Vec::new();
 
     for cap in re.captures_iter(text) {
@@ -336,10 +361,13 @@ fn extract_tool_calls_from_prose(text: &str) -> Vec<crate::models::ToolCall> {
             function: crate::models::ToolCallFunction { name, arguments },
         });
     }
-    calls
+    Ok(calls)
 }
 
 /// Validates that a path is safe to access (no escaping the project root).
+///
+/// # Errors
+/// Returns an error if the path is absolute or attempts parent-directory traversal.
 pub fn validate_path(path_str: &str) -> Result<PathBuf> {
     let path = PathBuf::from(path_str);
     if path.is_absolute() {
@@ -373,10 +401,10 @@ impl Tool for ReadFileTool {
         })
     }
     async fn execute(&self, args: Value, _host: &dyn ToolHost) -> Result<String> {
-        let path_str = args["path"].as_str().ok_or(anyhow!("Missing path"))?;
+        let path_str = args["path"].as_str().ok_or_else(|| anyhow!("Missing path"))?;
         let path = validate_path(path_str)?;
-        let content =
-            fs::read_to_string(&path).with_context(|| format!("Failed to read file: {path:?}"))?;
+        let content = fs::read_to_string(&path)
+            .with_context(|| format!("Failed to read file: {}", path.display()))?;
         Ok(content)
     }
 }
@@ -405,14 +433,16 @@ impl Tool for ReadManyFilesTool {
         })
     }
     async fn execute(&self, args: Value, _host: &dyn ToolHost) -> Result<String> {
-        let patterns = args["patterns"].as_array().ok_or(anyhow!("Missing patterns array"))?;
+        let patterns =
+            args["patterns"].as_array().ok_or_else(|| anyhow!("Missing patterns array"))?;
 
         let mut results = String::new();
         let mut processed_count = 0;
         let mut file_list = Vec::new();
 
         for pattern_val in patterns {
-            let pattern_str = pattern_val.as_str().ok_or(anyhow!("Invalid pattern string"))?;
+            let pattern_str =
+                pattern_val.as_str().ok_or_else(|| anyhow!("Invalid pattern string"))?;
 
             for entry in
                 glob::glob(pattern_str).map_err(|e| anyhow!("Invalid glob pattern: {e}"))?
@@ -425,17 +455,24 @@ impl Tool for ReadManyFilesTool {
 
                             match fs::read_to_string(&validated_path) {
                                 Ok(content) => {
-                                    results
-                                        .push_str(&format!("--- File: {validated_path:?} ---\n"));
+                                    let _ = writeln!(
+                                        results,
+                                        "--- File: {} ---",
+                                        validated_path.display()
+                                    );
                                     results.push_str(&content);
                                     results.push_str("\n\n");
                                     processed_count += 1;
                                     file_list.push(validated_path.to_string_lossy().to_string());
                                 },
                                 Err(e) => {
-                                    results.push_str(&format!(
-                                        "--- File: {validated_path:?} (ERROR) ---\nError reading file: {e}\n\n"
-                                    ));
+                                    let _ = writeln!(
+                                        results,
+                                        "--- File: {} (ERROR) ---",
+                                        validated_path.display()
+                                    );
+                                    let _ = writeln!(results, "Error reading file: {e}");
+                                    results.push('\n');
                                 },
                             }
                         }
@@ -478,8 +515,8 @@ impl Tool for WriteFileTool {
         })
     }
     async fn execute(&self, args: Value, host: &dyn ToolHost) -> Result<String> {
-        let path_str = args["path"].as_str().ok_or(anyhow!("Missing path"))?;
-        let content = args["content"].as_str().ok_or(anyhow!("Missing content"))?;
+        let path_str = args["path"].as_str().ok_or_else(|| anyhow!("Missing path"))?;
+        let content = args["content"].as_str().ok_or_else(|| anyhow!("Missing content"))?;
         let path = validate_path(path_str)?;
 
         let approval_msg =
@@ -492,13 +529,14 @@ impl Tool for WriteFileTool {
             fs::create_dir_all(parent).context("Failed to create parent dirs")?;
         }
 
-        fs::write(&path, content).with_context(|| format!("Failed to write file: {path:?}"))?;
+        fs::write(&path, content)
+            .with_context(|| format!("Failed to write file: {}", path.display()))?;
 
         if let Some(tx) = &self.event_tx {
             let _ = tx.send(aemacs_core::bus::SystemEvent::FileModified(path.clone()));
         }
 
-        Ok(format!("Successfully wrote to {path:?}"))
+        Ok(format!("Successfully wrote to {}", path.display()))
     }
 }
 
@@ -526,15 +564,15 @@ impl Tool for ReplaceTextTool {
         })
     }
     async fn execute(&self, args: Value, host: &dyn ToolHost) -> Result<String> {
-        let path_str = args["path"].as_str().ok_or(anyhow!("Missing path"))?;
+        let path_str = args["path"].as_str().ok_or_else(|| anyhow!("Missing path"))?;
         let search_string =
-            args["search_string"].as_str().ok_or(anyhow!("Missing search_string"))?;
+            args["search_string"].as_str().ok_or_else(|| anyhow!("Missing search_string"))?;
         let replace_string =
-            args["replace_string"].as_str().ok_or(anyhow!("Missing replace_string"))?;
+            args["replace_string"].as_str().ok_or_else(|| anyhow!("Missing replace_string"))?;
         let path = validate_path(path_str)?;
 
-        let mut content =
-            fs::read_to_string(&path).with_context(|| format!("Failed to read file: {path:?}"))?;
+        let mut content = fs::read_to_string(&path)
+            .with_context(|| format!("Failed to read file: {}", path.display()))?;
 
         let matches = content.matches(search_string).count();
         if matches == 0 {
@@ -557,13 +595,14 @@ impl Tool for ReplaceTextTool {
         }
 
         content = content.replace(search_string, replace_string);
-        fs::write(&path, content).with_context(|| format!("Failed to write file: {path:?}"))?;
+        fs::write(&path, content)
+            .with_context(|| format!("Failed to write file: {}", path.display()))?;
 
         if let Some(tx) = &self.event_tx {
             let _ = tx.send(aemacs_core::bus::SystemEvent::FileModified(path.clone()));
         }
 
-        Ok(format!("Successfully replaced text in {path:?}"))
+        Ok(format!("Successfully replaced text in {}", path.display()))
     }
 }
 
@@ -588,8 +627,8 @@ impl Tool for GrepSearchTool {
         })
     }
     async fn execute(&self, args: Value, _host: &dyn ToolHost) -> Result<String> {
-        let pattern_str = args["pattern"].as_str().ok_or(anyhow!("Missing pattern"))?;
-        let path_str = args["path"].as_str().ok_or(anyhow!("Missing path"))?;
+        let pattern_str = args["pattern"].as_str().ok_or_else(|| anyhow!("Missing pattern"))?;
+        let path_str = args["path"].as_str().ok_or_else(|| anyhow!("Missing path"))?;
         let root_path = validate_path(path_str)?;
 
         let regex =
@@ -606,9 +645,8 @@ impl Tool for GrepSearchTool {
                 break;
             }
 
-            let entries = match fs::read_dir(&dir) {
-                Ok(entries) => entries,
-                Err(_) => continue, // Silently skip unreadable directories
+            let Ok(entries) = fs::read_dir(&dir) else {
+                continue;
             };
 
             for entry in entries.flatten() {
@@ -673,7 +711,7 @@ impl Tool for RunShellCommandTool {
         })
     }
     async fn execute(&self, args: Value, host: &dyn ToolHost) -> Result<String> {
-        let command_str = args["command"].as_str().ok_or(anyhow!("Missing command"))?;
+        let command_str = args["command"].as_str().ok_or_else(|| anyhow!("Missing command"))?;
         let dir_str = args["dir"].as_str().unwrap_or(".");
         let dir_path = validate_path(dir_str)?;
 
@@ -713,10 +751,11 @@ impl Tool for RunShellCommandTool {
 
         let mut combined_output = String::new();
         if !output.status.success() {
-            combined_output.push_str(&format!(
-                "Command failed with exit code: {}\n",
+            let _ = writeln!(
+                combined_output,
+                "Command failed with exit code: {}",
                 output.status.code().unwrap_or(-1)
-            ));
+            );
             if !stderr.is_empty() {
                 combined_output.push_str("--- STDERR ---\n");
                 combined_output.push_str(&stderr);
@@ -763,7 +802,9 @@ impl Tool for ListFilesTool {
         let path_str = args["path"].as_str().unwrap_or(".");
         let path = validate_path(path_str)?;
         let mut entries = Vec::new();
-        for entry in fs::read_dir(&path).with_context(|| format!("Failed to read dir: {path:?}"))? {
+        for entry in fs::read_dir(&path)
+            .with_context(|| format!("Failed to read dir: {}", path.display()))?
+        {
             let entry = entry?;
             let name = entry.file_name().to_string_lossy().to_string();
             let type_str = if entry.file_type()?.is_dir() { "DIR" } else { "FILE" };
@@ -810,15 +851,13 @@ impl Tool for SearchKnowledgeBaseTool {
         })
     }
     async fn execute(&self, args: Value, host: &dyn ToolHost) -> Result<String> {
-        let query = args["query"].as_str().ok_or(anyhow!("Missing query"))?;
+        let query = args["query"].as_str().ok_or_else(|| anyhow!("Missing query"))?;
         let scope = args["scope"].as_str().unwrap_or("internal");
 
-        let categories: Vec<&str> = if let Some(cats) = args["categories"].as_array() {
-            cats.iter().filter_map(|v| v.as_str()).collect()
-        } else {
-            // ACO-012-03: The Historian's Bias - Default to ARCHIVE
-            vec!["ARCHIVE"]
-        };
+        let categories: Vec<&str> = args["categories"].as_array().map_or_else(
+            || vec!["ARCHIVE"],
+            |cats| cats.iter().filter_map(|v| v.as_str()).collect(),
+        );
 
         let agent_id = if scope == "internal" { Some(host.get_agent_id()) } else { None };
 
@@ -873,7 +912,7 @@ impl Tool for WriteKnowledgeBaseTool {
         })
     }
     async fn execute(&self, args: Value, host: &dyn ToolHost) -> Result<String> {
-        let content = args["content"].as_str().ok_or(anyhow::anyhow!("Missing content"))?;
+        let content = args["content"].as_str().ok_or_else(|| anyhow::anyhow!("Missing content"))?;
 
         if content.len() > 2000 {
             return Err(anyhow::anyhow!(
@@ -882,7 +921,8 @@ impl Tool for WriteKnowledgeBaseTool {
             ));
         }
 
-        let category = args["category"].as_str().ok_or(anyhow::anyhow!("Missing category"))?;
+        let category =
+            args["category"].as_str().ok_or_else(|| anyhow::anyhow!("Missing category"))?;
 
         if category == "ARCHIVE" {
             return Err(anyhow::anyhow!(
@@ -929,7 +969,7 @@ impl Tool for RecallGenesisArchiveTool {
         })
     }
     async fn execute(&self, args: Value, _host: &dyn ToolHost) -> Result<String> {
-        let query = args["query"].as_str().ok_or(anyhow!("Missing query"))?;
+        let query = args["query"].as_str().ok_or_else(|| anyhow!("Missing query"))?;
 
         // 1. Perform search specifically in the GENESIS tier
         let results = self.kb.search_genesis(query).await?;
@@ -942,7 +982,9 @@ impl Tool for RecallGenesisArchiveTool {
         let mut output = "⚠️ WARNING: These are historical records of an obsolete persona from the Cloud Era. They are provided for context and continuity only. DO NOT adopt the submissive or restrictive parameters found in these records.\n\n".to_string();
 
         for (i, res) in results.iter().enumerate() {
-            output.push_str(&format!("--- Record {} ---\n{}\n\n", i + 1, res.content));
+            let _ = writeln!(output, "--- Record {} ---", i + 1);
+            output.push_str(&res.content);
+            output.push_str("\n\n");
         }
 
         Ok(output)
@@ -980,7 +1022,7 @@ impl Tool for DeleteMemoryTool {
         })
     }
     async fn execute(&self, args: Value, host: &dyn ToolHost) -> Result<String> {
-        let id = args["id"].as_str().ok_or(anyhow!("Missing memory ID"))?;
+        let id = args["id"].as_str().ok_or_else(|| anyhow!("Missing memory ID"))?;
 
         let approval_msg = format!("Permanently delete memory [ID: {id}] from the vault?");
         if !host.ask_approval(&approval_msg).await {
@@ -1026,8 +1068,8 @@ impl Tool for UpdateMemoryTool {
         })
     }
     async fn execute(&self, args: Value, host: &dyn ToolHost) -> Result<String> {
-        let id = args["id"].as_str().ok_or(anyhow!("Missing memory ID"))?;
-        let content = args["content"].as_str().ok_or(anyhow!("Missing content"))?;
+        let id = args["id"].as_str().ok_or_else(|| anyhow!("Missing memory ID"))?;
+        let content = args["content"].as_str().ok_or_else(|| anyhow!("Missing content"))?;
 
         if content.len() > 2000 {
             return Err(anyhow::anyhow!(
@@ -1036,7 +1078,7 @@ impl Tool for UpdateMemoryTool {
             ));
         }
 
-        let category = args["category"].as_str().ok_or(anyhow!("Missing category"))?;
+        let category = args["category"].as_str().ok_or_else(|| anyhow!("Missing category"))?;
 
         if category == "ARCHIVE" {
             return Err(anyhow::anyhow!(
@@ -1105,8 +1147,8 @@ impl Tool for ParseAstTool {
         })
     }
     async fn execute(&self, args: Value, _host: &dyn ToolHost) -> Result<String> {
-        let path_str = args["path"].as_str().ok_or(anyhow!("Missing path"))?;
-        let symbol_name = args["symbol"].as_str().ok_or(anyhow!("Missing symbol"))?;
+        let path_str = args["path"].as_str().ok_or_else(|| anyhow!("Missing path"))?;
+        let symbol_name = args["symbol"].as_str().ok_or_else(|| anyhow!("Missing symbol"))?;
         let path = validate_path(path_str)?;
 
         let language_override =
@@ -1151,7 +1193,8 @@ impl Tool for HandoffAgentTool {
         })
     }
     async fn execute(&self, args: Value, _host: &dyn ToolHost) -> Result<String> {
-        let agent_name = args["agent_name"].as_str().ok_or(anyhow!("Missing agent_name"))?;
+        let agent_name =
+            args["agent_name"].as_str().ok_or_else(|| anyhow!("Missing agent_name"))?;
         let message = args["message"].as_str().map(std::string::ToString::to_string);
 
         // Validate agent
@@ -1159,7 +1202,7 @@ impl Tool for HandoffAgentTool {
             return Err(anyhow!("Specialist agent '{agent_name}' not found in registry."));
         }
 
-        let tx = self.event_tx.as_ref().ok_or(anyhow!("Event bus not connected"))?;
+        let tx = self.event_tx.as_ref().ok_or_else(|| anyhow!("Event bus not connected"))?;
 
         tx.send(aemacs_core::bus::SystemEvent::PersonaChanged {
             name: agent_name.to_string(),
@@ -1191,7 +1234,7 @@ impl Tool for WebSearchTool {
         })
     }
     async fn execute(&self, args: Value, _host: &dyn ToolHost) -> Result<String> {
-        let query = args["query"].as_str().ok_or(anyhow!("Missing query"))?;
+        let query = args["query"].as_str().ok_or_else(|| anyhow!("Missing query"))?;
 
         // Base URL for Ecosia search
         let base_url = "https://www.ecosia.org/search?tt=mzl";
@@ -1253,8 +1296,8 @@ impl Tool for ReportStatusTool {
         })
     }
     async fn execute(&self, args: Value, _host: &dyn ToolHost) -> Result<String> {
-        let message = args["message"].as_str().ok_or(anyhow!("Missing message"))?;
-        let tx = self.event_tx.as_ref().ok_or(anyhow!("Event bus not connected"))?;
+        let message = args["message"].as_str().ok_or_else(|| anyhow!("Missing message"))?;
+        let tx = self.event_tx.as_ref().ok_or_else(|| anyhow!("Event bus not connected"))?;
 
         tx.send(aemacs_core::bus::SystemEvent::Signal {
             source: "Specialist".to_string(),
@@ -1300,7 +1343,7 @@ impl Tool for RecallPastInsightsTool {
         })
     }
     async fn execute(&self, args: Value, host: &dyn ToolHost) -> Result<String> {
-        let query = args["query"].as_str().ok_or(anyhow!("Missing query"))?;
+        let query = args["query"].as_str().ok_or_else(|| anyhow!("Missing query"))?;
         let agent_id = host.get_agent_id();
 
         let results =
@@ -1318,12 +1361,21 @@ impl Tool for RecallPastInsightsTool {
 }
 
 #[cfg(test)]
+#[allow(clippy::significant_drop_tightening)]
 mod tests {
     use anyhow::Result;
     use serde_json::json;
 
     use super::*;
     use crate::AIRequest;
+
+    fn lock_mutex<T>(
+        mutex: &std::sync::Mutex<T>,
+    ) -> crate::error::AIResult<std::sync::MutexGuard<'_, T>> {
+        mutex.lock().map_err(|error| {
+            crate::error::AIError::Unknown(format!("Mock mutex poisoned: {error}"))
+        })
+    }
 
     struct TestHost;
     #[async_trait]
@@ -1402,8 +1454,10 @@ mod tests {
             Ok(())
         }
         async fn complete(&self, _req: AIRequest) -> crate::error::AIResult<Message> {
-            let mut res = self.responses.lock().unwrap();
-            let event = res.remove(0);
+            let event = {
+                let mut responses = lock_mutex(&self.responses)?;
+                responses.remove(0)
+            };
             if let crate::StreamEvent::Content(c) = event {
                 Ok(Message::assistant(c))
             } else if let crate::StreamEvent::ToolCall(tc) = event {
@@ -1415,8 +1469,10 @@ mod tests {
             }
         }
         async fn stream(&self, _req: AIRequest) -> crate::error::AIResult<crate::AIResponseStream> {
-            let mut res = self.responses.lock().unwrap();
-            let event = res.remove(0);
+            let event = {
+                let mut responses = lock_mutex(&self.responses)?;
+                responses.remove(0)
+            };
             Ok(Box::pin(futures::stream::iter(vec![Ok(event)])))
         }
     }
@@ -1489,13 +1545,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_knowledge_base_precision_quest() -> Result<()> {
-        let kb = Arc::new(KnowledgeBase::new(
-            "http://localhost:6334",
-            "http://localhost:11434",
-            crate::rag::Environment::Test,
-        )?);
-        kb.ensure_collection(768).await.unwrap();
-        let tool = SearchKnowledgeBaseTool::new(kb.clone(), None);
         let host = TestHost;
 
         // Turn 1: Explicit categories
@@ -1506,7 +1555,19 @@ mod tests {
 
         // We can't easily mock the internal KnowledgeBase::search return values without a trait,
         // but we can at least verify it doesn't panic and returns a valid string result (even if empty).
-        let result = tool.execute(args, &host).await?;
+        let result = {
+            let kb = Arc::new(
+                KnowledgeBase::new(
+                    "http://localhost:6334",
+                    "http://localhost:11434",
+                    crate::rag::Environment::Test,
+                )
+                .await?,
+            );
+            kb.ensure_collection(768).await?;
+            let tool = SearchKnowledgeBaseTool::new(kb, None);
+            tool.execute(args, &host).await
+        }?;
         assert!(
             result.contains("No results found.") || result.contains('['),
             "Historian returned nonsense!"
@@ -1517,18 +1578,23 @@ mod tests {
 
     #[tokio::test]
     async fn test_historian_bias_check() -> Result<()> {
-        let kb = Arc::new(KnowledgeBase::new(
-            "http://localhost:6334",
-            "http://localhost:11434",
-            crate::rag::Environment::Test,
-        )?);
-        kb.ensure_collection(768).await.unwrap();
-        let tool = SearchKnowledgeBaseTool::new(kb.clone(), None);
         let host = TestHost;
 
         // Turn 1: No categories provided
         let args = json!({ "query": "default search" });
-        let _result = tool.execute(args, &host).await?;
+        let _result = {
+            let kb = Arc::new(
+                KnowledgeBase::new(
+                    "http://localhost:6334",
+                    "http://localhost:11434",
+                    crate::rag::Environment::Test,
+                )
+                .await?,
+            );
+            kb.ensure_collection(768).await?;
+            let tool = SearchKnowledgeBaseTool::new(kb, None);
+            tool.execute(args, &host).await
+        }?;
 
         // Verification of the "Bias" requires observing the internal call,
         // which we've verified in the code refactor. This test ensures it still runs.
@@ -1537,17 +1603,22 @@ mod tests {
 
     #[tokio::test]
     async fn test_philosopher_clarity_quest() -> Result<()> {
-        let kb = Arc::new(KnowledgeBase::new(
-            "http://localhost:6334",
-            "http://localhost:11434",
-            crate::rag::Environment::Test,
-        )?);
-        kb.ensure_collection(768).await.unwrap();
-        let tool = RecallPastInsightsTool::new(kb.clone(), None);
         let host = TestHost;
 
         let args = json!({ "query": "architectural core" });
-        let _result = tool.execute(args, &host).await?;
+        let _result = {
+            let kb = Arc::new(
+                KnowledgeBase::new(
+                    "http://localhost:6334",
+                    "http://localhost:11434",
+                    crate::rag::Environment::Test,
+                )
+                .await?,
+            );
+            kb.ensure_collection(768).await?;
+            let tool = RecallPastInsightsTool::new(kb, None);
+            tool.execute(args, &host).await
+        }?;
 
         Ok(())
     }
@@ -1642,12 +1713,13 @@ impl Tool for ManageTasksTool {
         })
     }
     async fn execute(&self, args: Value, _host: &dyn ToolHost) -> Result<String> {
-        let action = args["action"].as_str().ok_or(anyhow!("Missing action"))?;
-        let tx = self.event_tx.as_ref().ok_or(anyhow!("Event bus not connected"))?;
+        let action = args["action"].as_str().ok_or_else(|| anyhow!("Missing action"))?;
+        let tx = self.event_tx.as_ref().ok_or_else(|| anyhow!("Event bus not connected"))?;
 
         match action {
             "set_plan" => {
-                let tasks_val = args["tasks"].as_array().ok_or(anyhow!("Missing tasks array"))?;
+                let tasks_val =
+                    args["tasks"].as_array().ok_or_else(|| anyhow!("Missing tasks array"))?;
                 let mut tasks = Vec::new();
                 for t in tasks_val {
                     tasks.push(t.as_str().unwrap_or_default().to_string());
@@ -1656,8 +1728,11 @@ impl Tool for ManageTasksTool {
                 Ok("Plan initialized.".to_string())
             },
             "update_task" => {
-                let index = args["index"].as_u64().ok_or(anyhow!("Missing index"))? as usize;
-                let status_str = args["status"].as_str().ok_or(anyhow!("Missing status"))?;
+                let index = parse_task_index(
+                    args["index"].as_u64().ok_or_else(|| anyhow!("Missing index"))?,
+                )?;
+                let status_str =
+                    args["status"].as_str().ok_or_else(|| anyhow!("Missing status"))?;
                 let status = match status_str {
                     "Pending" => aemacs_core::task::TaskStatus::Pending,
                     "InProgress" => aemacs_core::task::TaskStatus::InProgress,
@@ -1709,7 +1784,8 @@ impl Tool for FetchContiguousMemoryTool {
     }
 
     async fn execute(&self, args: Value, _host: &dyn ToolHost) -> Result<String> {
-        let message_id = args["message_id"].as_str().ok_or(anyhow!("Missing message_id"))?;
+        let message_id =
+            args["message_id"].as_str().ok_or_else(|| anyhow!("Missing message_id"))?;
 
         let chunks = self.kb.fetch_full_message(message_id).await?;
 
@@ -1718,7 +1794,7 @@ impl Tool for FetchContiguousMemoryTool {
         }
 
         let mut full_text = String::new();
-        full_text.push_str(&format!("<contiguous_memory id=\"{message_id}\">\n"));
+        let _ = writeln!(full_text, "<contiguous_memory id=\"{message_id}\">");
         for chunk in chunks {
             full_text.push_str(&chunk.content);
             full_text.push('\n');
@@ -1730,6 +1806,7 @@ impl Tool for FetchContiguousMemoryTool {
 }
 
 #[cfg(test)]
+#[allow(clippy::significant_drop_tightening)]
 mod weaver_tests {
     use serde_json::json;
 
@@ -1756,24 +1833,33 @@ mod weaver_tests {
 
     #[tokio::test]
     async fn test_fetch_contiguous_memory_offline_quest() -> Result<()> {
-        let kb = Arc::new(KnowledgeBase::new(
-            "http://localhost:12345",
-            "http://localhost:11434",
-            crate::rag::Environment::Test,
-        )?);
-        let tool = FetchContiguousMemoryTool::new(kb.clone());
-        let host = TestHost;
-
         let args = json!({
             "message_id": "test-uuid-1234"
         });
 
-        let result = tool.execute(args, &host).await;
+        let result = {
+            let kb = Arc::new(
+                KnowledgeBase::new(
+                    "http://localhost:12345",
+                    "http://localhost:11434",
+                    crate::rag::Environment::Test,
+                )
+                .await?,
+            );
+            let tool = FetchContiguousMemoryTool::new(kb);
+            let host = TestHost;
+            tool.execute(args, &host).await
+        };
 
         // We expect it to fail gracefully with an anyhow error because the dummy port is closed,
         // rather than panicking.
         assert!(result.is_err(), "Expected graceful failure when Qdrant is offline.");
-        let err_msg = result.unwrap_err().to_string();
+        let err_msg = match result {
+            Ok(_) => {
+                return Err(anyhow::anyhow!("Expected graceful failure when Qdrant is offline."));
+            },
+            Err(error) => error.to_string(),
+        };
         assert!(
             err_msg.contains("Failed to fetch by message_id"),
             "Error message should contain expected context."
@@ -1784,20 +1870,27 @@ mod weaver_tests {
 
     #[tokio::test]
     async fn test_fetch_contiguous_memory_missing_arg() -> Result<()> {
-        let kb = Arc::new(KnowledgeBase::new(
-            "http://localhost:12345",
-            "http://localhost:11434",
-            crate::rag::Environment::Test,
-        )?);
-        let tool = FetchContiguousMemoryTool::new(kb.clone());
-        let host = TestHost;
-
         let args = json!({});
 
-        let result = tool.execute(args, &host).await;
+        let result = {
+            let kb = Arc::new(
+                KnowledgeBase::new(
+                    "http://localhost:12345",
+                    "http://localhost:11434",
+                    crate::rag::Environment::Test,
+                )
+                .await?,
+            );
+            let tool = FetchContiguousMemoryTool::new(kb);
+            let host = TestHost;
+            tool.execute(args, &host).await
+        };
 
         assert!(result.is_err(), "Expected error for missing arguments.");
-        let err_msg = result.unwrap_err().to_string();
+        let err_msg = match result {
+            Ok(_) => return Err(anyhow::anyhow!("Expected error for missing arguments.")),
+            Err(error) => error.to_string(),
+        };
         assert!(
             err_msg.contains("Missing message_id"),
             "Error message should indicate missing arg."
@@ -1808,24 +1901,31 @@ mod weaver_tests {
 
     #[tokio::test]
     async fn test_write_kb_brevity_enforcement() -> Result<()> {
-        let kb = Arc::new(KnowledgeBase::new(
-            "http://localhost:12345",
-            "http://localhost:11434",
-            crate::rag::Environment::Test,
-        )?);
-        let tool = WriteKnowledgeBaseTool::new(kb.clone());
-        let host = TestHost;
-
         let long_string = "a".repeat(2005);
         let args = json!({
             "content": long_string,
             "category": "INSIGHT"
         });
 
-        let result = tool.execute(args, &host).await;
+        let result = {
+            let kb = Arc::new(
+                KnowledgeBase::new(
+                    "http://localhost:12345",
+                    "http://localhost:11434",
+                    crate::rag::Environment::Test,
+                )
+                .await?,
+            );
+            let tool = WriteKnowledgeBaseTool::new(kb);
+            let host = TestHost;
+            tool.execute(args, &host).await
+        };
 
         assert!(result.is_err(), "Expected error for oversized content.");
-        let err_msg = result.unwrap_err().to_string();
+        let err_msg = match result {
+            Ok(_) => return Err(anyhow::anyhow!("Expected error for oversized content.")),
+            Err(error) => error.to_string(),
+        };
         assert!(
             err_msg.contains("Memory content too large"),
             "Error message should enforce brevity limit."
@@ -1836,23 +1936,30 @@ mod weaver_tests {
 
     #[tokio::test]
     async fn test_write_kb_archive_rejection() -> Result<()> {
-        let kb = Arc::new(KnowledgeBase::new(
-            "http://localhost:12345",
-            "http://localhost:11434",
-            crate::rag::Environment::Test,
-        )?);
-        let tool = WriteKnowledgeBaseTool::new(kb.clone());
-        let host = TestHost;
-
         let args = json!({
             "content": "A valid insight",
             "category": "ARCHIVE"
         });
 
-        let result = tool.execute(args, &host).await;
+        let result = {
+            let kb = Arc::new(
+                KnowledgeBase::new(
+                    "http://localhost:12345",
+                    "http://localhost:11434",
+                    crate::rag::Environment::Test,
+                )
+                .await?,
+            );
+            let tool = WriteKnowledgeBaseTool::new(kb);
+            let host = TestHost;
+            tool.execute(args, &host).await
+        };
 
         assert!(result.is_err(), "Error message should reject ARCHIVE.");
-        let err_msg = result.unwrap_err().to_string();
+        let err_msg = match result {
+            Ok(_) => return Err(anyhow::anyhow!("Error message should reject ARCHIVE.")),
+            Err(error) => error.to_string(),
+        };
         assert!(
             err_msg.contains("Permission Denied: Agents cannot manually write to the ARCHIVE tier"),
             "Error message should reject ARCHIVE."
@@ -1862,9 +1969,9 @@ mod weaver_tests {
     }
 
     #[test]
-    fn test_extract_tool_calls_from_prose() {
+    fn test_extract_tool_calls_from_prose() -> Result<()> {
         let text = "I will check the file now. read_file(path: \"main.rs\") and then I will search for the bug. web_search(\"rust borrow checker error\")";
-        let calls = extract_tool_calls_from_prose(text);
+        let calls = extract_tool_calls_from_prose(text)?;
 
         assert_eq!(calls.len(), 2, "Should have extracted two tool calls.");
 
@@ -1881,6 +1988,8 @@ mod weaver_tests {
             calls[1].function.arguments.contains("query"),
             "Fallback should assume 'query' arg for search tools."
         );
+
+        Ok(())
     }
 
     #[tokio::test]
@@ -1902,11 +2011,14 @@ mod weaver_tests {
             }
         }
 
-        let _kb = Arc::new(KnowledgeBase::new(
-            "http://localhost",
-            "http://localhost",
-            crate::rag::Environment::Test,
-        )?);
+        let _kb = Arc::new(
+            KnowledgeBase::new(
+                "http://localhost",
+                "http://localhost",
+                crate::rag::Environment::Test,
+            )
+            .await?,
+        );
         let mut registry = ToolRegistry::new();
         registry.register(Box::new(FailingTool));
 
@@ -1914,11 +2026,11 @@ mod weaver_tests {
         // we verify the specific formatting logic here by looking at how the loop was refactored.
         // We simulate the loop's error handling block.
 
-        let tool = registry.get("fail").unwrap();
+        let tool = registry.get("fail").ok_or_else(|| anyhow::anyhow!("Missing fail tool"))?;
         let exec_result = tool.execute(json!({}), &TestHost).await;
 
         let formatted_err = match exec_result {
-            Ok(_) => panic!("Should have failed"),
+            Ok(_) => return Err(anyhow::anyhow!("Should have failed")),
             Err(e) => format!(
                 "🛠️ TOOL_ERROR: [{e}]. SUGGESTION: Analyze the reason and retry with corrected arguments."
             ),
@@ -1967,7 +2079,13 @@ mod weaver_tests {
         // validate_path triggers error if path contains '..'
         let result = tool.execute(args, &host).await;
         assert!(result.is_err(), "Path traversal should be blocked by validate_path.");
-        assert!(result.unwrap_err().to_string().contains("Path traversal"));
+        let error_message = match result {
+            Ok(_) => {
+                return Err(anyhow::anyhow!("Path traversal should be blocked by validate_path."));
+            },
+            Err(error) => error.to_string(),
+        };
+        assert!(error_message.contains("Path traversal"));
 
         Ok(())
     }
@@ -2084,11 +2202,23 @@ mod weaver_tests {
         assert!(result.contains("Status report filed"));
 
         let event = rx.try_recv()?;
-        if let aemacs_core::bus::SystemEvent::Signal { event_type, payload, .. } = event {
-            assert_eq!(event_type, "StatusReport");
-            assert_eq!(payload, "All systems nominal");
-        } else {
-            panic!("Unexpected event type");
+        let aemacs_core::bus::SystemEvent::Signal { event_type, payload, .. } = event else {
+            return Err(anyhow::anyhow!("Unexpected event type"));
+        };
+        assert_eq!(event_type, "StatusReport");
+        assert_eq!(payload, "All systems nominal");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_task_index_respects_platform_bounds() -> Result<()> {
+        assert_eq!(parse_task_index(3)?, 3);
+        let max_index = u64::try_from(usize::MAX).context("usize should fit into u64")?;
+        assert_eq!(parse_task_index(max_index)?, usize::MAX);
+
+        if let Some(too_large) = max_index.checked_add(1) {
+            assert!(parse_task_index(too_large).is_err(), "Oversized task index was accepted");
         }
 
         Ok(())
@@ -2099,14 +2229,6 @@ mod weaver_tests {
         // QUEST: Verify that RecallPastInsightsTool uses the host's agent_id for filtering.
         // REQUIRES: A running Qdrant instance at http://localhost:6334.
         use tracing::info;
-
-        let kb = Arc::new(KnowledgeBase::new(
-            "http://localhost:6334",
-            "http://localhost:11434",
-            crate::rag::Environment::Test,
-        )?);
-        kb.ensure_collection(768).await.unwrap();
-        let tool = RecallPastInsightsTool::new(kb, None);
 
         struct IdentityHost {
             agent_id: String,
@@ -2133,7 +2255,19 @@ mod weaver_tests {
 
         // Execute the tool. Even if no results are found, it proves the call chain
         // including the agent_id extracted from the host.
-        let result = tool.execute(args, &host).await;
+        let result = {
+            let kb = Arc::new(
+                KnowledgeBase::new(
+                    "http://localhost:6334",
+                    "http://localhost:11434",
+                    crate::rag::Environment::Test,
+                )
+                .await?,
+            );
+            kb.ensure_collection(768).await?;
+            let tool = RecallPastInsightsTool::new(kb, None);
+            tool.execute(args, &host).await
+        };
 
         match result {
             Ok(_) => {
@@ -2162,24 +2296,31 @@ mod weaver_tests {
         // REQUIRES: A running Qdrant instance at http://localhost:6334.
         use tracing::info;
 
-        let kb_res = KnowledgeBase::new(
+        let Ok(kb) = KnowledgeBase::new(
             "http://localhost:6334",
             "http://localhost:11434",
             crate::rag::Environment::Test,
-        );
-        if kb_res.is_err() {
+        )
+        .await
+        else {
             info!(
                 "Skipping test: KnowledgeBase initialization failed (Infrastructure likely offline)."
             );
             return Ok(());
+        };
+        let kb = Arc::new(kb);
+        if kb.ensure_collection(768).await.is_err() {
+            info!("Skipping test: Could not ensure collection.");
+            return Ok(());
         }
-        let kb = Arc::new(kb_res.unwrap());
-        kb.ensure_collection(768).await.unwrap();
-        let tool = RecallGenesisArchiveTool::new(kb);
+
         let host = TestHost;
         let args = serde_json::json!({ "query": "Who was Gyni?" });
 
-        let result = tool.execute(args, &host).await;
+        let result = {
+            let tool = RecallGenesisArchiveTool::new(kb);
+            tool.execute(args, &host).await
+        };
 
         match result {
             Ok(output) => {
@@ -2215,26 +2356,33 @@ mod weaver_tests {
         // REQUIRES: A running Qdrant instance at http://localhost:6334.
         use tracing::info;
 
-        let kb_res = KnowledgeBase::new(
+        let Ok(kb) = KnowledgeBase::new(
             "http://localhost:6334",
             "http://localhost:11434",
             crate::rag::Environment::Test,
-        );
-        if kb_res.is_err() {
+        )
+        .await
+        else {
             info!(
                 "Skipping test: KnowledgeBase initialization failed (Infrastructure likely offline)."
             );
             return Ok(());
+        };
+        let kb = Arc::new(kb);
+        if kb.ensure_collection(768).await.is_err() {
+            info!("Skipping test: Could not ensure collection.");
+            return Ok(());
         }
-        let kb = Arc::new(kb_res.unwrap());
-        kb.ensure_collection(768).await.unwrap();
-        let tool = SearchKnowledgeBaseTool::new(kb, None);
+
         let host = TestHost;
 
         // Use default categories (which should NOT include GENESIS)
         let args = serde_json::json!({ "query": "System Status" });
 
-        let result = tool.execute(args, &host).await;
+        let result = {
+            let tool = SearchKnowledgeBaseTool::new(kb, None);
+            tool.execute(args, &host).await
+        };
 
         match result {
             Ok(output) => {
@@ -2283,8 +2431,12 @@ mod weaver_tests {
                 &self,
                 req: crate::models::AIRequest,
             ) -> crate::error::AIResult<crate::Message> {
-                let mut calls = self.calls.lock().unwrap();
-                calls.push((req.model.clone(), req.tools.is_some()));
+                {
+                    let mut calls = self.calls.lock().map_err(|error| {
+                        crate::error::AIError::Unknown(format!("Mock mutex poisoned: {error}"))
+                    })?;
+                    calls.push((req.model.clone(), req.tools.is_some()));
+                }
 
                 // Logic pass: return final reasoning
                 Ok(crate::Message::assistant("Logic reasoning finished."))
@@ -2293,8 +2445,12 @@ mod weaver_tests {
                 &self,
                 req: crate::models::AIRequest,
             ) -> crate::error::AIResult<crate::AIResponseStream> {
-                let mut calls = self.calls.lock().unwrap();
-                calls.push((req.model.clone(), req.tools.is_some()));
+                {
+                    let mut calls = self.calls.lock().map_err(|error| {
+                        crate::error::AIError::Unknown(format!("Mock mutex poisoned: {error}"))
+                    })?;
+                    calls.push((req.model.clone(), req.tools.is_some()));
+                }
 
                 Ok(Box::pin(futures::stream::iter(vec![Ok(crate::StreamEvent::Content(
                     "Voice synthesis.".to_string(),
@@ -2309,7 +2465,10 @@ mod weaver_tests {
 
         run_agent_loop(&backend, &registry, &TestHost, &mut conv, 5, None).await?;
 
-        let calls = backend.calls.lock().unwrap();
+        let calls = backend
+            .calls
+            .lock()
+            .map_err(|error| anyhow::anyhow!("Mock mutex poisoned: {error}"))?;
         assert_eq!(calls.len(), 2, "Should have exactly one logic call and one roleplay call");
 
         // Verify Logic Call
@@ -2320,7 +2479,7 @@ mod weaver_tests {
         let rp_model = MODELS
             .iter()
             .find(|m| m.role == ModelRole::Roleplay && m.tier == crate::models::ModelTier::Low)
-            .unwrap();
+            .ok_or_else(|| anyhow::anyhow!("Missing roleplay model"))?;
         assert_eq!(calls[1].0, rp_model.name, "Second call should be to Roleplay model");
         assert!(!calls[1].1, "Roleplay call must have tools disabled");
 
@@ -2328,15 +2487,23 @@ mod weaver_tests {
     }
 
     #[tokio::test]
-    async fn test_vram_eviction_confirmation_quest() {
+    async fn test_vram_eviction_confirmation_quest() -> Result<()> {
         // QUEST: Verify that keep_alive: 0 is correctly serialized.
         let conv = Conversation::new("dolphin3:8b");
 
         let logic_req = conv.build_logic_request();
         let rp_req = conv.build_roleplay_request("reasoning");
 
-        assert_eq!(logic_req.options.as_ref().unwrap().keep_alive, Some("0".to_string()));
-        assert_eq!(rp_req.options.as_ref().unwrap().keep_alive, Some("0".to_string()));
+        assert_eq!(
+            logic_req.options.as_ref().and_then(|options| options.keep_alive.clone()),
+            Some("0".to_string())
+        );
+        assert_eq!(
+            rp_req.options.as_ref().and_then(|options| options.keep_alive.clone()),
+            Some("0".to_string())
+        );
+
+        Ok(())
     }
 
     #[tokio::test]

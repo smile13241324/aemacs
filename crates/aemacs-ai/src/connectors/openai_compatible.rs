@@ -20,14 +20,14 @@ pub struct OpenAICompatibleBackend {
     /// The base URL of the API (e.g., <http://localhost:11434/v1>).
     base_url: String,
     /// Optional API key for authenticated requests.
-    _api_key: Option<String>,
+    api_key: Option<String>,
 }
 
 impl std::fmt::Debug for OpenAICompatibleBackend {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("OpenAICompatibleBackend")
             .field("base_url", &self.base_url)
-            .field("_api_key", &self._api_key)
+            .field("has_api_key", &self.api_key.is_some())
             .field("client", &"reqwest::Client")
             .finish()
     }
@@ -35,12 +35,19 @@ impl std::fmt::Debug for OpenAICompatibleBackend {
 
 impl OpenAICompatibleBackend {
     /// Initializes a new `OpenAICompatibleBackend`.
-    pub fn new(base_url: impl Into<String>, api_key: Option<String>) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error if the API key cannot be encoded as an HTTP header or if the HTTP client
+    /// cannot be constructed.
+    pub fn new(base_url: impl Into<String>, api_key: Option<String>) -> AIResult<Self> {
+        let base_url = base_url.into();
         let mut headers = header::HeaderMap::new();
 
         if let Some(key) = &api_key {
-            let mut auth_value = header::HeaderValue::from_str(&format!("Bearer {key}"))
-                .expect("Invalid API Key chars");
+            let mut auth_value =
+                header::HeaderValue::from_str(&format!("Bearer {key}")).map_err(|error| {
+                    AIError::ConfigError(format!("Invalid API key characters: {error}"))
+                })?;
             auth_value.set_sensitive(true);
             headers.insert(header::AUTHORIZATION, auth_value);
         }
@@ -50,9 +57,11 @@ impl OpenAICompatibleBackend {
             .timeout(Duration::from_mins(5)) // ACO-007: 5-minute timeout
             .connect_timeout(Duration::from_secs(10)) // Snappy connection check
             .build()
-            .expect("Failed to build HTTP client");
+            .map_err(|error| {
+                AIError::ConfigError(format!("Failed to build HTTP client: {error}"))
+            })?;
 
-        Self { client, base_url: base_url.into(), _api_key: api_key }
+        Ok(Self { client, base_url, api_key })
     }
 
     /// Internal helper to construct the full completion URL.
@@ -149,7 +158,7 @@ impl AIBackend for OpenAICompatibleBackend {
             .into_iter()
             .next()
             .map(|c| c.message)
-            .ok_or(AIError::ParseError("No choices in response".to_string()))
+            .ok_or_else(|| AIError::ParseError("No choices in response".to_string()))
     }
 
     /// Sends a streaming request to the backend and returns a stream of tokens/events.
@@ -237,29 +246,25 @@ mod tests {
         let addr = listener.local_addr()?;
         let base_url = format!("http://{addr}");
 
-        tokio::spawn(async move {
-            let (mut socket, _) = listener.accept().await.unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await?;
             let mut buf = [0; 1024];
             let _ = tokio::io::AsyncReadExt::read(&mut socket, &mut buf).await;
 
             // Send a standard HTTP response
-            socket
-                .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n")
-                .await
-                .unwrap();
+            socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n").await?;
 
             // Part 1: Start of the line
-            socket.write_all(b"data: {\"choices\":[{\"d").await.unwrap();
+            socket.write_all(b"data: {\"choices\":[{\"d").await?;
             tokio::time::sleep(Duration::from_millis(50)).await;
 
             // Part 2: Rest of the line + [DONE] signal
-            socket
-                .write_all(b"elta\":{\"content\":\"Hello \"}}]}\n\ndata: [DONE]\n\n")
-                .await
-                .unwrap();
+            socket.write_all(b"elta\":{\"content\":\"Hello \"}}]}\n\ndata: [DONE]\n\n").await?;
+
+            Ok::<(), anyhow::Error>(())
         });
 
-        let backend = OpenAICompatibleBackend::new(base_url, None);
+        let backend = OpenAICompatibleBackend::new(base_url, None)?;
         let request = AIRequest::default();
         let mut stream = backend.stream(request).await?;
 
@@ -272,6 +277,8 @@ mod tests {
 
         assert_eq!(chunks.len(), 1, "The 'Streaming-Hydra' failed! Expected 1 content chunk.");
         assert_eq!(chunks[0], "Hello ", "Fragmented JSON was not correctly reassembled!");
+
+        server.await??;
 
         Ok(())
     }

@@ -85,9 +85,9 @@ async fn main() -> anyhow::Result<()> {
             let records = extract_legacy_files(files, agent_id, start_dt, *time_step_sec)?;
 
             println!(
-                "💾  [EXTRACT] Extracted {} records. Writing to {:?}...",
+                "💾  [EXTRACT] Extracted {} records. Writing to {}...",
                 records.len(),
-                output
+                output.display()
             );
 
             let mut out_file = std::fs::File::create(output)?;
@@ -106,13 +106,14 @@ async fn main() -> anyhow::Result<()> {
             let ollama_url = config.ollama_url.as_deref().unwrap_or("http://localhost:11434");
 
             let env = if *production { Environment::Production } else { Environment::Test };
-            let kb = Arc::new(KnowledgeBase::new(qdrant_url, ollama_url, env)?);
+            let kb = Arc::new(KnowledgeBase::new(qdrant_url, ollama_url, env).await?);
 
             // Ensure collection exists (default dim 768 for nomic)
             kb.ensure_collection(768).await?;
 
-            println!("📥  [IMPORT] Ingesting {file:?}...");
+            println!("📥  [IMPORT] Ingesting {}...", file.display());
             import_jsonl(&kb, file).await?;
+            drop(kb);
             println!("✅  [IMPORT] Done.");
         },
         Commands::Export { agent_id, output, production } => {
@@ -122,10 +123,11 @@ async fn main() -> anyhow::Result<()> {
             let ollama_url = config.ollama_url.as_deref().unwrap_or("http://localhost:11434");
 
             let env = if *production { Environment::Production } else { Environment::Test };
-            let kb = Arc::new(KnowledgeBase::new(qdrant_url, ollama_url, env)?);
+            let kb = Arc::new(KnowledgeBase::new(qdrant_url, ollama_url, env).await?);
 
             println!("📤  [EXPORT] Searching matrix for agent: {agent_id}...");
             export_jsonl(&kb, agent_id, output).await?;
+            drop(kb);
             println!("✅  [EXPORT] Done.");
         },
     }

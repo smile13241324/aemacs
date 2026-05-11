@@ -8,12 +8,16 @@ use crate::models::{ContentPart, ImageUrl};
 
 /// Loads a file from the physical disk and translates it into a format suitable for the AI model.
 /// It automatically detects MIME types to distinguish between text documents and image assets.
+///
+/// # Errors
+/// Returns an error if the file cannot be read or if a non-image file is not valid UTF-8 text.
 pub fn load_file(path: impl AsRef<Path>) -> Result<ContentPart> {
     let path = path.as_ref();
     let mime = from_path(path).first_or_octet_stream();
 
     if mime.type_() == "image" {
-        let bytes = fs::read(path).with_context(|| format!("Failed to read image: {path:?}"))?;
+        let bytes =
+            fs::read(path).with_context(|| format!("Failed to read image: {}", path.display()))?;
         let b64 = BASE64_STANDARD.encode(&bytes);
         let url = format!("data:{mime};base64,{b64}");
         Ok(ContentPart::ImageUrl { image_url: ImageUrl { url } })
@@ -22,7 +26,7 @@ pub fn load_file(path: impl AsRef<Path>) -> Result<ContentPart> {
         // In a real system, we should check for binary content to avoid dumping garbage.
         // For now, we assume if it's not an image, it's text context (code, logs, etc).
         let text = fs::read_to_string(path)
-            .with_context(|| format!("Failed to read text file: {path:?}"))?;
+            .with_context(|| format!("Failed to read text file: {}", path.display()))?;
         Ok(ContentPart::Text { text })
     }
 }
@@ -43,11 +47,10 @@ mod tests {
         text_file.write_all(content.as_bytes())?;
 
         let result = load_file(text_file.path())?;
-        if let ContentPart::Text { text } = result {
-            assert_eq!(text, content);
-        } else {
-            panic!("The 'Scroll-of-Truth' was mistaken for an image!");
-        }
+        let ContentPart::Text { text } = result else {
+            return Err(anyhow::anyhow!("The 'Scroll-of-Truth' was mistaken for an image!"));
+        };
+        assert_eq!(text, content);
 
         // --- 2. The Corruption-Beast (Invalid UTF-8) ---
         // Note: Unless it has an image extension, our logic currently tries read_to_string and fails.

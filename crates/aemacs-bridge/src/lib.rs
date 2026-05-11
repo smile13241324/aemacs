@@ -179,7 +179,7 @@ mod tests {
                 assert!(payload.contains("deploy"));
             },
             _ => {
-                unreachable!("Unexpected event type on bus: {event:?}");
+                return Err(anyhow::anyhow!("Unexpected event type on bus: {event:?}"));
             },
         }
 

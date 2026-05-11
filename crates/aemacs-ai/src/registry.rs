@@ -1,4 +1,8 @@
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use notify::{EventKind, RecursiveMode, Watcher};
 use tokio::sync::RwLock;
@@ -22,6 +26,7 @@ pub struct PersonaRegistry {
 impl std::fmt::Debug for PersonaRegistry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PersonaRegistry")
+            .field("personas", &"tokio::sync::RwLock<HashMap<String, Persona>>")
             .field("global_agents_dir", &self.global_agents_dir)
             .field("local_agents_dir", &self.local_agents_dir)
             .field("runtime_handle", &"tokio::runtime::Handle")
@@ -32,6 +37,9 @@ impl std::fmt::Debug for PersonaRegistry {
 impl PersonaRegistry {
     /// Create a new registry and initialize the agents directory.
     /// It automatically scans for global and local agent definitions.
+    ///
+    /// # Errors
+    /// Returns an error if the initial persona load fails.
     pub async fn new(runtime_handle: tokio::runtime::Handle) -> Result<Arc<Self>, AIError> {
         // Global Directory
         let global_agents_dir = dirs::home_dir().map(|home| home.join(".aemacs").join("agents"));
@@ -44,16 +52,13 @@ impl PersonaRegistry {
         }
 
         // Local Directory
-        let local_agents_dir = match std::env::current_dir() {
-            Ok(cwd) => {
-                let dir = cwd.join(".aemacs").join("agents");
-                if !dir.exists() {
-                    let _ = std::fs::create_dir_all(&dir);
-                }
-                Some(dir)
-            },
-            Err(_) => None,
-        };
+        let local_agents_dir = std::env::current_dir().map_or(None, |cwd| {
+            let dir = cwd.join(".aemacs").join("agents");
+            if !dir.exists() {
+                let _ = std::fs::create_dir_all(&dir);
+            }
+            Some(dir)
+        });
 
         let registry = Arc::new(Self {
             personas: RwLock::new(HashMap::new()),
@@ -70,26 +75,30 @@ impl PersonaRegistry {
 
     /// Load or reload all personas from the agents directory.
     /// Local personas will overwrite global personas with the same name.
+    ///
+    /// # Errors
+    /// Returns an error if updating the in-memory registry state fails.
     pub async fn load_all(&self) -> Result<(), AIError> {
         let mut new_personas = HashMap::new();
 
         // Load Global Personas First (The Foundation)
         if let Some(ref global_dir) = self.global_agents_dir {
-            self.load_from_directory(global_dir, &mut new_personas);
+            Self::load_from_directory(global_dir, &mut new_personas);
         }
 
         // Load Local Personas Second (The Overwrite)
         if let Some(ref local_dir) = self.local_agents_dir {
-            self.load_from_directory(local_dir, &mut new_personas);
+            Self::load_from_directory(local_dir, &mut new_personas);
         }
 
         let mut lock = self.personas.write().await;
         *lock = new_personas;
+        drop(lock);
         Ok(())
     }
 
     /// Internal helper to load all valid YAML persona files from a given directory.
-    fn load_from_directory(&self, dir: &PathBuf, new_personas: &mut HashMap<String, Persona>) {
+    fn load_from_directory(dir: &Path, new_personas: &mut HashMap<String, Persona>) {
         if let Ok(entries) = std::fs::read_dir(dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
@@ -129,6 +138,9 @@ impl PersonaRegistry {
 
     /// Start watching the agents directory for changes.
     /// Whenever a YAML file is modified, created, or removed, the registry reloads its content.
+    ///
+    /// # Errors
+    /// Returns an error if the filesystem watcher cannot be created.
     pub fn start_watching(self: Arc<Self>) -> Result<(), AIError> {
         let registry = self.clone();
         let (tx, mut rx) = tokio::sync::mpsc::channel(1);
@@ -177,6 +189,8 @@ impl PersonaRegistry {
 mod tests {
     use std::fs;
 
+    use anyhow::anyhow;
+
     use super::*;
     use crate::persona::Persona;
 
@@ -186,7 +200,7 @@ mod tests {
         let local_agents_dir = temp_dir.path().join("local_agents");
         fs::create_dir_all(&local_agents_dir)?;
 
-        let test_persona = Persona::new("local-only", "Local Tester", "Local prompt", None);
+        let test_persona = Persona::new("local-only", "Local Tester", "Local prompt", None, None);
         fs::write(local_agents_dir.join("local-only.yaml"), serde_yaml::to_string(&test_persona)?)?;
 
         // Manually instantiate to simulate a missing global directory
@@ -217,14 +231,15 @@ mod tests {
         fs::create_dir_all(&local_agents_dir)?;
 
         // The Global Fiend
-        let global_persona = Persona::new("test-agent", "Global Tester", "I am global.", None);
+        let global_persona =
+            Persona::new("test-agent", "Global Tester", "I am global.", None, None);
         fs::write(
             global_agents_dir.join("test-agent.yaml"),
             serde_yaml::to_string(&global_persona)?,
         )?;
 
         // The Local Hero
-        let local_persona = Persona::new("test-agent", "Local Tester", "I am local.", None);
+        let local_persona = Persona::new("test-agent", "Local Tester", "I am local.", None, None);
         fs::write(
             local_agents_dir.join("test-agent.yaml"),
             serde_yaml::to_string(&local_persona)?,
@@ -239,8 +254,10 @@ mod tests {
 
         registry.load_all().await?;
 
-        let loaded_persona =
-            registry.get_persona("test-agent").await.expect("Hark! The agent was not loaded!");
+        let loaded_persona = registry
+            .get_persona("test-agent")
+            .await
+            .ok_or_else(|| anyhow!("Hark! The agent was not loaded!"))?;
 
         assert_eq!(
             loaded_persona.description, "Local Tester",
@@ -259,7 +276,7 @@ mod tests {
 
         // 1. Initial Inscription
         let persona_path = agents_dir.join("bob.yaml");
-        let mut persona = Persona::new("bob", "The Architect", "Build well.", None);
+        let mut persona = Persona::new("bob", "The Architect", "Build well.", None, None);
         fs::write(&persona_path, serde_yaml::to_string(&persona)?)?;
 
         let registry = Arc::new(PersonaRegistry {
@@ -270,7 +287,9 @@ mod tests {
         });
 
         registry.load_all().await?;
-        assert_eq!(registry.get_persona("bob").await.unwrap().description, "The Architect");
+        let loaded_persona =
+            registry.get_persona("bob").await.ok_or_else(|| anyhow!("Missing bob persona"))?;
+        assert_eq!(loaded_persona.description, "The Architect");
 
         // 2. Start the Vigil
         registry.clone().start_watching()?;

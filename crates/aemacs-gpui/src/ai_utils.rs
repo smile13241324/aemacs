@@ -19,7 +19,7 @@ pub(crate) enum AgentEvent {
     /// A tool execution has completed, returning its success status.
     ToolFinished(String, bool),
     /// The agentic loop has finished successfully, returning the final conversation state.
-    Result(Conversation),
+    Result(Box<Conversation>),
     /// An unrecoverable error occurred during agent execution.
     Error(String),
 }
@@ -41,6 +41,7 @@ where
     F: 'static + Send + Sync + Copy + Fn(&mut V, &mut Context<'_, V>, AgentEvent),
     H: 'static + ToolHost + Send + Sync,
 {
+    let cx = &mut *cx;
     let (tx, rx) = async_channel::unbounded::<AgentEvent>();
     let tx_for_stream = tx;
 
@@ -73,7 +74,7 @@ where
                     log::error!("⚠️ [AI] Failed to archive conversation to memory: {e}");
                 }
 
-                let _ = tx_for_stream.send(AgentEvent::Result(conversation)).await;
+                let _ = tx_for_stream.send(AgentEvent::Result(Box::new(conversation))).await;
             },
             Err(e) => {
                 let _ = tx_for_stream.send(AgentEvent::Error(e.to_string())).await;
@@ -96,35 +97,4 @@ where
             }
         }
     })
-}
-
-#[cfg(test)]
-mod tests {
-
-    use aemacs_ai::mcp::ToolHost;
-    use async_trait::async_trait;
-
-    struct LocalTestHost;
-    #[async_trait]
-    impl ToolHost for LocalTestHost {
-        async fn ask_approval(&self, _description: &str) -> bool {
-            true
-        }
-        async fn ask_user(&self, _question: &str) -> String {
-            "Test".to_string()
-        }
-        fn get_agent_id(&self) -> String {
-            "test".to_string()
-        }
-        fn report_progress(&self, _name: String, _running: bool) {}
-        async fn emit_signal(&self, _type: String, _payload: String) -> anyhow::Result<()> {
-            Ok(())
-        }
-    }
-
-    #[tokio::test]
-    async fn test_spawn_agent_task_compilation_check() {
-        // QUEST: This test verifies that the logic compiles.
-        assert!(true);
-    }
 }

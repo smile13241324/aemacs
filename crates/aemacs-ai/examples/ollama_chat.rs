@@ -17,7 +17,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     println!("🦙 Connecting to Local Ollama Instance...");
 
-    let backend = OpenAICompatibleBackend::new("http://localhost:11434/v1", None);
+    let backend = OpenAICompatibleBackend::new("http://localhost:11434/v1", None)?;
 
     match backend.health_check().await {
         Ok(()) => println!("✅ Ollama is online and healthy!"),

@@ -4,6 +4,7 @@ use std::{
     path::Path,
 };
 
+use anyhow::Context;
 use chrono::{DateTime, Utc};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -46,6 +47,10 @@ pub enum LegacyRecord {
 }
 
 /// Parses legacy raw text files and extracts structured `LegacyRecord`s.
+///
+/// # Errors
+/// Returns an error if a legacy file cannot be opened or read, if the parser regexes are invalid,
+/// or if a matched block header is missing a required capture group.
 pub fn extract_legacy_files(
     file_paths: &[String],
     agent_id: &str,
@@ -57,8 +62,11 @@ pub fn extract_legacy_files(
 
     // Matches: begin---...Speaker: User---Tier: ARCHIVE---Phase: AWAKENING---CONTEXT: ...---
     // Or: begin---...Tier: GENESIS---Phase: TRANSITION---CONTEXT: ...---
-    let begin_regex = Regex::new(r"begin-{10,}(?:Speaker:\s*(?P<speaker>[^-]+)---)?Tier:\s*(?P<tier>[^-]+)---Phase:\s*(?P<phase>[^-]+)---CONTEXT:\s*(?P<context>[^-]+)-{10,}").unwrap();
-    let end_regex = Regex::new(r"end-{10,}").unwrap();
+    let begin_regex = Regex::new(
+        r"begin-{10,}(?:Speaker:\s*(?P<speaker>[^-]+)---)?Tier:\s*(?P<tier>[^-]+)---Phase:\s*(?P<phase>[^-]+)---CONTEXT:\s*(?P<context>[^-]+)-{10,}",
+    )
+    .context("failed to compile legacy block start regex")?;
+    let end_regex = Regex::new(r"end-{10,}").context("failed to compile legacy block end regex")?;
 
     for path_str in file_paths {
         let file = File::open(path_str)?;
@@ -75,11 +83,27 @@ pub fn extract_legacy_files(
             let line = line?;
 
             if let Some(caps) = begin_regex.captures(&line) {
+                let tier = caps.name("tier").map(|m| m.as_str().trim().to_string()).with_context(
+                    || format!("legacy block header missing tier capture in {path_str}: {line}"),
+                )?;
+                let phase = caps
+                    .name("phase")
+                    .map(|m| m.as_str().trim().to_string())
+                    .with_context(|| {
+                        format!("legacy block header missing phase capture in {path_str}: {line}")
+                    })?;
+                let context = caps
+                    .name("context")
+                    .map(|m| m.as_str().trim().to_string())
+                    .with_context(|| {
+                        format!("legacy block header missing context capture in {path_str}: {line}")
+                    })?;
+
                 in_block = true;
                 current_speaker = caps.name("speaker").map(|m| m.as_str().trim().to_string());
-                current_tier = caps.name("tier").unwrap().as_str().trim().to_string();
-                current_phase = caps.name("phase").unwrap().as_str().trim().to_string();
-                current_context = caps.name("context").unwrap().as_str().trim().to_string();
+                current_tier = tier;
+                current_phase = phase;
+                current_context = context;
                 block_content.clear();
                 continue;
             }
@@ -128,6 +152,9 @@ pub fn extract_legacy_files(
 }
 
 /// Reads a JSONL file and imports the records into the `KnowledgeBase` using the legacy endpoints.
+///
+/// # Errors
+/// Returns an error if the JSONL file cannot be opened or read.
 pub async fn import_jsonl(kb: &KnowledgeBase, jsonl_path: &Path) -> AIResult<()> {
     let file = File::open(jsonl_path).map_err(crate::error::AIError::IoError)?;
     let reader = BufReader::new(file);
@@ -182,6 +209,10 @@ pub async fn import_jsonl(kb: &KnowledgeBase, jsonl_path: &Path) -> AIResult<()>
 }
 
 /// Exports all records for a specific agent from Qdrant into a JSONL file.
+///
+/// # Errors
+/// Returns an error if querying the knowledge base fails, if the output file cannot be written,
+/// or if a legacy record cannot be serialized to JSON.
 pub async fn export_jsonl(kb: &KnowledgeBase, agent_id: &str, output_path: &Path) -> AIResult<()> {
     // 1. Fetch Archives
     let archives = kb.search_archive("", Some(agent_id), None).await?;
@@ -259,11 +290,18 @@ pub async fn export_jsonl(kb: &KnowledgeBase, agent_id: &str, output_path: &Path
 mod tests {
     use std::io::Read;
 
+    use anyhow::{Context, anyhow};
     use chrono::TimeZone;
     use tempfile::NamedTempFile;
 
     use super::*;
     use crate::rag::Environment;
+
+    fn test_start_time() -> anyhow::Result<chrono::DateTime<Utc>> {
+        Utc.with_ymd_and_hms(2026, 1, 1, 12, 0, 0)
+            .single()
+            .context("Failed to construct deterministic test timestamp")
+    }
 
     #[test]
     fn test_regex_state_machine_quest() -> anyhow::Result<()> {
@@ -279,7 +317,7 @@ end------------------------------------
 ";
         file.write_all(content.as_bytes())?;
 
-        let start_time = Utc.with_ymd_and_hms(2026, 1, 1, 12, 0, 0).unwrap();
+        let start_time = test_start_time()?;
         let records = extract_legacy_files(
             &[file.path().to_string_lossy().to_string()],
             "TestAgent",
@@ -289,26 +327,23 @@ end------------------------------------
 
         assert_eq!(records.len(), 2, "Expected exactly 2 records parsed.");
 
-        match &records[0] {
-            LegacyRecord::Archive { agent_id, role, phase, context, content, .. } => {
-                assert_eq!(agent_id, "TestAgent");
-                assert_eq!(role, "User");
-                assert_eq!(phase, "AWAKENING");
-                assert_eq!(context, "Custom.");
-                assert_eq!(content, "Hello World");
-            },
-            _ => panic!("First record should be an Archive!"),
-        }
+        let LegacyRecord::Archive { agent_id, role, phase, context, content, .. } = &records[0]
+        else {
+            return Err(anyhow!("First record should be an Archive!"));
+        };
+        assert_eq!(agent_id, "TestAgent");
+        assert_eq!(role, "User");
+        assert_eq!(phase, "AWAKENING");
+        assert_eq!(context, "Custom.");
+        assert_eq!(content, "Hello World");
 
-        match &records[1] {
-            LegacyRecord::Genesis { agent_id, phase, context, content, .. } => {
-                assert_eq!(agent_id, "TestAgent");
-                assert_eq!(phase, "TRANSITION");
-                assert_eq!(context, "System Rule.");
-                assert_eq!(content, "Be good.");
-            },
-            _ => panic!("Second record should be a Genesis!"),
-        }
+        let LegacyRecord::Genesis { agent_id, phase, context, content, .. } = &records[1] else {
+            return Err(anyhow!("Second record should be a Genesis!"));
+        };
+        assert_eq!(agent_id, "TestAgent");
+        assert_eq!(phase, "TRANSITION");
+        assert_eq!(context, "System Rule.");
+        assert_eq!(content, "Be good.");
 
         Ok(())
     }
@@ -321,7 +356,7 @@ end------------------------------------
         let content = block.repeat(3);
         file.write_all(content.as_bytes())?;
 
-        let start_time = Utc.with_ymd_and_hms(2026, 1, 1, 12, 0, 0).unwrap();
+        let start_time = test_start_time()?;
         // Subtract one hour (-3600 seconds) per block
         let records = extract_legacy_files(
             &[file.path().to_string_lossy().to_string()],
@@ -334,8 +369,8 @@ end------------------------------------
 
         let get_ts = |r: &LegacyRecord| -> String {
             match r {
-                LegacyRecord::Archive { timestamp, .. } => timestamp.clone(),
-                LegacyRecord::Genesis { timestamp, .. } => timestamp.clone(),
+                LegacyRecord::Archive { timestamp, .. }
+                | LegacyRecord::Genesis { timestamp, .. } => timestamp.clone(),
             }
         };
 
@@ -357,7 +392,7 @@ This block never ends...
 ";
         file.write_all(content.as_bytes())?;
 
-        let start_time = Utc.with_ymd_and_hms(2026, 1, 1, 12, 0, 0).unwrap();
+        let start_time = test_start_time()?;
         let records = extract_legacy_files(
             &[file.path().to_string_lossy().to_string()],
             "TestAgent",
@@ -375,23 +410,23 @@ This block never ends...
     async fn test_grand_cycle_e2e_quest() -> anyhow::Result<()> {
         // QUEST 4: The End-to-End Migration Cycle (Extract -> Import -> Export)
 
+        let test_agent = format!("E2EAgent_{}", uuid::Uuid::new_v4().to_string().replace('-', ""));
+
         // 1. Setup RAG Environment
-        let kb_res = KnowledgeBase::new(
+        let Ok(kb) = KnowledgeBase::new(
             "http://localhost:6334",
             "http://localhost:11434",
             Environment::Test,
-        );
-        if kb_res.is_err() {
+        )
+        .await
+        else {
+            println!("Skipping E2E quest: Infrastructure offline.");
+            return Ok(());
+        };
+        if kb.ensure_collection(768).await.is_err() {
             println!("Skipping E2E quest: Infrastructure offline.");
             return Ok(());
         }
-        let kb = kb_res.unwrap();
-        if kb.ensure_collection(768).await.is_err() {
-            println!("Skipping E2E quest: Could not ensure collection.");
-            return Ok(());
-        }
-
-        let test_agent = format!("E2EAgent_{}", uuid::Uuid::new_v4().to_string().replace('-', ""));
 
         // 2. EXTRACTION Phase
         let mut src_file = NamedTempFile::new()?;

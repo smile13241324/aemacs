@@ -51,24 +51,29 @@ fn main() -> Result<()> {
             let config = aemacs_core::config::get_config();
 
             // B. AI Infrastructure
-            let kb = Arc::new(KnowledgeBase::new(
-                config
-                    .qdrant_url
-                    .as_deref()
-                    .ok_or_else(|| anyhow::anyhow!("Missing qdrant_url"))?,
-                config
-                    .ollama_url
-                    .as_deref()
-                    .ok_or_else(|| anyhow::anyhow!("Missing ollama_url"))?,
-                aemacs_ai::rag::Environment::Production,
-            )?);
+            let kb = Arc::new(
+                KnowledgeBase::new(
+                    config
+                        .qdrant_url
+                        .as_deref()
+                        .ok_or_else(|| anyhow::anyhow!("Missing qdrant_url"))?,
+                    config
+                        .ollama_url
+                        .as_deref()
+                        .ok_or_else(|| anyhow::anyhow!("Missing ollama_url"))?,
+                    aemacs_ai::rag::Environment::Production,
+                )
+                .await?,
+            );
             let tokio_handle = tokio::runtime::Handle::current();
             let persona_registry = PersonaRegistry::new(tokio_handle).await?;
+            let service_kb = kb.clone();
             let registry = Arc::new(ToolRegistry::with_core_tools(
                 kb.clone(),
                 persona_registry.clone(),
                 Some(bus.tx.clone()),
             ));
+            drop(kb);
             let backend = Arc::new(OpenAICompatibleBackend::new(
                 format!(
                     "{}/v1",
@@ -78,7 +83,7 @@ fn main() -> Result<()> {
                         .ok_or_else(|| anyhow::anyhow!("Missing ollama_url"))?
                 ),
                 None,
-            ));
+            )?);
 
             // C. Sensory Observers (ACO-007, ACO-026)
             if bridge_port > 0 {
@@ -95,15 +100,16 @@ fn main() -> Result<()> {
             });
 
             // D. Launch Sovereign Orchestrator
-            let service = AutonomousService::new(
+            AutonomousService::new(
                 bus,
                 agent_name,
                 persona_registry,
                 registry,
                 backend,
-                kb.clone(),
-            );
-            service.start(interval).await?;
+                service_kb,
+            )
+            .start(interval)
+            .await?;
 
             Ok(())
         });
@@ -112,7 +118,7 @@ fn main() -> Result<()> {
     // --- GUI Mode (Default) ---
     let file_to_open = if args.len() > 1 {
         let path = std::path::PathBuf::from(&args[1]);
-        info!("📂 [CLI] Requesting to open file: {path:?}");
+        info!("📂 [CLI] Requesting to open file: {}", path.display());
         Some(path)
     } else {
         None

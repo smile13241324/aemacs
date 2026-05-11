@@ -10,14 +10,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let qdrant_url = "http://localhost:6334";
     let ollama_url = "http://localhost:11434/v1";
 
-    let kb = match KnowledgeBase::new(qdrant_url, ollama_url, aemacs_ai::rag::Environment::Test) {
-        Ok(kb) => kb,
-        Err(e) => {
-            eprintln!("❌ Failed to initialize KnowledgeBase: {e}");
-            eprintln!("   Ensure Qdrant is running on port 6334 and Ollama on 11434.");
-            return Ok(());
-        },
-    };
+    let kb =
+        match KnowledgeBase::new(qdrant_url, ollama_url, aemacs_ai::rag::Environment::Test).await {
+            Ok(kb) => kb,
+            Err(e) => {
+                eprintln!("❌ Failed to initialize KnowledgeBase: {e}");
+                eprintln!("   Ensure Qdrant is running on port 6334 and Ollama on 11434.");
+                return Ok(());
+            },
+        };
 
     println!("✅ Connected to Qdrant & Ollama.");
 
@@ -51,6 +52,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         println!("{}. [ID: {}] {}", i + 1, result.id, result.content);
     }
     println!("---------------");
+    drop(kb);
 
     Ok(())
 }

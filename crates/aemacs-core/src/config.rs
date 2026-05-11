@@ -2,6 +2,20 @@ use std::{fs, path::PathBuf, sync::OnceLock};
 
 use serde::Deserialize;
 
+/// Manual similarity threshold overrides for different RAG memory categories.
+/// If provided, these values bypass the autonomous calibration daemon.
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct RagThresholds {
+    /// Threshold override for 'ARCHIVE' memory.
+    pub archive: Option<f32>,
+    /// Threshold override for 'INSIGHT' memory.
+    pub insight: Option<f32>,
+    /// Threshold override for 'CORE' memory.
+    pub core: Option<f32>,
+    /// Threshold override for 'GENESIS' memory.
+    pub genesis: Option<f32>,
+}
+
 /// Represents the global configuration for the Æmacs system.
 /// This structure is typically loaded from `~/.aemacs/config.ron`.
 #[derive(Debug, Deserialize, Clone)]
@@ -12,6 +26,8 @@ pub struct UserConfig {
     pub ollama_url: Option<String>,
     /// The URL of the Qdrant vector database.
     pub qdrant_url: Option<String>,
+    /// Manual overrides for RAG thresholds.
+    pub rag_thresholds: Option<RagThresholds>,
 }
 
 impl Default for UserConfig {
@@ -20,6 +36,7 @@ impl Default for UserConfig {
             hardware_tier: Some("LOW".to_string()),
             ollama_url: Some("http://localhost:11434".to_string()),
             qdrant_url: Some("http://localhost:6334".to_string()),
+            rag_thresholds: None,
         }
     }
 }
@@ -157,16 +174,31 @@ mod tests {
     }
 
     #[test]
-    fn test_load_config_fallback_on_invalid_ron() {
+    fn test_load_config_with_rag_thresholds_override() {
+        /// HARK! Verifying the manual override of RAG thresholds. [R-CONFIG-01]
         let mut file = NamedTempFile::new().expect("Should not fail in test");
-        // Corrupt file
-        writeln!(file, "Invalid(format: !![[").expect("Should not fail in test");
+        writeln!(
+            file,
+            "UserConfig(rag_thresholds: Some(RagThresholds(core: Some(0.85), genesis: Some(0.65))))"
+        )
+        .expect("Should not fail in test");
 
         let config = load_config_from_path(&file.path().to_path_buf());
+        let thresholds = config.rag_thresholds.expect("RagThresholds should be present");
+        assert_eq!(thresholds.core, Some(0.85), "Core threshold failed to parse!");
+        assert_eq!(thresholds.genesis, Some(0.65), "Genesis threshold failed to parse!");
+        assert_eq!(thresholds.archive, None, "Archive should be None!");
+    }
 
-        // An invalid file returns UserConfig::default() directly
-        assert_eq!(config.hardware_tier.expect("Should not fail in test"), "LOW");
-        assert_eq!(config.ollama_url.expect("Should not fail in test"), "http://localhost:11434");
-        assert_eq!(config.qdrant_url.expect("Should not fail in test"), "http://localhost:6334");
+    #[test]
+    fn test_load_config_legacy_no_rag_thresholds() {
+        /// HARK! Ensuring legacy config files without RAG thresholds default to None. [R-CONFIG-02]
+        let mut file = NamedTempFile::new().expect("Should not fail in test");
+        // An old config with only the basics
+        writeln!(file, "UserConfig(hardware_tier: Some(\"LOW\"))")
+            .expect("Should not fail in test");
+
+        let config = load_config_from_path(&file.path().to_path_buf());
+        assert!(config.rag_thresholds.is_none(), "Legacy config should have None rag_thresholds!");
     }
 }

@@ -12,16 +12,16 @@ pub(crate) fn render_editor_view(
     list_state: ListState,
     wrap: bool,
 ) -> impl IntoElement {
-    let theme_bg = rgb(0x282c34);
-    let text_color = rgb(0xabb2bf);
+    let theme_bg = rgb(0x0028_2c34);
+    let text_color = rgb(0x00ab_b2bf);
     let cursor_pos = editor.cursor_position();
     let cursor_line_idx = cursor_pos.0.saturating_sub(1);
     let cursor_col_idx = cursor_pos.1.saturating_sub(1);
 
     let (cursor_bg, is_block, _has_shadow) = match editor.mode {
-        Mode::Normal => (rgb(0xd19a66), true, false),
-        Mode::Insert => (rgb(0x98c379), false, false),
-        Mode::Visual => (rgba(0x3e445180), true, true),
+        Mode::Normal => (rgb(0x00d1_9a66), true, false),
+        Mode::Insert => (rgb(0x0098_c379), false, false),
+        Mode::Visual => (rgba(0x3e44_5180), true, true),
     };
 
     let buffer_clone = editor.buffer.clone();
@@ -80,8 +80,8 @@ pub(crate) fn render_editor_view(
                 .child(
                     div()
                         .child(cursor_char_str)
-                        .bg(if is_block { cursor_bg } else { rgba(0x00000000) })
-                        .text_color(if is_block { rgb(0x282c34) } else { text_color })
+                        .bg(if is_block { cursor_bg } else { rgba(0x0000_0000) })
+                        .text_color(if is_block { rgb(0x0028_2c34) } else { text_color })
                         .when(!is_block, |this| this.border_l_2().border_color(cursor_bg)),
                 )
                 .child(post_text)

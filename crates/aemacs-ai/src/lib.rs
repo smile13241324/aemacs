@@ -9,6 +9,7 @@ pub mod migration; // Added for ACO-060
 pub mod models;
 pub mod persona;
 pub mod rag;
+pub mod rag_telemetry;
 pub mod registry;
 
 use async_trait::async_trait;

@@ -11,17 +11,21 @@ use gpui::{
 };
 use log::info;
 
-pub(crate) mod ai_panel;
+pub mod ai_panel;
 use ai_panel::AiPanel;
 
-pub(crate) mod editor_view;
+pub mod editor_view;
 use editor_view::render_editor_view;
 
-pub(crate) mod input_handler;
+pub mod input_handler;
 use input_handler::resolve_key_command;
 
-pub(crate) mod ai_utils;
+pub mod ai_utils;
 
+/// Initializes the GPUI subsystem for Æmacs.
+///
+/// # Errors
+/// Returns an error if graphics initialization fails.
 pub fn init() -> Result<()> {
     info!("🎨 [GPUI] Initializing Graphics Engine...");
     Ok(())
@@ -72,7 +76,7 @@ impl std::fmt::Debug for Workspace {
             .field("tasks", &self.tasks)
             .field("notification", &self.notification)
             .field("last_cursor_line", &self.last_cursor_line)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -86,233 +90,27 @@ impl Workspace {
     ) -> Entity<Self> {
         cx.new(|cx| {
             let config = aemacs_core::config::get_config();
-
-            // Initialize AI Infrastructure once (ACO-036 Performance fix)
-            let kb = Arc::new(
-                KnowledgeBase::new(
-                    config.qdrant_url.as_deref().unwrap_or("http://localhost:6334"),
-                    config.ollama_url.as_deref().unwrap_or("http://localhost:11434"),
-                    aemacs_ai::rag::Environment::Production,
-                )
-                .unwrap_or_else(|e| {
-                    log::error!("Failed to initialize KnowledgeBase: {e}");
-                    std::process::exit(1);
-                }),
+            let (kb, persona_registry, bus, registry) = Self::initialize_ai_infrastructure(
+                cx,
+                config.qdrant_url.as_deref(),
+                config.ollama_url.as_deref(),
             );
-
-            let persona_registry = futures::executor::block_on(PersonaRegistry::new(
-                aemacs_core::runtime::Tokio::handle(cx),
-            ))
-            .unwrap_or_else(|e| {
-                log::error!("Failed to initialize PersonaRegistry: {e}");
-                std::process::exit(1);
-            });
-            persona_registry.clone().start_watching().ok();
-
-            // Get the Event Bus for tool signaling
-            let bus = cx.global::<aemacs_core::bus::EventBus>().clone();
-
-            let registry = Arc::new(ToolRegistry::with_core_tools(
-                kb.clone(),
-                persona_registry.clone(),
-                Some(bus.tx.clone()),
-            ));
-
-            let editor = cx.new(|_cx| {
-                if let Some(path) = file_path {
-                    match Editor::from_file(path) {
-                        Ok(ed) => {
-                            log::info!("📂 [Workspace] File loaded successfully.");
-                            ed
-                        },
-                        Err(e) => {
-                            log::error!("⚠️ [Workspace] Failed to load file: {e}");
-                            Editor::new() // Fallback: Leerer Buffer
-                        },
-                    }
-                } else {
-                    Editor::new()
-                }
-            });
-
-            // --- Load Configuration & Models (ACO-019) ---
-            let tier_str = config.hardware_tier.as_deref().unwrap_or("LOW");
-            let available_models = aemacs_ai::models::get_models_for_tier(tier_str);
-            log::info!(
-                "🚀 [Workspace] Hardware Tier: {} ({} models loaded)",
-                tier_str,
-                available_models.len()
-            );
-
-            let (host_tx, host_rx) = async_channel::unbounded::<ai_panel::HostRequest>();
-            let ai_panel = AiPanel::new(
+            let editor = Self::build_editor(cx, file_path);
+            let (ai_panel, host_rx) = Self::build_ai_panel(
                 cx,
                 window_handle,
-                host_tx,
+                config.hardware_tier.as_deref(),
                 kb.clone(),
                 registry.clone(),
                 persona_registry.clone(),
                 bus.clone(),
-                available_models,
             );
             let editor_list_state = gpui::ListState::new(0, gpui::ListAlignment::Top, px(100.0));
             let gutter_list_state = gpui::ListState::new(0, gpui::ListAlignment::Top, px(100.0));
             let focus_handle = cx.focus_handle();
 
-            let mut rx = bus.subscribe();
-
-            // --- Tool Approval Listener (ACO-035) ---
-            cx.spawn(|workspace: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-                let mut cx = cx.clone();
-                async move {
-                    while let Ok(request) = host_rx.recv().await {
-                        match request {
-                            ai_panel::HostRequest::Approval { description, responder } => {
-                                let _ = workspace.update(&mut cx, |this, cx| {
-                                    let window_handle = this.window_handle;
-                                    let _ = cx.update_window(window_handle, |_, window, cx| {
-                                        let future = window.prompt(
-                                            gpui::PromptLevel::Warning,
-                                            "AI Permission Request",
-                                            Some(&description),
-                                            &["Approve", "Deny"],
-                                            cx,
-                                        );
-                                        cx.background_executor()
-                                            .spawn(async move {
-                                                let answer = future.await.unwrap_or(1usize);
-                                                let _ = responder.send(answer == 0);
-                                            })
-                                            .detach();
-                                    });
-                                });
-                            },
-                            ai_panel::HostRequest::UserPrompt { question, responder } => {
-                                let _ = workspace.update(&mut cx, |this, cx| {
-                                    let window_handle = this.window_handle;
-                                    let _ = cx.update_window(window_handle, |_, window, cx| {
-                                        let future = window.prompt(
-                                            gpui::PromptLevel::Info,
-                                            "AI Question",
-                                            Some(&question),
-                                            &["Acknowledge"],
-                                            cx,
-                                        );
-                                        cx.background_executor()
-                                            .spawn(async move {
-                                                let _ = future.await;
-                                                let _ = responder.send("Acknowledged".to_string());
-                                            })
-                                            .detach();
-                                    });
-                                });
-                            },
-                        }
-                    }
-                }
-            })
-            .detach();
-
-            cx.spawn(|workspace: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-                let mut cx = cx.clone();
-                async move {
-                    while let Ok(event) = rx.recv().await {
-                        match event {
-                            aemacs_core::bus::SystemEvent::FileModified(modified_path) => {
-                                let _ = workspace.update(&mut cx, |this, cx| {
-                                    let editor_path = this.editor.read(cx).buffer.path.clone();
-                                    if let Some(current_path) = editor_path
-                                        && current_path == modified_path
-                                    {
-                                        log::info!(
-                                            "🔄 [Workspace] Auto-reloading buffer: {current_path:?}"
-                                        );
-                                        let _ = this.editor.update(cx, |ed, _| ed.reload());
-                                        cx.notify();
-                                    }
-                                });
-                            },
-                            aemacs_core::bus::SystemEvent::Notification(msg) => {
-                                let _ = workspace.update(&mut cx, |this, cx| {
-                                    log::info!("🔔 [Workspace] Notification: {msg}");
-                                    this.notification = Some(msg);
-                                    cx.notify();
-                                });
-                            },
-                            aemacs_core::bus::SystemEvent::OpenFile(path) => {
-                                let _ = workspace.update(&mut cx, |this, cx| {
-                                    match aemacs_core::Editor::from_file(path.clone()) {
-                                        Ok(new_editor) => {
-                                            log::info!(
-                                                "📂 [Workspace] Switching to file: {path:?}"
-                                            );
-                                            this.editor.update(cx, |ed, _| *ed = new_editor);
-                                            this.notification = Some(format!("Opened: {path:?}"));
-                                        },
-                                        Err(e) => {
-                                            log::error!("⚠️ [Workspace] Failed to open file: {e}");
-                                            this.notification =
-                                                Some(format!("Error opening file: {e}"));
-                                        },
-                                    }
-                                    cx.notify();
-                                });
-                            },
-                            aemacs_core::bus::SystemEvent::PlanCreated(tasks) => {
-                                let _ = workspace.update(&mut cx, |this, cx| {
-                                    log::info!(
-                                        "📋 [Workspace] Plan created with {} tasks.",
-                                        tasks.len()
-                                    );
-                                    this.tasks = tasks
-                                        .into_iter()
-                                        .map(|desc| aemacs_core::task::Task {
-                                            description: desc,
-                                            status: aemacs_core::task::TaskStatus::Pending,
-                                        })
-                                        .collect();
-                                    // Update AiPanel
-                                    let tasks_clone = this.tasks.clone();
-                                    this.ai_panel.update(cx, |panel, cx| {
-                                        panel.update_tasks(tasks_clone, cx);
-                                    });
-                                    cx.notify();
-                                });
-                            },
-                            aemacs_core::bus::SystemEvent::TaskUpdated { index, status } => {
-                                let _ = workspace.update(&mut cx, |this, cx| {
-                                    if let Some(task) = this.tasks.get_mut(index) {
-                                        log::info!(
-                                            "✅ [Workspace] Task {index} updated to {status:?}."
-                                        );
-                                        task.status = status;
-                                        // Update AiPanel
-                                        let tasks_clone = this.tasks.clone();
-                                        this.ai_panel.update(cx, |panel, cx| {
-                                            panel.update_tasks(tasks_clone, cx);
-                                        });
-                                        cx.notify();
-                                    }
-                                });
-                            },
-                            aemacs_core::bus::SystemEvent::PersonaChanged { name, message } => {
-                                let _ = workspace.update(&mut cx, |this, cx| {
-                                    log::info!(
-                                        "🔄 [Workspace] Programmatic persona switch: {name}"
-                                    );
-                                    this.ai_panel.update(cx, |panel, cx| {
-                                        panel.handoff_persona(name, message, cx);
-                                    });
-                                });
-                            },
-                            aemacs_core::bus::SystemEvent::Signal { .. } => {
-                                // Handled internally by AiPanel's Triage Router (ACO-026)
-                            },
-                        }
-                    }
-                }
-            })
-            .detach();
+            Self::spawn_host_request_listener(cx, host_rx);
+            Self::spawn_workspace_bus_listener(cx, &bus);
 
             Self {
                 editor,
@@ -333,10 +131,240 @@ impl Workspace {
         })
     }
 
-    fn render_welcome(&self) -> impl IntoElement {
-        let bg_color = rgb(0x282c34);
-        let accent_color = rgb(0xbd93f9);
-        let key_hint_bg = rgb(0x3e4451);
+    fn initialize_ai_infrastructure(
+        cx: &Context<'_, Self>,
+        qdrant_url: Option<&str>,
+        ollama_url: Option<&str>,
+    ) -> (Arc<KnowledgeBase>, Arc<PersonaRegistry>, aemacs_core::bus::EventBus, Arc<ToolRegistry>)
+    {
+        let kb = Arc::new(
+            futures::executor::block_on(KnowledgeBase::new(
+                qdrant_url.unwrap_or("http://localhost:6334"),
+                ollama_url.unwrap_or("http://localhost:11434"),
+                aemacs_ai::rag::Environment::Production,
+            ))
+            .unwrap_or_else(|e| {
+                log::error!("Failed to initialize KnowledgeBase: {e}");
+                std::process::exit(1);
+            }),
+        );
+
+        let persona_registry = futures::executor::block_on(PersonaRegistry::new(
+            aemacs_core::runtime::Tokio::handle(cx),
+        ))
+        .unwrap_or_else(|e| {
+            log::error!("Failed to initialize PersonaRegistry: {e}");
+            std::process::exit(1);
+        });
+        persona_registry.clone().start_watching().ok();
+
+        let bus = cx.global::<aemacs_core::bus::EventBus>().clone();
+        let registry = Arc::new(ToolRegistry::with_core_tools(
+            kb.clone(),
+            persona_registry.clone(),
+            Some(bus.tx.clone()),
+        ));
+
+        (kb, persona_registry, bus, registry)
+    }
+
+    fn build_editor(cx: &mut Context<'_, Self>, file_path: Option<PathBuf>) -> Entity<Editor> {
+        cx.new(|_cx| {
+            file_path.map_or_else(Editor::new, |path| match Editor::from_file(path) {
+                Ok(ed) => {
+                    log::info!("📂 [Workspace] File loaded successfully.");
+                    ed
+                },
+                Err(e) => {
+                    log::error!("⚠️ [Workspace] Failed to load file: {e}");
+                    Editor::new()
+                },
+            })
+        })
+    }
+
+    fn build_ai_panel(
+        cx: &mut Context<'_, Self>,
+        window_handle: gpui::AnyWindowHandle,
+        hardware_tier: Option<&str>,
+        kb: Arc<KnowledgeBase>,
+        registry: Arc<ToolRegistry>,
+        persona_registry: Arc<PersonaRegistry>,
+        bus: aemacs_core::bus::EventBus,
+    ) -> (Entity<AiPanel>, async_channel::Receiver<ai_panel::HostRequest>) {
+        let tier_str = hardware_tier.unwrap_or("LOW");
+        let available_models = aemacs_ai::models::get_models_for_tier(tier_str);
+        log::info!(
+            "🚀 [Workspace] Hardware Tier: {} ({} models loaded)",
+            tier_str,
+            available_models.len()
+        );
+
+        let (host_tx, host_rx) = async_channel::unbounded::<ai_panel::HostRequest>();
+        let ai_panel = AiPanel::new(
+            cx,
+            ai_panel::AiPanelInit {
+                window_handle,
+                host_tx,
+                kb,
+                registry,
+                persona_registry,
+                bus,
+                available_models,
+            },
+        );
+
+        (ai_panel, host_rx)
+    }
+
+    fn spawn_host_request_listener(
+        cx: &Context<'_, Self>,
+        host_rx: async_channel::Receiver<ai_panel::HostRequest>,
+    ) {
+        cx.spawn(|workspace: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                while let Ok(request) = host_rx.recv().await {
+                    let _ = workspace.update(&mut cx, |this, cx| {
+                        Self::handle_host_request(this, request, cx);
+                    });
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn handle_host_request(
+        this: &Self,
+        request: ai_panel::HostRequest,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let window_handle = this.window_handle;
+        let _ = cx.update_window(window_handle, |_, window, cx| match request {
+            ai_panel::HostRequest::Approval { description, responder } => {
+                let future = window.prompt(
+                    gpui::PromptLevel::Warning,
+                    "AI Permission Request",
+                    Some(&description),
+                    &["Approve", "Deny"],
+                    cx,
+                );
+                cx.background_executor()
+                    .spawn(async move {
+                        let answer = future.await.unwrap_or(1usize);
+                        let _ = responder.send(answer == 0);
+                    })
+                    .detach();
+            },
+            ai_panel::HostRequest::UserPrompt { question, responder } => {
+                let future = window.prompt(
+                    gpui::PromptLevel::Info,
+                    "AI Question",
+                    Some(&question),
+                    &["Acknowledge"],
+                    cx,
+                );
+                cx.background_executor()
+                    .spawn(async move {
+                        let _ = future.await;
+                        let _ = responder.send("Acknowledged".to_string());
+                    })
+                    .detach();
+            },
+        });
+    }
+
+    fn spawn_workspace_bus_listener(cx: &Context<'_, Self>, bus: &aemacs_core::bus::EventBus) {
+        let mut rx = bus.subscribe();
+        cx.spawn(|workspace: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                while let Ok(event) = rx.recv().await {
+                    let _ = workspace.update(&mut cx, |this, cx| {
+                        this.handle_system_event(event, cx);
+                    });
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn handle_system_event(
+        &mut self,
+        event: aemacs_core::bus::SystemEvent,
+        cx: &mut Context<'_, Self>,
+    ) {
+        match event {
+            aemacs_core::bus::SystemEvent::FileModified(modified_path) => {
+                let editor_path = self.editor.read(cx).buffer.path.clone();
+                if let Some(current_path) = editor_path
+                    && current_path == modified_path
+                {
+                    log::info!("🔄 [Workspace] Auto-reloading buffer: {}", current_path.display());
+                    let _ = self.editor.update(cx, |ed, _| ed.reload());
+                    cx.notify();
+                }
+            },
+            aemacs_core::bus::SystemEvent::Notification(msg) => {
+                log::info!("🔔 [Workspace] Notification: {msg}");
+                self.notification = Some(msg);
+                cx.notify();
+            },
+            aemacs_core::bus::SystemEvent::OpenFile(path) => {
+                match aemacs_core::Editor::from_file(path.clone()) {
+                    Ok(new_editor) => {
+                        log::info!("📂 [Workspace] Switching to file: {}", path.display());
+                        self.editor.update(cx, |ed, _| *ed = new_editor);
+                        self.notification = Some(format!("Opened: {}", path.display()));
+                    },
+                    Err(e) => {
+                        log::error!("⚠️ [Workspace] Failed to open file: {e}");
+                        self.notification = Some(format!("Error opening file: {e}"));
+                    },
+                }
+                cx.notify();
+            },
+            aemacs_core::bus::SystemEvent::PlanCreated(tasks) => {
+                log::info!("📋 [Workspace] Plan created with {} tasks.", tasks.len());
+                self.tasks = tasks
+                    .into_iter()
+                    .map(|desc| aemacs_core::task::Task {
+                        description: desc,
+                        status: aemacs_core::task::TaskStatus::Pending,
+                    })
+                    .collect();
+                self.sync_tasks_to_panel(cx);
+                cx.notify();
+            },
+            aemacs_core::bus::SystemEvent::TaskUpdated { index, status } => {
+                if let Some(task) = self.tasks.get_mut(index) {
+                    log::info!("✅ [Workspace] Task {index} updated to {status:?}.");
+                    task.status = status;
+                    self.sync_tasks_to_panel(cx);
+                    cx.notify();
+                }
+            },
+            aemacs_core::bus::SystemEvent::PersonaChanged { name, message } => {
+                log::info!("🔄 [Workspace] Programmatic persona switch: {name}");
+                self.ai_panel.update(cx, |panel, cx| {
+                    panel.handoff_persona(&name, message, cx);
+                });
+            },
+            aemacs_core::bus::SystemEvent::Signal { .. } => {},
+        }
+    }
+
+    fn sync_tasks_to_panel(&self, cx: &mut Context<'_, Self>) {
+        let tasks = self.tasks.clone();
+        self.ai_panel.update(cx, |panel, cx| {
+            panel.update_tasks(tasks, cx);
+        });
+    }
+
+    fn render_welcome() -> impl IntoElement {
+        let bg_color = rgb(0x0028_2c34);
+        let accent_color = rgb(0x00bd_93f9);
+        let key_hint_bg = rgb(0x003e_4451);
 
         div()
             .flex()
@@ -361,7 +389,7 @@ impl Workspace {
                                 div()
                                     .text_size(px(48.0))
                                     .font_weight(gpui::FontWeight::BOLD)
-                                    .text_color(rgb(0xe0e0e0))
+                                    .text_color(rgb(0x00e0_e0e0))
                                     .child("Æmacs"),
                             )
                             .child(
@@ -370,7 +398,7 @@ impl Workspace {
                                     .py(px(2.0))
                                     .rounded_md()
                                     .bg(accent_color)
-                                    .text_color(rgb(0x282c34))
+                                    .text_color(rgb(0x0028_2c34))
                                     .text_size(px(12.0))
                                     .font_weight(gpui::FontWeight::BOLD)
                                     .child("PRE-ALPHA"),
@@ -383,14 +411,14 @@ impl Workspace {
                     .flex()
                     .gap_x(px(20.0))
                     .text_sm()
-                    .text_color(rgb(0xabb2bf))
-                    .child(self.render_key_hint("Type", "Insert Text", key_hint_bg.into()))
-                    .child(self.render_key_hint("i", "Insert Mode", key_hint_bg.into()))
-                    .child(self.render_key_hint("ESC", "Normal Mode", key_hint_bg.into())),
+                    .text_color(rgb(0x00ab_b2bf))
+                    .child(Self::render_key_hint("Type", "Insert Text", key_hint_bg.into()))
+                    .child(Self::render_key_hint("i", "Insert Mode", key_hint_bg.into()))
+                    .child(Self::render_key_hint("ESC", "Normal Mode", key_hint_bg.into())),
             )
     }
 
-    fn render_key_hint(&self, key: &str, desc: &str, bg: gpui::Hsla) -> impl IntoElement {
+    fn render_key_hint(key: &str, desc: &str, bg: gpui::Hsla) -> impl IntoElement {
         div()
             .flex()
             .items_center()
@@ -402,11 +430,129 @@ impl Workspace {
                     .bg(bg)
                     .rounded_md()
                     .border_1()
-                    .border_color(rgb(0x1e222a))
+                    .border_color(rgb(0x001e_222a))
                     .font_family("Fira Code")
                     .child(key.to_string()),
             )
             .child(desc.to_string())
+    }
+
+    fn sync_editor_list_state(&mut self, line_count: usize, cursor_line: usize) {
+        let current_count = self.editor_list_state.item_count();
+
+        if current_count == line_count {
+            if cursor_line == self.last_cursor_line {
+                self.editor_list_state.splice(cursor_line..cursor_line + 1, 1);
+                self.gutter_list_state.splice(cursor_line..cursor_line + 1, 1);
+            } else {
+                let min_line = std::cmp::min(cursor_line, self.last_cursor_line);
+                let max_line = std::cmp::max(cursor_line, self.last_cursor_line);
+                if min_line != max_line {
+                    self.editor_list_state.splice(min_line..min_line + 1, 1);
+                    self.editor_list_state.splice(max_line..max_line + 1, 1);
+                    self.gutter_list_state.splice(min_line..min_line + 1, 1);
+                    self.gutter_list_state.splice(max_line..max_line + 1, 1);
+                }
+            }
+        } else {
+            self.editor_list_state.splice(0..current_count, line_count);
+            self.gutter_list_state.splice(0..current_count, line_count);
+        }
+
+        self.last_cursor_line = cursor_line;
+    }
+
+    fn render_main_view(&self, cx: &Context<'_, Self>, is_empty: bool) -> impl IntoElement {
+        let editor = self.editor.read(cx);
+        let focus_listener = cx.listener(|this, _, window, cx| {
+            window.focus(&this.focus_handle, cx);
+        });
+        let key_listener = cx.listener(Self::handle_keydown);
+        div()
+            .id("main_editor_area")
+            .flex()
+            .flex_1()
+            .flex_row()
+            .track_focus(&self.focus_handle)
+            .on_click(focus_listener)
+            .on_key_down(key_listener)
+            .child(
+                div()
+                    .w(px(50.0))
+                    .bg(rgb(0x0021_252b))
+                    .flex()
+                    .flex_col()
+                    .items_end()
+                    .pr(px(8.0))
+                    .pt(px(16.0))
+                    .text_size(px(14.0))
+                    .font_family("Fira Code")
+                    .text_color(rgb(0x0049_5162))
+                    .child(
+                        gpui::list(
+                            self.gutter_list_state.clone(),
+                            move |line_idx, _window, _cx| {
+                                if is_empty {
+                                    div().child("~").h(px(20.0)).into_any_element()
+                                } else {
+                                    div()
+                                        .child((line_idx + 1).to_string())
+                                        .h(px(20.0))
+                                        .into_any_element()
+                                }
+                            },
+                        )
+                        .w_full()
+                        .h_full(),
+                    ),
+            )
+            .child(if is_empty {
+                Self::render_welcome().into_any_element()
+            } else {
+                render_editor_view(editor, self.editor_list_state.clone(), false).into_any_element()
+            })
+    }
+
+    fn render_status_bar(
+        &self,
+        mode_name: String,
+        mode_color: gpui::Rgba,
+        line: usize,
+        col: usize,
+    ) -> impl IntoElement {
+        div()
+            .h(px(30.0))
+            .bg(rgb(0x0021_252b))
+            .border_t_1()
+            .border_color(rgb(0x0018_1a1f))
+            .flex()
+            .items_center()
+            .px(px(10.0))
+            .gap_x(px(10.0))
+            .text_size(px(12.0))
+            .font_family("Fira Code")
+            .child(
+                div()
+                    .px(px(8.0))
+                    .py(px(2.0))
+                    .rounded_sm()
+                    .bg(mode_color)
+                    .text_color(rgb(0x0028_2c34))
+                    .font_weight(gpui::FontWeight::BOLD)
+                    .child(mode_name),
+            )
+            .child(div().text_color(rgb(0x009d_a5b4)).child("buffer-1.rs"))
+            .when_some(self.notification.clone(), |this, msg| {
+                this.child(div().px(px(8.0)).text_color(rgb(0x00bd_93f9)).italic().child(msg))
+            })
+            .child(div().flex_1())
+            .child(div().text_color(rgb(0x00ff_5555)).child(if self.show_ai {
+                "AI: ON"
+            } else {
+                "AI: OFF"
+            }))
+            .child(div().text_color(rgb(0x009d_a5b4)).child(format!("Ln {line}, Col {col}")))
+            .child(div().text_color(rgb(0x0049_5162)).child("UTF-8"))
     }
 
     fn handle_keydown(
@@ -466,102 +612,32 @@ impl Workspace {
 
 impl Render for Workspace {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
-        let editor = self.editor.read(cx);
-        let line_count = editor.line_count();
-        let (line, col) = editor.cursor_position();
-        let cursor_line = line.saturating_sub(1);
-
-        let current_count = self.editor_list_state.item_count();
-
-        if current_count == line_count {
-            // Typing change: partial redraw
-            if cursor_line == self.last_cursor_line {
-                self.editor_list_state.splice(cursor_line..cursor_line + 1, 1);
-                self.gutter_list_state.splice(cursor_line..cursor_line + 1, 1);
-            } else {
-                let min_line = std::cmp::min(cursor_line, self.last_cursor_line);
-                let max_line = std::cmp::max(cursor_line, self.last_cursor_line);
-                if min_line != max_line {
-                    self.editor_list_state.splice(min_line..min_line + 1, 1);
-                    self.editor_list_state.splice(max_line..max_line + 1, 1);
-                    self.gutter_list_state.splice(min_line..min_line + 1, 1);
-                    self.gutter_list_state.splice(max_line..max_line + 1, 1);
-                }
-            }
-        } else {
-            // Structural change: full redraw needed
-            self.editor_list_state.splice(0..current_count, line_count);
-            self.gutter_list_state.splice(0..current_count, line_count);
-        }
-        self.last_cursor_line = cursor_line;
-
-        let is_empty = editor.buffer.len_chars() == 0;
-        let mode_name = format!("{:?}", editor.mode).to_uppercase();
-
-        let bg_color = rgb(0x282c34);
-        let gutter_bg = rgb(0x21252b);
-        let gutter_text = rgb(0x495162);
-        let status_bg = rgb(0x21252b);
-        let status_fg = rgb(0x9da5b4);
-
-        let mode_color = match editor.mode {
-            Mode::Normal => rgb(0xd19a66), // Orange
-            Mode::Insert => rgb(0x98c379), // Green
-            Mode::Visual => rgb(0x3e4451), // Visual Grey
-        };
-
-        // Main Editor Area
-        let main_view = div()
-            .id("main_editor_area")
-            .flex()
-            .flex_1()
-            .flex_row()
-            .track_focus(&self.focus_handle)
-            .on_click(cx.listener(|this, _, window, cx| {
-                window.focus(&this.focus_handle, cx);
-            }))
-            .on_key_down(cx.listener(Self::handle_keydown))
-            .child(
-                div()
-                    .w(px(50.0))
-                    .bg(gutter_bg)
-                    .flex()
-                    .flex_col()
-                    .items_end()
-                    .pr(px(8.0))
-                    .pt(px(16.0))
-                    .text_size(px(14.0))
-                    .font_family("Fira Code")
-                    .text_color(gutter_text)
-                    .child(
-                        gpui::list(
-                            self.gutter_list_state.clone(),
-                            move |line_idx, _window, _cx| {
-                                if is_empty {
-                                    div().child("~").h(px(20.0)).into_any_element()
-                                } else {
-                                    div()
-                                        .child((line_idx + 1).to_string())
-                                        .h(px(20.0))
-                                        .into_any_element()
-                                }
-                            },
-                        )
-                        .w_full()
-                        .h_full(),
-                    ),
+        let (line, col, line_count, mode, is_empty) = {
+            let editor = self.editor.read(cx);
+            (
+                editor.cursor_position().0,
+                editor.cursor_position().1,
+                editor.line_count(),
+                editor.mode,
+                editor.buffer.len_chars() == 0,
             )
-            .child(if is_empty {
-                self.render_welcome().into_any_element()
-            } else {
-                render_editor_view(editor, self.editor_list_state.clone(), false).into_any_element()
-            });
+        };
+        let cursor_line = line.saturating_sub(1);
+        self.sync_editor_list_state(line_count, cursor_line);
+        let mode_name = format!("{mode:?}").to_uppercase();
+        let mode_color = match mode {
+            Mode::Normal => rgb(0x00d1_9a66),
+            Mode::Insert => rgb(0x0098_c379),
+            Mode::Visual => rgb(0x003e_4451),
+        };
+        let ai_maximized = self.ai_panel.read(cx).is_maximized;
+        let main_view = self.render_main_view(cx, is_empty);
 
         div()
             .flex()
             .flex_col()
             .size_full()
-            .bg(bg_color)
+            .bg(rgb(0x0028_2c34))
             .child(
                 div()
                     .flex()
@@ -573,68 +649,24 @@ impl Render for Workspace {
                             .flex()
                             .flex_col()
                             .flex_1()
-                            .when(
-                                self.show_ai && self.ai_panel.read(cx).is_maximized,
-                                gpui::Styled::hidden,
-                            )
+                            .when(self.show_ai && ai_maximized, gpui::Styled::hidden)
                             .child(main_view),
                     )
                     .when(self.show_ai, |this| {
-                        let is_maximized = self.ai_panel.read(cx).is_maximized;
                         this.child(
                             div()
                                 .h_full() // Force strict height boundary
                                 .min_h_0() // Allow shrinking below content size
-                                .when(!is_maximized, |this| this.w(px(350.0)))
-                                .when(is_maximized, gpui::Styled::flex_1)
+                                .when(!ai_maximized, |this| this.w(px(350.0)))
+                                .when(ai_maximized, gpui::Styled::flex_1)
                                 .overflow_hidden()
                                 .border_l_1()
-                                .border_color(rgb(0x181a1f))
+                                .border_color(rgb(0x0018_1a1f))
                                 .child(self.ai_panel.clone()),
                         )
                     }),
             )
-            .child(
-                div()
-                    .h(px(30.0))
-                    .bg(status_bg)
-                    .border_t_1()
-                    .border_color(rgb(0x181a1f))
-                    .flex()
-                    .items_center()
-                    .px(px(10.0))
-                    .gap_x(px(10.0))
-                    .text_size(px(12.0))
-                    .font_family("Fira Code")
-                    .child(
-                        div()
-                            .px(px(8.0))
-                            .py(px(2.0))
-                            .rounded_sm()
-                            .bg(mode_color)
-                            .text_color(rgb(0x282c34))
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .child(mode_name),
-                    )
-                    .child(div().text_color(status_fg).child("buffer-1.rs"))
-                    .when_some(self.notification.clone(), |this, msg| {
-                        this.child(
-                            div()
-                                .px(px(8.0))
-                                .text_color(rgb(0xbd93f9)) // Purple notification text
-                                .italic()
-                                .child(msg),
-                        )
-                    })
-                    .child(div().flex_1())
-                    .child(div().text_color(rgb(0xff5555)).child(if self.show_ai {
-                        "AI: ON"
-                    } else {
-                        "AI: OFF"
-                    }))
-                    .child(div().text_color(status_fg).child(format!("Ln {line}, Col {col}")))
-                    .child(div().text_color(gutter_text).child("UTF-8")),
-            )
+            .child(self.render_status_bar(mode_name, mode_color, line, col))
     }
 }
 

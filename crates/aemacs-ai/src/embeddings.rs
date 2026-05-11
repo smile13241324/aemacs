@@ -43,6 +43,10 @@ impl OllamaEmbedder {
 
     /// Translates a block of text into a vector of floating-point numbers.
     /// This is used for semantic search and memory retrieval.
+    ///
+    /// # Errors
+    /// Returns an error if the request fails, the embedding service rejects it, or the response
+    /// body cannot be decoded.
     pub async fn embed(&self, text: &str) -> AIResult<Vec<f32>> {
         let url = format!("{}/api/embeddings", self.base_url.trim_end_matches('/'));
 

@@ -70,7 +70,7 @@ fn format_mnemic_reflection(directives: &[String]) -> String {
 
     let mut reflection = "<system_memory_context>\nPrior Insights & Directives:\n".to_string();
     for d in directives {
-        let _ = write!(reflection, "- {d}\n");
+        let _ = writeln!(reflection, "- {d}");
     }
     reflection.push_str("</system_memory_context>");
     reflection
@@ -128,6 +128,103 @@ impl AutonomousService {
         Self { bus, agent_name, persona_registry, registry, backend, kb }
     }
 
+    fn spawn_background_tasks(&self, interval_seconds: u64) -> Result<()> {
+        spawn_sentinel(self.bus.clone())?;
+        self.spawn_heartbeat(interval_seconds);
+        self.spawn_triage_router();
+        Ok(())
+    }
+
+    fn spawn_heartbeat(&self, interval_seconds: u64) {
+        let heartbeat = TimePulseObserver { interval_seconds };
+        let bus_clone = self.bus.clone();
+        tokio::spawn(async move {
+            if let Err(error) = heartbeat.run(bus_clone).await {
+                warn!("⏰ Heartbeat failed: {}", error);
+            }
+        });
+    }
+
+    fn spawn_triage_router(&self) {
+        let triage_router = aemacs_core::triage::TriageRouter::new(
+            self.bus.clone(),
+            std::time::Duration::from_millis(500),
+        );
+        tokio::spawn(async move {
+            if let Err(error) = triage_router.run().await {
+                warn!("🧠 Triage Router failed: {}", error);
+            }
+        });
+    }
+
+    async fn apply_persona(&self, conversation: &mut Conversation) {
+        if let Some(persona) = self.persona_registry.get_persona(&self.agent_name).await {
+            conversation.set_persona(persona);
+        } else {
+            warn!("⚠️ Agent persona '{}' not found. Running as generalist.", self.agent_name);
+        }
+    }
+
+    async fn initialize_conversation(&self) -> Conversation {
+        let mut conversation = Conversation::new(self.backend.name());
+        conversation.set_sovereign_mode(true);
+        self.apply_persona(&mut conversation).await;
+        conversation
+    }
+
+    fn build_trigger_message(source: &str, event_type: &str, payload: &str) -> Option<String> {
+        if event_type == "AutonomousIntent" {
+            match serde_json::from_str::<aemacs_core::signals::SignalContext>(payload) {
+                Ok(ctx) => {
+                    use std::fmt::Write as _;
+
+                    let mut msg = format!("A sovereign intent was detected: {:?}\n", ctx.intent);
+                    if let Some(path) = ctx.file_path {
+                        let _ = writeln!(msg, "File: {path}");
+                    }
+                    if let Some(snippet) = ctx.snippet {
+                        let _ = writeln!(msg, "Context Snippet:\n```\n{snippet}\n```");
+                    }
+                    Some(msg)
+                },
+                Err(error) => {
+                    warn!("⚠️ Failed to parse SignalContext: {}", error);
+                    None
+                },
+            }
+        } else if event_type == "TimePulse" {
+            Some(
+                "Tick. Perform a mental inventory and decide on your next autonomous action."
+                    .to_string(),
+            )
+        } else if source.starts_with("Bridge:") {
+            Some(format!(
+                "External interrupt received from source '{source}' (Type: '{event_type}'). Payload: {payload}"
+            ))
+        } else {
+            None
+        }
+    }
+
+    async fn awaken_agent(
+        &self,
+        host: &ServerHost,
+        conversation: &mut Conversation,
+        source: &str,
+        event_type: &str,
+        msg: String,
+    ) {
+        info!("⚡ [AUTONOMOUS] Waking agent: {} (Source: {})", event_type, source);
+        info!("🔍 [AUTONOMOUS] Performing Mnemic Reflection...");
+
+        let reflection = perform_mnemic_reflection(&self.kb).await;
+        conversation.add_message(Message::system(reflection));
+        conversation.add_message(Message::user(msg));
+
+        let _ = run_agent_loop(self.backend.as_ref(), &self.registry, host, conversation, 10, None)
+            .await;
+    }
+
     /// Starts the sovereign execution loop.
     /// This function blocks until the service is terminated or an unrecoverable error occurs.
     ///
@@ -140,41 +237,11 @@ impl AutonomousService {
         );
         println!("🚀 Sovereign Mode Active: Automated Tool Approval Enabled.");
 
-        // 1. Ignite Life-Support
-        spawn_sentinel(self.bus.clone())?;
-
-        // 2. Ignite Sensory Substrate (ACO-007, ACO-029)
-        let heartbeat = TimePulseObserver { interval_seconds };
-        let bus_clone = self.bus.clone();
-        tokio::spawn(async move {
-            if let Err(e) = heartbeat.run(bus_clone).await {
-                warn!("⏰ Heartbeat failed: {}", e);
-            }
-        });
-
-        // ACO-029-02: Start the Triage Router
-        let triage_router = aemacs_core::triage::TriageRouter::new(
-            self.bus.clone(),
-            std::time::Duration::from_millis(500),
-        );
-        tokio::spawn(async move {
-            if let Err(e) = triage_router.run().await {
-                warn!("🧠 Triage Router failed: {}", e);
-            }
-        });
+        self.spawn_background_tasks(interval_seconds)?;
 
         // 3. The Sovereign Loop
         let mut rx = self.bus.subscribe();
-        let mut conversation = Conversation::new(self.backend.name());
-        conversation.set_sovereign_mode(true);
-
-        // Fetch and set the initial persona
-        if let Some(persona) = self.persona_registry.get_persona(&self.agent_name).await {
-            conversation.set_persona(persona);
-        } else {
-            warn!("⚠️ Agent persona '{}' not found. Running as generalist.", self.agent_name);
-        }
-
+        let mut conversation = self.initialize_conversation().await;
         let host = ServerHost { agent_id: self.agent_name.clone(), bus: self.bus.clone() };
 
         info!("🛡️ Sentinel Active. Waiting for signals...");
@@ -186,11 +253,7 @@ impl AutonomousService {
                         "🧠 [AUTONOMOUS] Sentinel Alert received! Initiating Mind-Heal Protocol..."
                     );
                     conversation.clear_history();
-                    // Re-add the initial persona prompt
-                    if let Some(persona) = self.persona_registry.get_persona(&self.agent_name).await
-                    {
-                        conversation.set_persona(persona);
-                    }
+                    self.apply_persona(&mut conversation).await;
                     info!("✨ [AUTONOMOUS] Mind-Heal complete. Conversation history purged.");
                 },
                 SystemEvent::Signal { source, event_type, payload } => {
@@ -200,58 +263,9 @@ impl AutonomousService {
                         );
                     }
 
-                    let trigger_message = if event_type == "AutonomousIntent" {
-                        use std::fmt::Write;
-                        match serde_json::from_str::<aemacs_core::signals::SignalContext>(&payload)
-                        {
-                            Ok(ctx) => {
-                                let mut msg =
-                                    format!("A sovereign intent was detected: {:?}\n", ctx.intent);
-                                if let Some(path) = ctx.file_path {
-                                    let _ = write!(msg, "File: {path}\n");
-                                }
-                                if let Some(snippet) = ctx.snippet {
-                                    let _ = write!(msg, "Context Snippet:\n```\n{snippet}\n```\n");
-                                }
-                                Some(msg)
-                            },
-                            Err(e) => {
-                                warn!("⚠️ Failed to parse SignalContext: {}", e);
-                                None
-                            },
-                        }
-                    } else if event_type == "TimePulse" {
-                        // Keep legacy fallback for unrouted pulses if needed,
-                        // though router handles them now.
-                        Some("Tick. Perform a mental inventory and decide on your next autonomous action.".to_string())
-                    } else if source.starts_with("Bridge:") {
-                        Some(format!(
-                            "External interrupt received from source '{source}' (Type: '{event_type}'). Payload: {payload}"
-                        ))
-                    } else {
-                        None
-                    };
-
-                    if let Some(msg) = trigger_message {
-                        info!("⚡ [AUTONOMOUS] Waking agent: {} (Source: {})", event_type, source);
-
-                        // Phase 2: Mnemic Reflection
-                        info!("🔍 [AUTONOMOUS] Performing Mnemic Reflection...");
-                        let reflection = perform_mnemic_reflection(&self.kb).await;
-                        conversation.add_message(Message::system(reflection));
-
-                        // Action phase
-                        conversation.add_message(Message::user(msg));
-
-                        let _ = run_agent_loop(
-                            self.backend.as_ref(),
-                            &self.registry,
-                            &host,
-                            &mut conversation,
-                            10,
-                            None, // No stream proxy needed for headless mode yet
-                        )
-                        .await;
+                    if let Some(msg) = Self::build_trigger_message(&source, &event_type, &payload) {
+                        self.awaken_agent(&host, &mut conversation, &source, &event_type, msg)
+                            .await;
                     }
                 },
                 _ => {}, // Ignore other event types
@@ -291,22 +305,28 @@ mod tests {
         let bus = EventBus::new();
         let tokio_handle = tokio::runtime::Handle::current();
         let persona_registry = PersonaRegistry::new(tokio_handle).await?;
-        let kb = Arc::new(KnowledgeBase::new(
-            "http://localhost:6334",
-            "http://localhost:11434",
-            crate::rag::Environment::Test,
-        )?);
-        let registry = Arc::new(ToolRegistry::new());
-        let backend = Arc::new(OpenAICompatibleBackend::new("http://localhost:11434/v1", None));
+        let service = {
+            let registry = Arc::new(ToolRegistry::new());
+            let backend =
+                Arc::new(OpenAICompatibleBackend::new("http://localhost:11434/v1", None)?);
+            let kb = Arc::new(
+                KnowledgeBase::new(
+                    "http://localhost:6334",
+                    "http://localhost:11434",
+                    crate::rag::Environment::Test,
+                )
+                .await?,
+            );
 
-        let service = AutonomousService::new(
-            bus.clone(),
-            "bob".to_string(),
-            persona_registry,
-            registry,
-            backend,
-            kb,
-        );
+            AutonomousService::new(
+                bus.clone(),
+                "bob".to_string(),
+                persona_registry,
+                registry,
+                backend,
+                kb,
+            )
+        };
 
         // Quest: Run the loop in a background task
         tokio::spawn(async move {
@@ -340,22 +360,28 @@ mod tests {
         let bus = EventBus::new();
         let tokio_handle = tokio::runtime::Handle::current();
         let persona_registry = PersonaRegistry::new(tokio_handle).await?;
-        let kb = Arc::new(KnowledgeBase::new(
-            "http://localhost:6334",
-            "http://localhost:11434",
-            crate::rag::Environment::Test,
-        )?);
-        let registry = Arc::new(ToolRegistry::new());
-        let backend = Arc::new(OpenAICompatibleBackend::new("http://localhost:11434/v1", None));
+        let service = {
+            let registry = Arc::new(ToolRegistry::new());
+            let backend =
+                Arc::new(OpenAICompatibleBackend::new("http://localhost:11434/v1", None)?);
+            let kb = Arc::new(
+                KnowledgeBase::new(
+                    "http://localhost:6334",
+                    "http://localhost:11434",
+                    crate::rag::Environment::Test,
+                )
+                .await?,
+            );
 
-        let service = AutonomousService::new(
-            bus.clone(),
-            "bob".to_string(),
-            persona_registry,
-            registry,
-            backend,
-            kb,
-        );
+            AutonomousService::new(
+                bus.clone(),
+                "bob".to_string(),
+                persona_registry,
+                registry,
+                backend,
+                kb,
+            )
+        };
 
         // Quest: Run the service loop
         tokio::spawn(async move {
