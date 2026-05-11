@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use aemacs_core::bus::SystemEvent;
 use qdrant_client::{
@@ -85,6 +86,8 @@ pub struct MemoryResult {
     pub id: String,
     /// The raw content string of the memory.
     pub content: String,
+    /// The similarity score returned by the vector database.
+    pub score: f32,
     /// Metadata associated with the memory (e.g., tags, timestamps, agent IDs).
     pub metadata: HashMap<String, Value>,
 }
@@ -98,6 +101,8 @@ pub struct KnowledgeBase {
     embedder: OllamaEmbedder,
     /// The name of the active Qdrant collection.
     collection_name: String,
+    /// Telemetry logger for tracking search performance.
+    telemetry: Arc<crate::rag_telemetry::RagTelemetry>,
 }
 
 impl std::fmt::Debug for KnowledgeBase {
@@ -112,7 +117,7 @@ impl std::fmt::Debug for KnowledgeBase {
 
 impl KnowledgeBase {
     /// Initializes a new `KnowledgeBase` connection.
-    pub fn new(
+    pub async fn new(
         qdrant_url: impl Into<String>,
         ollama_url: impl Into<String>,
         env: Environment,
@@ -128,7 +133,13 @@ impl KnowledgeBase {
             Environment::Production => "aemacs_docs".to_string(),
         };
 
-        Ok(Self { client, embedder, collection_name })
+        // Initialize telemetry (Async initialization)
+        let telemetry = Arc::new(crate::rag_telemetry::RagTelemetry::new().await?);
+
+        // Start the background calibration daemon ("The Night Shift")
+        telemetry.clone().start_calibration_daemon();
+
+        Ok(Self { client, embedder, collection_name, telemetry })
     }
 
     /// Fetches the most recent 'CORE' or 'INSIGHT' directives for Mnemic Reflection.
@@ -237,7 +248,7 @@ impl KnowledgeBase {
                     None => "unknown".to_string(),
                 };
 
-                Some((chunk_idx, MemoryResult { id, content, metadata }))
+                Some((chunk_idx, MemoryResult { id, content, score: 1.0, metadata }))
             })
             .collect();
 
@@ -408,7 +419,7 @@ impl KnowledgeBase {
                     None => "unknown".to_string(),
                 };
 
-                Some(MemoryResult { id, content, metadata })
+                Some(MemoryResult { id, content, score: point.score, metadata })
             })
             .collect();
 
@@ -790,9 +801,17 @@ impl KnowledgeBase {
 
     /// Searches for foundation-era directives and historical context.
     pub async fn search_genesis(&self, query: &str) -> AIResult<Vec<MemoryResult>> {
-        // Genesis searches bypass the multi-step confidence trigger because they are historical queries, not active memory failures.
+        // Genesis searches use their own calibrated silo threshold.
         let categories = Some(vec!["GENESIS"]);
-        self.search(query, 10, Some(0.50), None, categories).await
+        let threshold = self.telemetry.get_threshold("GENESIS").await;
+        let results = self.search(query, 10, Some(threshold), None, categories).await?;
+
+        // Telemetry Logging: Record successful scores for calibration
+        if let Some(top_result) = results.first() {
+            self.telemetry.log_score("GENESIS", top_result.score).await;
+        }
+
+        Ok(results)
     }
 
     /// Orchestrates a multi-step search that lowers the confidence threshold until results are found.
@@ -804,10 +823,14 @@ impl KnowledgeBase {
         categories: Option<Vec<&str>>,
         event_tx: Option<tokio::sync::broadcast::Sender<SystemEvent>>,
     ) -> AIResult<Vec<MemoryResult>> {
-        // High Confidence (Calibrated to 0.72 based on nomic-embed-text direct hit of 0.75)
-        let mut results = self.search(query, 10, Some(0.72), agent_id, categories.clone()).await?;
+        // Determine the primary silo for threshold calibration
+        let silo = categories.as_ref().and_then(|c| c.first()).cloned().unwrap_or("CORE");
+        let high_threshold = self.telemetry.get_threshold(silo).await;
 
-        // Medium Confidence (Calibrated to 0.60)
+        // High Confidence (Calibrated dynamically)
+        let mut results = self.search(query, 10, Some(high_threshold), agent_id, categories.clone()).await?;
+
+        // Medium Confidence (Calibrated to 0.60 - Static for now)
         if results.is_empty() {
             results = self.search(query, 10, Some(0.60), agent_id, categories.clone()).await?;
         }
@@ -842,6 +865,22 @@ impl KnowledgeBase {
             let ts_b = b.metadata.get("timestamp").and_then(|v| v.as_str()).unwrap_or("");
             ts_b.cmp(ts_a) // Descending order
         });
+
+        // Telemetry Logging: Record successful scores for calibration
+        if let Some(top_result) = results.first() {
+            let cat_str = top_result.metadata.get("category").and_then(|v| v.as_str()).unwrap_or("UNKNOWN");
+            let era_str = top_result.metadata.get("era").and_then(|v| v.as_str()).unwrap_or("MODERN");
+
+            let cat_upper = cat_str.to_uppercase();
+            let era_upper = era_str.to_uppercase();
+
+            let silo = match (cat_upper.as_str(), era_upper.as_str()) {
+                ("ARCHIVE", "CLOUD") => "HISTORIC",
+                _ => cat_str,
+            };
+
+            self.telemetry.log_score(silo, top_result.score).await;
+        }
 
         Ok(results)
     }
