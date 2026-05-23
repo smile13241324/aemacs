@@ -175,7 +175,7 @@ mod tests {
 
     #[test]
     fn test_load_config_with_rag_thresholds_override() {
-        /// HARK! Verifying the manual override of RAG thresholds. [R-CONFIG-01]
+        // HARK! Verifying the manual override of RAG thresholds. [R-CONFIG-01]
         let mut file = NamedTempFile::new().expect("Should not fail in test");
         writeln!(
             file,
@@ -192,7 +192,7 @@ mod tests {
 
     #[test]
     fn test_load_config_legacy_no_rag_thresholds() {
-        /// HARK! Ensuring legacy config files without RAG thresholds default to None. [R-CONFIG-02]
+        // HARK! Ensuring legacy config files without RAG thresholds default to None. [R-CONFIG-02]
         let mut file = NamedTempFile::new().expect("Should not fail in test");
         // An old config with only the basics
         writeln!(file, "UserConfig(hardware_tier: Some(\"LOW\"))")

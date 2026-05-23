@@ -106,10 +106,7 @@ async fn main() -> anyhow::Result<()> {
             let ollama_url = config.ollama_url.as_deref().unwrap_or("http://localhost:11434");
 
             let env = if *production { Environment::Production } else { Environment::Test };
-            let kb = Arc::new(KnowledgeBase::new(qdrant_url, ollama_url, env).await?);
-
-            // Ensure collection exists (default dim 768 for nomic)
-            kb.ensure_collection(768).await?;
+            let kb = Arc::new(KnowledgeBase::bootstrap(qdrant_url, ollama_url, env).await?);
 
             println!("📥  [IMPORT] Ingesting {}...", file.display());
             import_jsonl(&kb, file).await?;
@@ -123,7 +120,7 @@ async fn main() -> anyhow::Result<()> {
             let ollama_url = config.ollama_url.as_deref().unwrap_or("http://localhost:11434");
 
             let env = if *production { Environment::Production } else { Environment::Test };
-            let kb = Arc::new(KnowledgeBase::new(qdrant_url, ollama_url, env).await?);
+            let kb = Arc::new(KnowledgeBase::bootstrap(qdrant_url, ollama_url, env).await?);
 
             println!("📤  [EXPORT] Searching matrix for agent: {agent_id}...");
             export_jsonl(&kb, agent_id, output).await?;

@@ -413,7 +413,7 @@ This block never ends...
         let test_agent = format!("E2EAgent_{}", uuid::Uuid::new_v4().to_string().replace('-', ""));
 
         // 1. Setup RAG Environment
-        let Ok(kb) = KnowledgeBase::new(
+        let Ok(kb) = KnowledgeBase::bootstrap(
             "http://localhost:6334",
             "http://localhost:11434",
             Environment::Test,
@@ -423,11 +423,6 @@ This block never ends...
             println!("Skipping E2E quest: Infrastructure offline.");
             return Ok(());
         };
-        if kb.ensure_collection(768).await.is_err() {
-            println!("Skipping E2E quest: Infrastructure offline.");
-            return Ok(());
-        }
-
         // 2. EXTRACTION Phase
         let mut src_file = NamedTempFile::new()?;
         let src_content = "\

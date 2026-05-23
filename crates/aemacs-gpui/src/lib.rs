@@ -138,7 +138,7 @@ impl Workspace {
     ) -> (Arc<KnowledgeBase>, Arc<PersonaRegistry>, aemacs_core::bus::EventBus, Arc<ToolRegistry>)
     {
         let kb = Arc::new(
-            futures::executor::block_on(KnowledgeBase::new(
+            futures::executor::block_on(KnowledgeBase::bootstrap(
                 qdrant_url.unwrap_or("http://localhost:6334"),
                 ollama_url.unwrap_or("http://localhost:11434"),
                 aemacs_ai::rag::Environment::Production,

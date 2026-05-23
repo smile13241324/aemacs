@@ -310,7 +310,7 @@ mod tests {
             let backend =
                 Arc::new(OpenAICompatibleBackend::new("http://localhost:11434/v1", None)?);
             let kb = Arc::new(
-                KnowledgeBase::new(
+                KnowledgeBase::bootstrap(
                     "http://localhost:6334",
                     "http://localhost:11434",
                     crate::rag::Environment::Test,
@@ -365,7 +365,7 @@ mod tests {
             let backend =
                 Arc::new(OpenAICompatibleBackend::new("http://localhost:11434/v1", None)?);
             let kb = Arc::new(
-                KnowledgeBase::new(
+                KnowledgeBase::bootstrap(
                     "http://localhost:6334",
                     "http://localhost:11434",
                     crate::rag::Environment::Test,

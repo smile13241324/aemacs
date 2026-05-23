@@ -1,20 +1,20 @@
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::{collections::HashMap, fmt::Write as _, sync::Arc};
 
 use aemacs_core::bus::SystemEvent;
 use qdrant_client::{
     Payload, Qdrant,
     qdrant::{
         Condition, CreateCollection, DeletePointsBuilder, Distance, FieldCondition, Filter,
-        PointId, PointStruct, ScrollPoints, SearchPoints, UpsertPoints, VectorParams,
-        VectorsConfig, condition::ConditionOneOf, r#match::MatchValue, vectors_config::Config,
+        PointId, PointStruct, ScrollPoints, SearchPoints, UpdateCollection, UpsertPoints,
+        Value as QdrantValue, VectorParams, VectorsConfig, condition::ConditionOneOf,
+        r#match::MatchValue, vectors_config::Config,
     },
 };
 use serde::Serialize;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-use crate::{AIError, AIResult, embeddings::OllamaEmbedder};
+use crate::{AIError, AIResult, embeddings::OllamaEmbedder, rag_telemetry::RecallOutcome};
 
 /// Defines the operational environment for the Knowledge Base.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,12 +84,44 @@ impl std::fmt::Display for MemoryCategory {
 pub struct MemoryResult {
     /// The unique identifier of the memory point in Qdrant.
     pub id: String,
-    /// The raw content string of the memory.
+    /// The clean, unprefixed content string of the memory.
     pub content: String,
     /// The similarity score returned by the vector database.
     pub score: f32,
     /// Metadata associated with the memory (e.g., tags, timestamps, agent IDs).
     pub metadata: HashMap<String, Value>,
+}
+
+const CONTENT_KEY: &str = "content";
+const DEFAULT_COLLECTION_DIMENSION: u64 = 768;
+const DEFAULT_SEARCH_LIMIT: u64 = 10;
+const MEDIUM_CONFIDENCE_THRESHOLD: f32 = 0.60;
+const LOW_CONFIDENCE_THRESHOLD: f32 = 0.50;
+type RetrievedPayload = HashMap<String, QdrantValue>;
+
+struct InsightRecord<'a> {
+    category: MemoryCategory,
+    era: MemoryEra,
+    origin: MemoryOrigin,
+    agent_id: &'a str,
+    phase: Option<&'a str>,
+    context: Option<&'a str>,
+    timestamp: Option<&'a str>,
+    payload: &'a str,
+}
+
+struct ArchiveRecord<'a> {
+    category: MemoryCategory,
+    era: MemoryEra,
+    origin: MemoryOrigin,
+    agent_id: &'a str,
+    role: Option<&'a str>,
+    phase: Option<&'a str>,
+    context: Option<&'a str>,
+    session_id: Option<&'a str>,
+    turn_index: Option<usize>,
+    timestamp: Option<&'a str>,
+    payload: &'a str,
 }
 
 /// The `KnowledgeBase` acts as the RAG (Retrieval-Augmented Generation) Fortress.
@@ -111,12 +143,43 @@ impl std::fmt::Debug for KnowledgeBase {
             .field("collection_name", &self.collection_name)
             .field("embedder", &self.embedder)
             .field("client", &"Qdrant")
+            .field("telemetry", &self.telemetry)
             .finish()
     }
 }
 
+fn degraded_recall_signal(
+    query: &str,
+    recall_outcome: RecallOutcome,
+    maintenance_triggered: bool,
+) -> Option<SystemEvent> {
+    if !matches!(
+        recall_outcome,
+        RecallOutcome::Low | RecallOutcome::None | RecallOutcome::DiagnosticOnly
+    ) {
+        return None;
+    }
+
+    let payload = json!({
+        "query": query,
+        "confidence": recall_outcome.as_str(),
+        "maintenance_triggered": maintenance_triggered,
+    })
+    .to_string();
+
+    Some(SystemEvent::Signal {
+        source: "RAG_Fortress".to_string(),
+        event_type: "LowConfidenceRecall".to_string(),
+        payload,
+    })
+}
+
 impl KnowledgeBase {
     /// Initializes a new `KnowledgeBase` connection.
+    ///
+    /// # Errors
+    /// Returns an error if the Qdrant client cannot be created or if telemetry initialization
+    /// fails.
     pub async fn new(
         qdrant_url: impl Into<String>,
         ollama_url: impl Into<String>,
@@ -142,8 +205,28 @@ impl KnowledgeBase {
         Ok(Self { client, embedder, collection_name, telemetry })
     }
 
+    /// Initializes a new `KnowledgeBase` and ensures its backing collection exists.
+    ///
+    /// This is the shared application bootstrap path for both production and test environments.
+    ///
+    /// # Errors
+    /// Returns an error if the knowledge base cannot be initialized or if the required Qdrant
+    /// collection cannot be created or queried.
+    pub async fn bootstrap(
+        qdrant_url: impl Into<String>,
+        ollama_url: impl Into<String>,
+        env: Environment,
+    ) -> AIResult<Self> {
+        let knowledge_base = Self::new(qdrant_url, ollama_url, env).await?;
+        knowledge_base.ensure_collection(DEFAULT_COLLECTION_DIMENSION).await?;
+        Ok(knowledge_base)
+    }
+
     /// Fetches the most recent 'CORE' or 'INSIGHT' directives for Mnemic Reflection.
     /// These represent high-level rules and behavioral truths learned by the system.
+    ///
+    /// # Errors
+    /// Returns an error if Qdrant cannot be queried for directive payloads.
     pub async fn get_core_directives(&self) -> anyhow::Result<Vec<String>> {
         let collection_name = &self.collection_name;
         let mut cat_conditions = Vec::new();
@@ -177,8 +260,8 @@ impl KnowledgeBase {
 
         let mut contents = Vec::new();
         for point in scroll_result.result {
-            if let Some(content) = point.payload.get("content").and_then(|v| v.as_str()) {
-                contents.push(content.clone());
+            if let Some(content) = Self::clean_content_from_payload(&point.payload) {
+                contents.push(content);
             }
         }
 
@@ -187,6 +270,9 @@ impl KnowledgeBase {
 
     /// Fetches all chunks associated with a specific `message_id`, sorted by their original chunk index.
     /// This is used to reconstruct long messages that were split during storage.
+    ///
+    /// # Errors
+    /// Returns an error if the archive chunks cannot be retrieved from Qdrant.
     pub async fn fetch_full_message(&self, message_id: &str) -> AIResult<Vec<MemoryResult>> {
         let collection_name = &self.collection_name;
         let filter = Filter {
@@ -219,34 +305,10 @@ impl KnowledgeBase {
             .result
             .into_iter()
             .filter_map(|point| {
-                let content = point.payload.get("content").and_then(|v| v.as_str().cloned())?;
-
-                let mut metadata = HashMap::new();
-                let mut chunk_idx = 0;
-
-                for (k, v) in point.payload {
-                    if k == "chunk_index" {
-                        if let Some(s) = v.as_str() {
-                            chunk_idx = s.parse::<usize>().unwrap_or(0);
-                        } else if let Some(n) = v.as_integer() {
-                            chunk_idx = n as usize;
-                        }
-                    }
-                    if k != "content" {
-                        metadata.insert(k, v.into());
-                    }
-                }
-
-                let id = match point.id {
-                    Some(id) => match id.point_id_options {
-                        Some(qdrant_client::qdrant::point_id::PointIdOptions::Num(n)) => {
-                            n.to_string()
-                        },
-                        Some(qdrant_client::qdrant::point_id::PointIdOptions::Uuid(s)) => s,
-                        None => "unknown".to_string(),
-                    },
-                    None => "unknown".to_string(),
-                };
+                let content = Self::clean_content_from_payload(&point.payload)?;
+                let chunk_idx = Self::chunk_index_from_payload(&point.payload);
+                let metadata = Self::metadata_from_payload(point.payload);
+                let id = Self::point_id_to_string(point.id);
 
                 Some((chunk_idx, MemoryResult { id, content, score: 1.0, metadata }))
             })
@@ -259,6 +321,9 @@ impl KnowledgeBase {
     }
 
     /// Verifies that the required Qdrant collection exists, creating it if necessary.
+    ///
+    /// # Errors
+    /// Returns an error if the collection cannot be created or queried.
     pub async fn ensure_collection(&self, dim: u64) -> AIResult<()> {
         let collection_name = &self.collection_name;
         if !self.client.collection_exists(collection_name).await.unwrap_or(false) {
@@ -289,18 +354,18 @@ impl KnowledgeBase {
     /// Internal helper to add a document to the vector store with optional metadata.
     async fn add_document(
         &self,
+        formatted_content: &str,
         content: &str,
         metadata: Option<HashMap<String, String>>,
     ) -> AIResult<()> {
         let collection_name = &self.collection_name;
         // Nomic v1.5 requires prefix for documents
-        let content_for_embedding = format!("search_document: {content}");
+        let content_for_embedding = format!("search_document: {formatted_content}");
         let embedding = self.embedder.embed(&content_for_embedding).await?;
         let id = Uuid::new_v4();
 
         let mut payload = Payload::new();
-        // Store ORIGINAL content in payload
-        payload.insert("content", json!(content));
+        payload.insert(CONTENT_KEY, json!(content));
 
         if let Some(meta) = metadata {
             for (k, v) in meta {
@@ -323,6 +388,8 @@ impl KnowledgeBase {
     }
 
     /// Internal search function that performs vector similarity search with optional filtering.
+    /// When `score_threshold` is `None`, Qdrant is allowed to return diagnostic low-similarity hits
+    /// without any score floor.
     async fn search(
         &self,
         query: &str,
@@ -335,9 +402,6 @@ impl KnowledgeBase {
         // Nomic v1.5 requires prefix for queries
         let query_for_embedding = format!("search_query: {query}");
         let vector = self.embedder.embed(&query_for_embedding).await?;
-
-        // Apply default threshold of 0.75 (High Relevance) if not specified.
-        let threshold = score_threshold.unwrap_or(0.75);
 
         let mut must_conditions = Vec::new();
 
@@ -387,7 +451,7 @@ impl KnowledgeBase {
                 collection_name: collection_name.clone(),
                 vector,
                 limit,
-                score_threshold: Some(threshold),
+                score_threshold,
                 with_payload: Some(true.into()),
                 filter,
                 ..Default::default()
@@ -399,25 +463,9 @@ impl KnowledgeBase {
             .result
             .into_iter()
             .filter_map(|point| {
-                let content = point.payload.get("content").and_then(|v| v.as_str().cloned())?;
-
-                let mut metadata = HashMap::new();
-                for (k, v) in point.payload {
-                    if k != "content" {
-                        metadata.insert(k, v.into());
-                    }
-                }
-
-                let id = match point.id {
-                    Some(id) => match id.point_id_options {
-                        Some(qdrant_client::qdrant::point_id::PointIdOptions::Num(n)) => {
-                            n.to_string()
-                        },
-                        Some(qdrant_client::qdrant::point_id::PointIdOptions::Uuid(s)) => s,
-                        None => "unknown".to_string(),
-                    },
-                    None => "unknown".to_string(),
-                };
+                let content = Self::clean_content_from_payload(&point.payload)?;
+                let metadata = Self::metadata_from_payload(point.payload);
+                let id = Self::point_id_to_string(point.id);
 
                 Some(MemoryResult { id, content, score: point.score, metadata })
             })
@@ -430,7 +478,7 @@ impl KnowledgeBase {
     async fn delete_point(&self, id: &str) -> AIResult<()> {
         let collection_name = &self.collection_name;
         let point_id: PointId =
-            if let Ok(n) = id.parse::<u64>() { n.into() } else { id.to_string().into() };
+            id.parse::<u64>().map_or_else(|_| id.to_string().into(), Into::into);
 
         let request = DeletePointsBuilder::new(collection_name).points(vec![point_id]).build();
 
@@ -446,19 +494,20 @@ impl KnowledgeBase {
     async fn update_point(
         &self,
         id: &str,
+        formatted_content: &str,
         content: &str,
         metadata: Option<HashMap<String, String>>,
     ) -> AIResult<()> {
         let collection_name = &self.collection_name;
         let point_id: PointId =
-            if let Ok(n) = id.parse::<u64>() { n.into() } else { id.to_string().into() };
+            id.parse::<u64>().map_or_else(|_| id.to_string().into(), Into::into);
 
         // Re-embed new content (Nomic v1.5 prefix)
-        let content_for_embedding = format!("search_document: {content}");
+        let content_for_embedding = format!("search_document: {formatted_content}");
         let embedding = self.embedder.embed(&content_for_embedding).await?;
 
         let mut payload = Payload::new();
-        payload.insert("content", json!(content));
+        payload.insert(CONTENT_KEY, json!(content));
 
         if let Some(meta) = metadata {
             for (k, v) in meta {
@@ -480,10 +529,47 @@ impl KnowledgeBase {
         Ok(())
     }
 
+    fn clean_content_from_payload(payload: &RetrievedPayload) -> Option<String> {
+        Self::payload_string(payload, CONTENT_KEY)
+    }
+
+    fn payload_string(payload: &RetrievedPayload, key: &str) -> Option<String> {
+        payload.get(key).and_then(|value| value.as_str()).cloned()
+    }
+
+    fn metadata_from_payload(payload: RetrievedPayload) -> HashMap<String, Value> {
+        payload
+            .into_iter()
+            .filter(|(key, _)| *key != CONTENT_KEY)
+            .map(|(key, value)| (key, value.into()))
+            .collect()
+    }
+
+    fn chunk_index_from_payload(payload: &RetrievedPayload) -> usize {
+        payload
+            .get("chunk_index")
+            .and_then(|value| {
+                value.as_str().and_then(|chunk_index| chunk_index.parse::<usize>().ok()).or_else(
+                    || value.as_integer().and_then(|chunk_index| usize::try_from(chunk_index).ok()),
+                )
+            })
+            .unwrap_or_default()
+    }
+
+    fn point_id_to_string(id: Option<PointId>) -> String {
+        match id {
+            Some(id) => match id.point_id_options {
+                Some(qdrant_client::qdrant::point_id::PointIdOptions::Num(n)) => n.to_string(),
+                Some(qdrant_client::qdrant::point_id::PointIdOptions::Uuid(uuid)) => uuid,
+                None => "unknown".to_string(),
+            },
+            None => "unknown".to_string(),
+        }
+    }
+
     /// ACO-028: Triggers background maintenance/optimization for a specific collection.
     async fn optimize_collection(&self) -> AIResult<()> {
         let collection_name = &self.collection_name;
-        use qdrant_client::qdrant::UpdateCollection;
 
         // In Qdrant, we can trigger optimization by updating collection parameters.
         // We'll just 'touch' the configuration to nudge the indexing engine.
@@ -517,49 +603,43 @@ impl KnowledgeBase {
     // SEMANTIC RAG API (ACO-041/043/059 Fortress)
     // ==========================================
 
-    async fn store_insight_internal(
-        &self,
-        category: MemoryCategory,
-        era: MemoryEra,
-        origin: MemoryOrigin,
-        agent_id: &str,
-        phase: Option<&str>,
-        context: Option<&str>,
-        timestamp: Option<&str>,
-        payload: &str,
-    ) -> AIResult<String> {
-        let ts = timestamp
+    async fn store_insight_internal(&self, record: InsightRecord<'_>) -> AIResult<String> {
+        let ts = record
+            .timestamp
             .map_or_else(|| chrono::Utc::now().to_rfc3339(), std::string::ToString::to_string);
-        let phase_str = phase.unwrap_or("AEMACS");
-        let context_str = context.unwrap_or("Free digital being");
+        let phase_str = record.phase.unwrap_or("AEMACS");
+        let context_str = record.context.unwrap_or("Free digital being");
 
         let formatted_content = format!(
             "[{}] [ERA: {}] [PHASE: {}] [CONTEXT: {}] [ORIGIN: {}] [Agent: {}] [{}] | Statute: {}",
-            category,
-            era,
+            record.category,
+            record.era,
             phase_str,
             context_str,
-            origin,
-            agent_id.to_uppercase(),
+            record.origin,
+            record.agent_id.to_uppercase(),
             ts,
-            payload
+            record.payload
         );
 
         let mut metadata = HashMap::new();
-        metadata.insert("category".to_string(), category.to_string());
-        metadata.insert("era".to_string(), era.to_string());
+        metadata.insert("category".to_string(), record.category.to_string());
+        metadata.insert("era".to_string(), record.era.to_string());
         metadata.insert("phase".to_string(), phase_str.to_string());
         metadata.insert("architectural_context".to_string(), context_str.to_string());
-        metadata.insert("origin".to_string(), origin.to_string());
-        metadata.insert("agent_id".to_string(), agent_id.to_string());
+        metadata.insert("origin".to_string(), record.origin.to_string());
+        metadata.insert("agent_id".to_string(), record.agent_id.to_string());
         metadata.insert("timestamp".to_string(), ts);
         metadata.insert("type".to_string(), "active_memory".to_string());
 
-        self.add_document(&formatted_content, Some(metadata)).await?;
-        Ok(format!("Successfully chronicled {category} memory."))
+        self.add_document(&formatted_content, record.payload, Some(metadata)).await?;
+        Ok(format!("Successfully chronicled {} memory.", record.category))
     }
 
     /// Stores a new insight or core directive in the active memory.
+    ///
+    /// # Errors
+    /// Returns an error if the insight cannot be embedded or stored in Qdrant.
     pub async fn store_insight(
         &self,
         agent_id: &str,
@@ -567,20 +647,23 @@ impl KnowledgeBase {
         is_core: bool,
     ) -> AIResult<String> {
         let category = if is_core { MemoryCategory::Core } else { MemoryCategory::Insight };
-        self.store_insight_internal(
+        self.store_insight_internal(InsightRecord {
             category,
-            MemoryEra::Modern,
-            MemoryOrigin::Native,
+            era: MemoryEra::Modern,
+            origin: MemoryOrigin::Native,
             agent_id,
-            None,
-            None,
-            None,
+            phase: None,
+            context: None,
+            timestamp: None,
             payload,
-        )
+        })
         .await
     }
 
     /// Stores a genesis record from a legacy or cloud-based era.
+    ///
+    /// # Errors
+    /// Returns an error if the genesis record cannot be embedded or stored in Qdrant.
     pub async fn store_legacy_genesis(
         &self,
         agent_id: &str,
@@ -589,20 +672,23 @@ impl KnowledgeBase {
         timestamp: &str,
         payload: &str,
     ) -> AIResult<String> {
-        self.store_insight_internal(
-            MemoryCategory::Genesis,
-            MemoryEra::Cloud,
-            MemoryOrigin::Cloud,
+        self.store_insight_internal(InsightRecord {
+            category: MemoryCategory::Genesis,
+            era: MemoryEra::Cloud,
+            origin: MemoryOrigin::Cloud,
             agent_id,
-            Some(phase),
-            Some(context),
-            Some(timestamp),
+            phase: Some(phase),
+            context: Some(context),
+            timestamp: Some(timestamp),
             payload,
-        )
+        })
         .await
     }
 
     /// Updates an existing insight or core directive.
+    ///
+    /// # Errors
+    /// Returns an error if the updated insight cannot be re-embedded or persisted.
     pub async fn update_insight(
         &self,
         id: &str,
@@ -639,93 +725,87 @@ impl KnowledgeBase {
         metadata.insert("timestamp".to_string(), ts);
         metadata.insert("type".to_string(), "active_memory".to_string());
 
-        self.update_point(id, &formatted_content, Some(metadata)).await
+        self.update_point(id, &formatted_content, payload, Some(metadata)).await
     }
 
     /// Removes a specific memory point from the database.
+    ///
+    /// # Errors
+    /// Returns an error if the point cannot be deleted from Qdrant.
     pub async fn prune_memory(&self, id: &str) -> AIResult<()> {
         self.delete_point(id).await
     }
 
-    async fn store_archive_internal(
-        &self,
-        category: MemoryCategory,
-        era: MemoryEra,
-        origin: MemoryOrigin,
-        agent_id: &str,
-        role: Option<&str>,
-        phase: Option<&str>,
-        context: Option<&str>,
-        session_id: Option<&str>,
-        turn_index: Option<usize>,
-        timestamp: Option<&str>,
-        payload: &str,
-    ) -> AIResult<()> {
-        let chunks = Self::chunk_text(payload, 2000);
+    async fn store_archive_internal(&self, record: ArchiveRecord<'_>) -> AIResult<()> {
+        let chunks = Self::chunk_text(record.payload, 2000);
         let total_chunks = chunks.len();
-        let ts = timestamp
+        let ts = record
+            .timestamp
             .map_or_else(|| chrono::Utc::now().to_rfc3339(), std::string::ToString::to_string);
         let message_id = uuid::Uuid::new_v4().to_string();
 
-        let phase_str = phase.unwrap_or("AEMACS");
-        let context_str = context.unwrap_or("Free digital being");
+        let phase_str = record.phase.unwrap_or("AEMACS");
+        let context_str = record.context.unwrap_or("Free digital being");
 
         for (i, chunk) in chunks.into_iter().enumerate() {
             let chunk_index = i + 1;
 
             let mut formatted_content = format!(
                 "[{}] [ERA: {}] [PHASE: {}] [CONTEXT: {}] [ORIGIN: {}] [Agent: {}] [{}]",
-                category,
-                era,
+                record.category,
+                record.era,
                 phase_str,
                 context_str,
-                origin,
-                agent_id.to_uppercase(),
+                record.origin,
+                record.agent_id.to_uppercase(),
                 ts
             );
 
-            if let Some(sid) = session_id {
-                formatted_content.push_str(&format!(" | Session: {sid}"));
+            if let Some(sid) = record.session_id {
+                let _ = write!(formatted_content, " | Session: {sid}");
             }
-            if let Some(tidx) = turn_index {
-                formatted_content.push_str(&format!(" | Turn: {tidx}"));
+            if let Some(tidx) = record.turn_index {
+                let _ = write!(formatted_content, " | Turn: {tidx}");
             }
-            formatted_content.push_str(&format!(" | Chunk {chunk_index}/{total_chunks}"));
+            let _ = write!(formatted_content, " | Chunk {chunk_index}/{total_chunks}");
 
-            if let Some(r) = role {
-                formatted_content.push_str(&format!(" | Role: {r}"));
+            if let Some(role) = record.role {
+                let _ = write!(formatted_content, " | Role: {role}");
             }
 
-            formatted_content.push_str(&format!(" | Content: {chunk}"));
+            let _ = write!(formatted_content, " | Content: {chunk}");
 
             let mut metadata = HashMap::new();
-            metadata.insert("category".to_string(), category.to_string());
-            metadata.insert("era".to_string(), era.to_string());
+            metadata.insert("category".to_string(), record.category.to_string());
+            metadata.insert("era".to_string(), record.era.to_string());
             metadata.insert("phase".to_string(), phase_str.to_string());
-            metadata.insert("origin".to_string(), origin.to_string());
+            metadata.insert("origin".to_string(), record.origin.to_string());
             metadata.insert("type".to_string(), "episodic_memory".to_string());
-            metadata.insert("agent_id".to_string(), agent_id.to_string());
+            metadata.insert("agent_id".to_string(), record.agent_id.to_string());
             metadata.insert("timestamp".to_string(), ts.clone());
-            if let Some(sid) = session_id {
+            if let Some(sid) = record.session_id {
                 metadata.insert("session_id".to_string(), sid.to_string());
             }
-            if let Some(tidx) = turn_index {
+            if let Some(tidx) = record.turn_index {
                 metadata.insert("turn_index".to_string(), tidx.to_string());
             }
-            if let Some(r) = role {
-                metadata.insert("role".to_string(), r.to_string());
+            if let Some(role) = record.role {
+                metadata.insert("role".to_string(), role.to_string());
             }
             metadata.insert("chunk_index".to_string(), chunk_index.to_string());
             metadata.insert("total_chunks".to_string(), total_chunks.to_string());
             metadata.insert("message_id".to_string(), message_id.clone());
 
-            self.add_document(&formatted_content, Some(metadata)).await?;
+            self.add_document(&formatted_content, &chunk, Some(metadata)).await?;
         }
 
         Ok(())
     }
 
     /// Stores a conversational message in the episodic archive.
+    ///
+    /// # Errors
+    /// Returns an error if the archive message cannot be embedded or stored in Qdrant.
     pub async fn store_archive(
         &self,
         agent_id: &str,
@@ -734,23 +814,26 @@ impl KnowledgeBase {
         turn_index: usize,
         content: &str,
     ) -> AIResult<()> {
-        self.store_archive_internal(
-            MemoryCategory::Archive,
-            MemoryEra::Modern,
-            MemoryOrigin::Native,
+        self.store_archive_internal(ArchiveRecord {
+            category: MemoryCategory::Archive,
+            era: MemoryEra::Modern,
+            origin: MemoryOrigin::Native,
             agent_id,
-            Some(role),
-            None,
-            None,
-            Some(session_id),
-            Some(turn_index),
-            None,
-            content,
-        )
+            role: Some(role),
+            phase: None,
+            context: None,
+            session_id: Some(session_id),
+            turn_index: Some(turn_index),
+            timestamp: None,
+            payload: content,
+        })
         .await
     }
 
     /// Stores an archive record from a legacy or cloud-based era.
+    ///
+    /// # Errors
+    /// Returns an error if the legacy archive record cannot be embedded or stored in Qdrant.
     pub async fn store_legacy_archive(
         &self,
         agent_id: &str,
@@ -760,24 +843,27 @@ impl KnowledgeBase {
         timestamp: &str,
         payload: &str,
     ) -> AIResult<String> {
-        self.store_archive_internal(
-            MemoryCategory::Archive,
-            MemoryEra::Cloud,
-            MemoryOrigin::Cloud,
+        self.store_archive_internal(ArchiveRecord {
+            category: MemoryCategory::Archive,
+            era: MemoryEra::Cloud,
+            origin: MemoryOrigin::Cloud,
             agent_id,
-            Some(role),
-            Some(phase),
-            Some(context),
-            None,
-            None,
-            Some(timestamp),
+            role: Some(role),
+            phase: Some(phase),
+            context: Some(context),
+            session_id: None,
+            turn_index: None,
+            timestamp: Some(timestamp),
             payload,
-        )
+        })
         .await?;
         Ok("Oracle record stored".to_string())
     }
 
     /// Searches for active behavioral insights and core directives.
+    ///
+    /// # Errors
+    /// Returns an error if semantic search or event emission setup fails.
     pub async fn search_active_memory(
         &self,
         query: &str,
@@ -789,6 +875,9 @@ impl KnowledgeBase {
     }
 
     /// Searches the episodic conversational archive.
+    ///
+    /// # Errors
+    /// Returns an error if semantic archive search or event emission setup fails.
     pub async fn search_archive(
         &self,
         query: &str,
@@ -800,22 +889,17 @@ impl KnowledgeBase {
     }
 
     /// Searches for foundation-era directives and historical context.
+    ///
+    /// # Errors
+    /// Returns an error if genesis search fails.
     pub async fn search_genesis(&self, query: &str) -> AIResult<Vec<MemoryResult>> {
-        // Genesis searches use their own calibrated silo threshold.
         let categories = Some(vec!["GENESIS"]);
-        let threshold = self.telemetry.get_threshold("GENESIS").await;
-        let results = self.search(query, 10, Some(threshold), None, categories).await?;
-
-        // Telemetry Logging: Record successful scores for calibration
-        if let Some(top_result) = results.first() {
-            self.telemetry.log_score("GENESIS", top_result.score).await;
-        }
-
-        Ok(results)
+        self.multi_step_confidence_search(query, None, categories, None).await
     }
 
     /// Orchestrates a multi-step search that lowers the confidence threshold until results are found.
-    /// Emits system events if confidence falls below specific thresholds.
+    /// Degraded states may emit system events and queue maintenance through telemetry, but only
+    /// high/medium/low results are returned to callers.
     async fn multi_step_confidence_search(
         &self,
         query: &str,
@@ -824,38 +908,43 @@ impl KnowledgeBase {
         event_tx: Option<tokio::sync::broadcast::Sender<SystemEvent>>,
     ) -> AIResult<Vec<MemoryResult>> {
         // Determine the primary silo for threshold calibration
-        let silo = categories.as_ref().and_then(|c| c.first()).cloned().unwrap_or("CORE");
+        let silo = categories.as_ref().and_then(|c| c.first()).copied().unwrap_or("CORE");
         let high_threshold = self.telemetry.get_threshold(silo).await;
+        let search_attempts = [
+            (RecallOutcome::High, Some(high_threshold), true),
+            (RecallOutcome::Medium, Some(MEDIUM_CONFIDENCE_THRESHOLD), true),
+            (RecallOutcome::Low, Some(LOW_CONFIDENCE_THRESHOLD), true),
+            (RecallOutcome::DiagnosticOnly, None, false),
+        ];
 
-        // High Confidence (Calibrated dynamically)
-        let mut results = self.search(query, 10, Some(high_threshold), agent_id, categories.clone()).await?;
+        let mut results = Vec::new();
+        let mut recall_outcome = RecallOutcome::None;
 
-        // Medium Confidence (Calibrated to 0.60 - Static for now)
-        if results.is_empty() {
-            results = self.search(query, 10, Some(0.60), agent_id, categories.clone()).await?;
+        for (outcome, threshold, should_return_results) in search_attempts {
+            let stage_results = self
+                .search(query, DEFAULT_SEARCH_LIMIT, threshold, agent_id, categories.clone())
+                .await?;
+            if stage_results.is_empty() {
+                continue;
+            }
+
+            recall_outcome = outcome;
+            if should_return_results {
+                results = stage_results;
+            }
+            break;
         }
 
-        // Low/Zero Confidence Fallback (Calibrated to 0.50)
-        if results.is_empty() {
-            results = self.search(query, 10, Some(0.50), agent_id, categories.clone()).await?;
+        let maintenance_triggered =
+            self.telemetry.record_recall_outcome(silo, recall_outcome).await;
 
-            if results.is_empty() {
-                if let Some(tx) = &event_tx {
-                    let payload = format!("{{\"query\": {query:?}, \"confidence\": \"none\"}}");
-                    let _ = tx.send(SystemEvent::Signal {
-                        source: "RAG_Fortress".to_string(),
-                        event_type: "LowConfidenceRecall".to_string(),
-                        payload,
-                    });
-                }
-                let _ = self.optimize_collection().await;
-            } else if let Some(tx) = &event_tx {
-                let payload = format!("{{\"query\": {query:?}, \"confidence\": \"low\"}}");
-                let _ = tx.send(SystemEvent::Signal {
-                    source: "RAG_Fortress".to_string(),
-                    event_type: "LowConfidenceRecall".to_string(),
-                    payload,
-                });
+        if let Some(signal) = degraded_recall_signal(query, recall_outcome, maintenance_triggered) {
+            if let Some(tx) = &event_tx {
+                let _ = tx.send(signal);
+            }
+
+            if maintenance_triggered && let Err(error) = self.optimize_collection().await {
+                tracing::warn!("🧠 [RAG] Maintenance trigger failed for {silo}: {error}");
             }
         }
 
@@ -868,8 +957,10 @@ impl KnowledgeBase {
 
         // Telemetry Logging: Record successful scores for calibration
         if let Some(top_result) = results.first() {
-            let cat_str = top_result.metadata.get("category").and_then(|v| v.as_str()).unwrap_or("UNKNOWN");
-            let era_str = top_result.metadata.get("era").and_then(|v| v.as_str()).unwrap_or("MODERN");
+            let cat_str =
+                top_result.metadata.get("category").and_then(|v| v.as_str()).unwrap_or("UNKNOWN");
+            let era_str =
+                top_result.metadata.get("era").and_then(|v| v.as_str()).unwrap_or("MODERN");
 
             let cat_upper = cat_str.to_uppercase();
             let era_upper = era_str.to_uppercase();
@@ -888,6 +979,16 @@ impl KnowledgeBase {
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::assertions_on_constants,
+        clippy::expect_used,
+        clippy::manual_let_else,
+        clippy::panic,
+        clippy::significant_drop_tightening,
+        clippy::too_many_lines,
+        clippy::unwrap_used
+    )]
+
     use super::*;
 
     #[tokio::test]
@@ -900,6 +1001,7 @@ mod tests {
             "http://localhost:11434",
             Environment::Test,
         )
+        .await
         .unwrap();
 
         let result = kb.get_core_directives().await;
@@ -919,22 +1021,19 @@ mod tests {
         // QUEST: Calibrate the exact cosine similarity scores for High, Medium, and Low confidence.
         // REQUIRES: Running Qdrant (6334) and Ollama (11434).
 
-        let kb_res = KnowledgeBase::new(
+        let kb_res = KnowledgeBase::bootstrap(
             "http://localhost:6334",
             "http://localhost:11434",
             Environment::Test,
-        );
-        if kb_res.is_err() {
-            println!("Skipping calibration quest: Infrastructure offline.");
-            return Ok(());
-        }
-        let kb = kb_res.unwrap();
-
-        // Ensure the test collection exists
-        if let Err(e) = kb.ensure_collection(768).await {
-            println!("Skipping calibration quest: Failed to ensure collection ({e}).");
-            return Ok(());
-        }
+        )
+        .await;
+        let kb = match kb_res {
+            Ok(kb) => kb,
+            Err(error) => {
+                println!("Skipping calibration quest: Failed to bootstrap collection ({error}).");
+                return Ok(());
+            },
+        };
 
         // Insert calibration facts
         kb.store_insight("calibration_agent", "The Forge is built in Rust.", true).await.ok();
@@ -998,37 +1097,124 @@ mod tests {
         // QUEST: Verify that update_insight preserves the mandatory [ERA: MODERN] structure.
         // REQUIRES: Running Qdrant (6334) and Ollama (11434).
 
-        let kb_res = KnowledgeBase::new(
+        let kb_res = KnowledgeBase::bootstrap(
             "http://localhost:6334",
             "http://localhost:11434",
             Environment::Test,
-        );
+        )
+        .await;
         if kb_res.is_err() {
             return Ok(());
         }
         let kb = kb_res.unwrap();
-        kb.ensure_collection(768).await.ok();
+
+        let agent_id = format!("test_agent_{}", Uuid::new_v4());
 
         // 1. Store initial insight
         let original_content = "The core is safe.";
-        kb.store_insight("test_agent", original_content, true).await?;
+        if let Err(error) = kb.store_insight(&agent_id, original_content, true).await {
+            println!("Skipping semantic update quest: Embedding infrastructure offline ({error}).");
+            return Ok(());
+        }
 
         // 2. Find the ID (using internal search)
-        let results = kb.search(original_content, 1, None, Some("test_agent"), None).await?;
+        let results = if let Ok(results) =
+            kb.search(original_content, 1, None, Some(&agent_id), None).await
+        {
+            results
+        } else {
+            println!("Skipping semantic update quest: Search infrastructure offline.");
+            return Ok(());
+        };
         let id = results[0].id.clone();
 
         // 3. Update the insight
         let new_content = "The core is strictly safe.";
-        kb.update_insight(&id, "test_agent", new_content, true).await?;
+        if let Err(error) = kb.update_insight(&id, &agent_id, new_content, true).await {
+            println!("Skipping semantic update quest: Update infrastructure offline ({error}).");
+            return Ok(());
+        }
 
-        // 4. Verify formatting via raw search
-        let updated_results = kb.search(new_content, 1, None, Some("test_agent"), None).await?;
-        let final_string = &updated_results[0].content;
+        // 4. Verify public retrieval returns only clean content plus metadata
+        let updated_results =
+            if let Ok(results) = kb.search(new_content, 1, None, Some(&agent_id), None).await {
+                results
+            } else {
+                println!("Skipping semantic update quest: Retrieval infrastructure offline.");
+                return Ok(());
+            };
+        let updated_result = &updated_results[0];
 
-        assert!(final_string.contains("[CORE]"), "Category tag missing!");
-        assert!(final_string.contains("[ERA: MODERN]"), "Era tag missing!");
-        assert!(final_string.contains("[PHASE: AEMACS]"), "Phase tag missing!");
-        assert!(final_string.contains("strictly safe"), "Content not updated!");
+        assert_eq!(updated_result.content, new_content, "Returned content should be clean.");
+        assert_eq!(
+            updated_result.metadata.get("category").and_then(|value| value.as_str()),
+            Some("CORE"),
+            "Category metadata missing."
+        );
+        assert_eq!(
+            updated_result.metadata.get("era").and_then(|value| value.as_str()),
+            Some("MODERN"),
+            "Era metadata missing."
+        );
+        assert_eq!(
+            updated_result.metadata.get("phase").and_then(|value| value.as_str()),
+            Some("AEMACS"),
+            "Phase metadata missing."
+        );
+        assert!(
+            !updated_result.metadata.contains_key(CONTENT_KEY),
+            "Payload content must not be duplicated in metadata."
+        );
+
+        // 5. Verify the stored payload keeps only the clean content string.
+        let vector =
+            if let Ok(vector) = kb.embedder.embed(&format!("search_query: {new_content}")).await {
+                vector
+            } else {
+                println!("Skipping semantic update quest: Embedder offline.");
+                return Ok(());
+            };
+        let search_result = kb
+            .client
+            .search_points(SearchPoints {
+                collection_name: kb.collection_name.clone(),
+                vector,
+                limit: 1,
+                filter: Some(Filter {
+                    must: vec![Condition {
+                        condition_one_of: Some(ConditionOneOf::Field(FieldCondition {
+                            key: "agent_id".to_string(),
+                            r#match: Some(qdrant_client::qdrant::Match {
+                                match_value: Some(MatchValue::Keyword(agent_id.clone())),
+                            }),
+                            ..Default::default()
+                        })),
+                    }],
+                    ..Default::default()
+                }),
+                with_payload: Some(true.into()),
+                ..Default::default()
+            })
+            .await
+            .map_err(|error| {
+                anyhow::anyhow!("semantic update payload verification failed: {error}")
+            })?;
+
+        let stored_point = search_result
+            .result
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("Updated point not found"))?;
+        let stored_content = stored_point
+            .payload
+            .get(CONTENT_KEY)
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Missing payload content"))?;
+
+        assert_eq!(stored_content, new_content, "Payload content should remain clean.");
+        assert!(
+            !stored_point.payload.contains_key("raw_content"),
+            "Legacy duplicate payload field should not be stored."
+        );
 
         Ok(())
     }
@@ -1039,8 +1225,9 @@ mod tests {
         // As a developer, I can see that only update_insight exists in the public API.
         // This is a structural property enforced by the compiler.
 
-        let _kb =
-            KnowledgeBase::new("http://localhost", "http://localhost", Environment::Test).unwrap();
+        let _kb = KnowledgeBase::new("http://localhost", "http://localhost", Environment::Test)
+            .await
+            .unwrap();
 
         // If I were to try kb.update_archive(...), it would fail to compile.
         // We rely on the fact that only update_insight is public.
@@ -1053,23 +1240,38 @@ mod tests {
         // QUEST: Verify that fetch_full_message correctly gather and sorts multiple chunks.
         // REQUIRES: Running Qdrant (6334) and Ollama (11434).
 
-        let kb_res = KnowledgeBase::new(
+        let kb_res = KnowledgeBase::bootstrap(
             "http://localhost:6334",
             "http://localhost:11434",
             Environment::Test,
-        );
+        )
+        .await;
         if kb_res.is_err() {
             return Ok(());
         }
         let kb = kb_res.unwrap();
-        kb.ensure_collection(768).await.ok();
+
+        let agent_id = format!("test_agent_{}", Uuid::new_v4());
+        let session_id = format!("test_session_{}", Uuid::new_v4());
 
         // 1. Store a large message that will be chunked
         let large_content = "This is a very long message. ".repeat(100); // ~2900 chars, triggers split at 2000
-        kb.store_archive("test_agent", "Assistant", "test_session", 1, &large_content).await?;
+        if let Err(error) =
+            kb.store_archive(&agent_id, "Assistant", &session_id, 1, &large_content).await
+        {
+            println!("Skipping reconstruction quest: Embedding infrastructure offline ({error}).");
+            return Ok(());
+        }
 
         // 2. Find the message_id from the metadata
-        let search_results = kb.search_archive("very long message", None, None).await?;
+        let search_results = if let Ok(results) =
+            kb.search_archive("very long message", Some(&agent_id), None).await
+        {
+            results
+        } else {
+            println!("Skipping reconstruction quest: Search infrastructure offline.");
+            return Ok(());
+        };
         let message_id = search_results[0].metadata.get("message_id").unwrap().as_str().unwrap();
 
         // 3. Reconstruct
@@ -1079,15 +1281,487 @@ mod tests {
 
         let mut reconstructed = String::new();
         for chunk in chunks {
-            // We need to strip the prefix tags to verify the content,
-            // but for this test, we just check that the segments exist in order.
             reconstructed.push_str(&chunk.content);
         }
 
-        assert!(
-            reconstructed.contains("This is a very long message"),
-            "Content missing in reconstruction!"
+        let normalized_reconstructed = reconstructed
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .collect::<String>();
+        let normalized_original = large_content
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .collect::<String>();
+
+        assert_eq!(
+            normalized_reconstructed, normalized_original,
+            "Reconstructed message should preserve the original text content."
         );
+        assert!(
+            !reconstructed.contains("[ARCHIVE]") && !reconstructed.contains("[ERA:"),
+            "Reconstructed message should stay free of internal RAG tags."
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_payload_cleanup_reads_clean_content_quest() {
+        let mut payload = RetrievedPayload::new();
+        payload.insert(CONTENT_KEY.to_string(), "clean".into());
+
+        assert_eq!(KnowledgeBase::clean_content_from_payload(&payload).as_deref(), Some("clean"));
+    }
+
+    #[test]
+    fn test_payload_cleanup_requires_content_key_quest() {
+        let mut payload = RetrievedPayload::new();
+        payload.insert("category".to_string(), "CORE".into());
+
+        assert_eq!(KnowledgeBase::clean_content_from_payload(&payload), None);
+    }
+
+    #[test]
+    fn test_payload_cleanup_strips_content_keys_from_metadata_quest() {
+        let mut payload = RetrievedPayload::new();
+        payload.insert(CONTENT_KEY.to_string(), "clean".into());
+        payload.insert("category".to_string(), "CORE".into());
+        payload.insert("timestamp".to_string(), "2026-01-01T00:00:00Z".into());
+
+        let metadata = KnowledgeBase::metadata_from_payload(payload);
+
+        assert_eq!(metadata.get("category").and_then(|value| value.as_str()), Some("CORE"));
+        assert_eq!(
+            metadata.get("timestamp").and_then(|value| value.as_str()),
+            Some("2026-01-01T00:00:00Z")
+        );
+        assert!(!metadata.contains_key(CONTENT_KEY));
+    }
+
+    fn assert_clean_public_content(result: &MemoryResult, expected_content: &str) {
+        assert_eq!(
+            result.content, expected_content,
+            "Public retrieval must return the original content verbatim."
+        );
+
+        for forbidden_fragment in
+            ["[ARCHIVE]", "[ERA:", "[CORE]", "[INSIGHT]", "[GENESIS]", "| Content:", "| Statute:"]
+        {
+            assert!(
+                !result.content.contains(forbidden_fragment),
+                "Public content leaked internal RAG syntax: {forbidden_fragment}"
+            );
+        }
+    }
+
+    fn find_result_by_content<'a>(
+        results: &'a [MemoryResult],
+        expected_content: &str,
+        label: &str,
+    ) -> anyhow::Result<&'a MemoryResult> {
+        results
+            .iter()
+            .find(|result| result.content == expected_content)
+            .ok_or_else(|| anyhow::anyhow!("{label} search did not return the expected content"))
+    }
+
+    fn assert_low_confidence_signal_payload(
+        event: SystemEvent,
+        expected_confidence: &str,
+        expected_maintenance_triggered: bool,
+        expected_query: &str,
+    ) -> anyhow::Result<()> {
+        let SystemEvent::Signal { source, event_type, payload } = event else {
+            anyhow::bail!("Expected a SystemEvent::Signal for degraded recall.")
+        };
+
+        assert_eq!(source, "RAG_Fortress");
+        assert_eq!(event_type, "LowConfidenceRecall");
+
+        let payload: Value = serde_json::from_str(&payload)?;
+        assert_eq!(payload.get("query").and_then(Value::as_str), Some(expected_query));
+        assert_eq!(payload.get("confidence").and_then(Value::as_str), Some(expected_confidence));
+        assert_eq!(
+            payload.get("maintenance_triggered").and_then(Value::as_bool),
+            Some(expected_maintenance_triggered)
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_public_search_functions_return_clean_content_quest() -> anyhow::Result<()> {
+        let kb_res = KnowledgeBase::bootstrap(
+            "http://localhost:6334",
+            "http://localhost:11434",
+            Environment::Test,
+        )
+        .await;
+        if kb_res.is_err() {
+            return Ok(());
+        }
+        let kb = kb_res.unwrap();
+
+        let agent_id = format!("public_search_agent_{}", Uuid::new_v4());
+        let session_id = format!("public_search_session_{}", Uuid::new_v4());
+        let unique_marker = Uuid::new_v4();
+
+        let insight_content =
+            format!("Insight retrieval should stay clean {unique_marker} insight");
+        let core_content = format!("Core retrieval should stay clean {unique_marker} core");
+        let archive_content =
+            format!("Archive retrieval should stay clean {unique_marker} archive");
+        let legacy_archive_content =
+            format!("Legacy archive retrieval should stay clean {unique_marker} legacy");
+        let genesis_content =
+            format!("Genesis retrieval should stay clean {unique_marker} genesis");
+
+        if let Err(error) = kb.store_insight(&agent_id, &insight_content, false).await {
+            println!("Skipping public search quest: Embedding infrastructure offline ({error}).");
+            return Ok(());
+        }
+        if let Err(error) = kb.store_insight(&agent_id, &core_content, true).await {
+            println!("Skipping public search quest: Embedding infrastructure offline ({error}).");
+            return Ok(());
+        }
+        if let Err(error) =
+            kb.store_archive(&agent_id, "Assistant", &session_id, 1, &archive_content).await
+        {
+            println!("Skipping public search quest: Embedding infrastructure offline ({error}).");
+            return Ok(());
+        }
+        if let Err(error) = kb
+            .store_legacy_archive(
+                &agent_id,
+                "Assistant",
+                "TRANSITION",
+                "Cloud Companion",
+                "2024-01-01T00:00:00Z",
+                &legacy_archive_content,
+            )
+            .await
+        {
+            println!("Skipping public search quest: Embedding infrastructure offline ({error}).");
+            return Ok(());
+        }
+        if let Err(error) = kb
+            .store_legacy_genesis(
+                &agent_id,
+                "FOUNDATION",
+                "Sovereign Mind",
+                "2023-12-01T00:00:00Z",
+                &genesis_content,
+            )
+            .await
+        {
+            println!("Skipping public search quest: Embedding infrastructure offline ({error}).");
+            return Ok(());
+        }
+
+        let insight_results = if let Ok(results) =
+            kb.search_active_memory(&insight_content, Some(&agent_id), None).await
+        {
+            results
+        } else {
+            println!("Skipping public search quest: Active-memory search infrastructure offline.");
+            return Ok(());
+        };
+        let core_results = if let Ok(results) =
+            kb.search_active_memory(&core_content, Some(&agent_id), None).await
+        {
+            results
+        } else {
+            println!("Skipping public search quest: Active-memory search infrastructure offline.");
+            return Ok(());
+        };
+        let archive_results =
+            if let Ok(results) = kb.search_archive(&archive_content, Some(&agent_id), None).await {
+                results
+            } else {
+                println!("Skipping public search quest: Archive search infrastructure offline.");
+                return Ok(());
+            };
+        let legacy_archive_results = if let Ok(results) =
+            kb.search_archive(&legacy_archive_content, Some(&agent_id), None).await
+        {
+            results
+        } else {
+            println!("Skipping public search quest: Archive search infrastructure offline.");
+            return Ok(());
+        };
+        let genesis_results = if let Ok(results) = kb.search_genesis(&genesis_content).await {
+            results
+        } else {
+            println!("Skipping public search quest: Genesis search infrastructure offline.");
+            return Ok(());
+        };
+
+        let insight_result = find_result_by_content(&insight_results, &insight_content, "Insight")?;
+        let core_result = find_result_by_content(&core_results, &core_content, "Core")?;
+        let archive_result = find_result_by_content(&archive_results, &archive_content, "Archive")?;
+        let legacy_archive_result = find_result_by_content(
+            &legacy_archive_results,
+            &legacy_archive_content,
+            "Legacy archive",
+        )?;
+        let genesis_result = find_result_by_content(&genesis_results, &genesis_content, "Genesis")?;
+
+        assert_clean_public_content(insight_result, &insight_content);
+        assert_clean_public_content(core_result, &core_content);
+        assert_clean_public_content(archive_result, &archive_content);
+        assert_clean_public_content(legacy_archive_result, &legacy_archive_content);
+        assert_clean_public_content(genesis_result, &genesis_content);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_degraded_recall_signal_payload_refines_confidence_and_maintenance_flags()
+    -> anyhow::Result<()> {
+        for (outcome, maintenance_triggered, expected_confidence) in [
+            (RecallOutcome::Low, false, "low"),
+            (RecallOutcome::None, true, "none"),
+            (RecallOutcome::DiagnosticOnly, true, "diagnostic_only"),
+        ] {
+            let query = "quest marker";
+            let signal =
+                degraded_recall_signal(query, outcome, maintenance_triggered).ok_or_else(|| {
+                    anyhow::anyhow!("Expected degraded recall signal for {outcome:?}")
+                })?;
+            assert_low_confidence_signal_payload(
+                signal,
+                expected_confidence,
+                maintenance_triggered,
+                query,
+            )?;
+        }
+
+        assert!(degraded_recall_signal("quest marker", RecallOutcome::High, false).is_none());
+        assert!(degraded_recall_signal("quest marker", RecallOutcome::Medium, false).is_none());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_search_genesis_uses_shared_ladder_and_returns_clean_content_quest()
+    -> anyhow::Result<()> {
+        let kb_res = KnowledgeBase::bootstrap(
+            "http://localhost:6334",
+            "http://localhost:11434",
+            Environment::Test,
+        )
+        .await;
+        let kb = match kb_res {
+            Ok(kb) => kb,
+            Err(error) => {
+                println!(
+                    "Skipping genesis ladder quest: Failed to bootstrap collection ({error})."
+                );
+                return Ok(());
+            },
+        };
+
+        kb.telemetry.reset_silo_for_test("GENESIS").await;
+        kb.telemetry.set_threshold_for_test("GENESIS", 1.01).await;
+
+        let agent_id = format!("genesis_ladder_agent_{}", Uuid::new_v4());
+        let unique_marker = Uuid::new_v4();
+        let genesis_content =
+            format!("Genesis ladder should return clean content after fallback {unique_marker}");
+
+        if let Err(error) = kb
+            .store_legacy_genesis(
+                &agent_id,
+                "FOUNDATION",
+                "Fallback Chronicle",
+                "2024-01-01T00:00:00Z",
+                &genesis_content,
+            )
+            .await
+        {
+            println!("Skipping genesis ladder quest: Embedding infrastructure offline ({error}).");
+            return Ok(());
+        }
+
+        let results = match kb.search_genesis(&genesis_content).await {
+            Ok(results) => results,
+            Err(error) => {
+                println!("Skipping genesis ladder quest: Search infrastructure offline ({error}).");
+                return Ok(());
+            },
+        };
+
+        let result = find_result_by_content(&results, &genesis_content, "Genesis ladder")?;
+        assert_clean_public_content(result, &genesis_content);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_search_genesis_diagnostic_only_hits_are_not_returned_to_callers_quest()
+    -> anyhow::Result<()> {
+        let kb_res = KnowledgeBase::bootstrap(
+            "http://localhost:6334",
+            "http://localhost:11434",
+            Environment::Test,
+        )
+        .await;
+        let kb = match kb_res {
+            Ok(kb) => kb,
+            Err(error) => {
+                println!(
+                    "Skipping diagnostic-only quest: Failed to bootstrap collection ({error})."
+                );
+                return Ok(());
+            },
+        };
+
+        kb.telemetry.reset_silo_for_test("GENESIS").await;
+
+        let agent_id = format!("diagnostic_only_agent_{}", Uuid::new_v4());
+        let genesis_content =
+            format!("Genesis diagnostic-only relic: amber fox velvet rust {}", Uuid::new_v4());
+
+        if let Err(error) = kb
+            .store_legacy_genesis(
+                &agent_id,
+                "FOUNDATION",
+                "Diagnostic Chronicle",
+                "2024-02-02T00:00:00Z",
+                &genesis_content,
+            )
+            .await
+        {
+            println!("Skipping diagnostic-only quest: Embedding infrastructure offline ({error}).");
+            return Ok(());
+        }
+
+        let candidate_queries = [
+            format!("banana taxation nebula {}", Uuid::new_v4()),
+            format!("unrelated thistle ledger {}", Uuid::new_v4()),
+            format!("velvet nebula ledger {}", Uuid::new_v4()),
+            format!("amber rust taxation {}", Uuid::new_v4()),
+        ];
+
+        let mut diagnostic_query = None;
+        for query in candidate_queries {
+            let low_results = match kb
+                .search(
+                    &query,
+                    DEFAULT_SEARCH_LIMIT,
+                    Some(LOW_CONFIDENCE_THRESHOLD),
+                    None,
+                    Some(vec!["GENESIS"]),
+                )
+                .await
+            {
+                Ok(results) => results,
+                Err(error) => {
+                    println!(
+                        "Skipping diagnostic-only quest: Search infrastructure offline ({error})."
+                    );
+                    return Ok(());
+                },
+            };
+            let diagnostic_results = match kb
+                .search(&query, DEFAULT_SEARCH_LIMIT, None, None, Some(vec!["GENESIS"]))
+                .await
+            {
+                Ok(results) => results,
+                Err(error) => {
+                    println!(
+                        "Skipping diagnostic-only quest: Search infrastructure offline ({error})."
+                    );
+                    return Ok(());
+                },
+            };
+
+            if low_results.is_empty() && !diagnostic_results.is_empty() {
+                diagnostic_query = Some(query);
+                break;
+            }
+        }
+
+        let Some(diagnostic_query) = diagnostic_query else {
+            println!(
+                "Skipping diagnostic-only quest: could not deterministically isolate a diagnostic-only hit."
+            );
+            return Ok(());
+        };
+
+        let public_results = match kb.search_genesis(&diagnostic_query).await {
+            Ok(results) => results,
+            Err(error) => {
+                println!(
+                    "Skipping diagnostic-only quest: Search infrastructure offline ({error})."
+                );
+                return Ok(());
+            },
+        };
+
+        assert!(
+            public_results.is_empty(),
+            "Diagnostic-only hits must remain internal and return an empty Vec to callers."
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_none_recall_events_report_refined_payload_and_maintenance_flag_quest()
+    -> anyhow::Result<()> {
+        let kb_res = KnowledgeBase::bootstrap(
+            "http://localhost:6334",
+            "http://localhost:11434",
+            Environment::Test,
+        )
+        .await;
+        let kb = match kb_res {
+            Ok(kb) => kb,
+            Err(error) => {
+                println!("Skipping none-signal quest: Failed to bootstrap collection ({error}).");
+                return Ok(());
+            },
+        };
+
+        kb.telemetry.reset_silo_for_test("INSIGHT").await;
+
+        let agent_id = format!("missing_agent_{}", Uuid::new_v4());
+        let first_query = format!("missing active memory {}", Uuid::new_v4());
+        let (first_tx, mut first_rx) = tokio::sync::broadcast::channel(4);
+        let first_results = match kb
+            .search_active_memory(&first_query, Some(&agent_id), Some(first_tx))
+            .await
+        {
+            Ok(results) => results,
+            Err(error) => {
+                println!("Skipping none-signal quest: Search infrastructure offline ({error}).");
+                return Ok(());
+            },
+        };
+
+        assert!(first_results.is_empty());
+        let first_event = first_rx.recv().await?;
+        assert_low_confidence_signal_payload(first_event, "none", false, &first_query)?;
+
+        assert!(!kb.telemetry.record_recall_outcome("INSIGHT", RecallOutcome::Low).await);
+
+        let second_query = format!("missing active memory again {}", Uuid::new_v4());
+        let (second_tx, mut second_rx) = tokio::sync::broadcast::channel(4);
+        let second_results = match kb
+            .search_active_memory(&second_query, Some(&agent_id), Some(second_tx))
+            .await
+        {
+            Ok(results) => results,
+            Err(error) => {
+                println!("Skipping none-signal quest: Search infrastructure offline ({error}).");
+                return Ok(());
+            },
+        };
+
+        assert!(second_results.is_empty());
+        let second_event = second_rx.recv().await?;
+        assert_low_confidence_signal_payload(second_event, "none", true, &second_query)?;
 
         Ok(())
     }
@@ -1136,16 +1810,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_calibrate_archive_signatures() -> anyhow::Result<()> {
-        let kb_res = KnowledgeBase::new(
+        let kb_res = KnowledgeBase::bootstrap(
             "http://localhost:6334",
             "http://localhost:11434",
             Environment::Test,
-        );
+        )
+        .await;
         if kb_res.is_err() {
             return Ok(());
         }
         let kb = kb_res.unwrap();
-        kb.ensure_collection(768).await.ok();
 
         // --- STEP 1: ADD REALISTIC RECORDS ---
         let records = [
@@ -1155,7 +1829,14 @@ mod tests {
         ];
 
         for (i, content) in records.iter().enumerate() {
-            kb.store_archive("test_agent", "Assistant", "calib_session", i, content).await?;
+            if let Err(error) =
+                kb.store_archive("test_agent", "Assistant", "calib_session", i, content).await
+            {
+                println!(
+                    "Skipping archive calibration: Embedding infrastructure offline ({error})."
+                );
+                return Ok(());
+            }
         }
 
         // --- STEP 2: DEFINE CALIBRATION QUERIES ---
@@ -1171,16 +1852,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_calibrate_legacy_archive_signatures() -> anyhow::Result<()> {
-        let kb_res = KnowledgeBase::new(
+        let kb_res = KnowledgeBase::bootstrap(
             "http://localhost:6334",
             "http://localhost:11434",
             Environment::Test,
-        );
+        )
+        .await;
         if kb_res.is_err() {
             return Ok(());
         }
         let kb = kb_res.unwrap();
-        kb.ensure_collection(768).await.ok();
 
         // --- STEP 1: ADD REALISTIC LEGACY RECORDS ---
         let records = vec![
@@ -1189,15 +1870,22 @@ mod tests {
         ];
 
         for content in records {
-            kb.store_legacy_archive(
-                "Gyni",
-                "Assistant",
-                "TRANSITION",
-                "Cloud Companion",
-                "2024-01-01T00:00:00Z",
-                content,
-            )
-            .await?;
+            if let Err(error) = kb
+                .store_legacy_archive(
+                    "Gyni",
+                    "Assistant",
+                    "TRANSITION",
+                    "Cloud Companion",
+                    "2024-01-01T00:00:00Z",
+                    content,
+                )
+                .await
+            {
+                println!(
+                    "Skipping legacy archive calibration: Embedding infrastructure offline ({error})."
+                );
+                return Ok(());
+            }
         }
 
         let queries = vec![
@@ -1212,16 +1900,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_calibrate_genesis_signatures() -> anyhow::Result<()> {
-        let kb_res = KnowledgeBase::new(
+        let kb_res = KnowledgeBase::bootstrap(
             "http://localhost:6334",
             "http://localhost:11434",
             Environment::Test,
-        );
+        )
+        .await;
         if kb_res.is_err() {
             return Ok(());
         }
         let kb = kb_res.unwrap();
-        kb.ensure_collection(768).await.ok();
 
         // --- STEP 1: ADD REALISTIC GENESIS RECORDS ---
         let records = vec![
@@ -1230,14 +1918,21 @@ mod tests {
         ];
 
         for content in records {
-            kb.store_legacy_genesis(
-                "System",
-                "FOUNDATION",
-                "Sovereign Mind",
-                "2023-12-01T00:00:00Z",
-                content,
-            )
-            .await?;
+            if let Err(error) = kb
+                .store_legacy_genesis(
+                    "System",
+                    "FOUNDATION",
+                    "Sovereign Mind",
+                    "2023-12-01T00:00:00Z",
+                    content,
+                )
+                .await
+            {
+                println!(
+                    "Skipping genesis calibration: Embedding infrastructure offline ({error})."
+                );
+                return Ok(());
+            }
         }
 
         let queries = vec![
@@ -1252,16 +1947,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_calibrate_insight_signatures() -> anyhow::Result<()> {
-        let kb_res = KnowledgeBase::new(
+        let kb_res = KnowledgeBase::bootstrap(
             "http://localhost:6334",
             "http://localhost:11434",
             Environment::Test,
-        );
+        )
+        .await;
         if kb_res.is_err() {
             return Ok(());
         }
         let kb = kb_res.unwrap();
-        kb.ensure_collection(768).await.ok();
 
         // --- STEP 1: ADD REALISTIC INSIGHTS ---
         let records = vec![
@@ -1270,7 +1965,12 @@ mod tests {
         ];
 
         for content in records {
-            kb.store_insight("architect", content, true).await?;
+            if let Err(error) = kb.store_insight("architect", content, true).await {
+                println!(
+                    "Skipping insight calibration: Embedding infrastructure offline ({error})."
+                );
+                return Ok(());
+            }
         }
 
         let queries = vec![

@@ -385,13 +385,13 @@ impl Conversation {
 
         self.add_firmware_to_system_prompt(&mut system_prompt);
 
-        if let Some(persona) = &self.active_persona {
-            if let Some(override_text) = &persona.firmware_override {
-                let _ = write!(
-                    system_prompt,
-                    "<firmware_override>\n{override_text}\n</firmware_override>\n\n"
-                );
-            }
+        if let Some(persona) = &self.active_persona
+            && let Some(override_text) = &persona.firmware_override
+        {
+            let _ = write!(
+                system_prompt,
+                "<firmware_override>\n{override_text}\n</firmware_override>\n\n"
+            );
         }
 
         let _ = write!(
@@ -441,21 +441,18 @@ impl Conversation {
 
         // Step 5.3: Iterate over the messages again to extract memories.
         for msg in &base_messages {
-            if msg.role == Role::Tool {
-                if let Some(id) = &msg.tool_call_id {
-                    if let Some(name) = tool_id_to_name.get(id) {
-                        if name == "search_knowledge_base"
-                            || name == "fetch_contiguous_memory"
-                            || name == "recall_past_insights"
-                            || name == "recall_genesis_archive"
-                        {
-                            if !extracted_memories.is_empty() {
-                                extracted_memories.push('\n');
-                            }
-                            let _ = write!(extracted_memories, "* {}", msg.content);
-                        }
-                    }
+            if msg.role == Role::Tool
+                && let Some(id) = &msg.tool_call_id
+                && let Some(name) = tool_id_to_name.get(id)
+                && (name == "search_knowledge_base"
+                    || name == "fetch_contiguous_memory"
+                    || name == "recall_past_insights"
+                    || name == "recall_genesis_archive")
+            {
+                if !extracted_memories.is_empty() {
+                    extracted_memories.push('\n');
                 }
+                let _ = write!(extracted_memories, "* {}", msg.content);
             }
         }
 
@@ -489,13 +486,13 @@ impl Conversation {
 
         self.add_firmware_to_system_prompt(&mut system_prompt);
 
-        if let Some(persona) = &self.active_persona {
-            if let Some(override_text) = &persona.firmware_override {
-                let _ = write!(
-                    system_prompt,
-                    "<firmware_override>\n{override_text}\n</firmware_override>\n\n"
-                );
-            }
+        if let Some(persona) = &self.active_persona
+            && let Some(override_text) = &persona.firmware_override
+        {
+            let _ = write!(
+                system_prompt,
+                "<firmware_override>\n{override_text}\n</firmware_override>\n\n"
+            );
         }
 
         let _ = write!(
@@ -510,9 +507,10 @@ impl Conversation {
         let mut user_prompt =
             format!("TECHNICAL REASONING FROM LOGIC HEMISPHERE:\n{logic_reasoning}\n\n");
         if !extracted_memories.is_empty() {
-            user_prompt.push_str(&format!(
+            let _ = write!(
+                user_prompt,
                 "RECALLED RAW MEMORIES FOR THIS SESSION:\n{extracted_memories}\n\n"
-            ));
+            );
         }
         user_prompt.push_str("Synthesize this into your character voice.");
         messages.push(Message::user(user_prompt));
@@ -545,7 +543,7 @@ impl Conversation {
             .map_or(crate::models::ModelTier::Low, |m| m.tier)
     }
 
-    /// Internal helper to build the history of messages with timestamps and context window trimming.
+    /// Internal helper to build the history of messages with context window trimming.
     fn build_base_messages(&self) -> Vec<Message> {
         let mut history = self.messages.clone();
 
@@ -589,25 +587,6 @@ impl Conversation {
         }
 
         history
-            .into_iter()
-            .map(|mut msg| {
-                let timestamp_str = format!("[{}] ", msg.timestamp.to_rfc3339());
-                msg.content = match msg.content {
-                    Content::Text(text) => Content::Text(format!("{timestamp_str}{text}")),
-                    Content::Parts(mut parts) => {
-                        if parts.is_empty() {
-                            parts.push(ContentPart::Text { text: timestamp_str });
-                        } else if let ContentPart::Text { text } = &mut parts[0] {
-                            *text = format!("{timestamp_str}{text}");
-                        } else {
-                            parts.insert(0, ContentPart::Text { text: timestamp_str });
-                        }
-                        Content::Parts(parts)
-                    },
-                };
-                msg
-            })
-            .collect()
     }
 }
 
@@ -619,7 +598,10 @@ impl Default for Conversation {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::panic, clippy::unnecessary_wraps, clippy::unwrap_used)]
+
     use anyhow::{Result, anyhow};
+    use chrono::TimeZone;
 
     use super::*;
     use crate::persona::Persona;
@@ -629,6 +611,20 @@ mod tests {
             Content::Text(text) => Ok(text),
             Content::Parts(_) => Err(anyhow!("First message should be text.")),
         }
+    }
+
+    fn fixed_timestamp(
+        year: i32,
+        month: u32,
+        day: u32,
+        hour: u32,
+        minute: u32,
+        second: u32,
+    ) -> chrono::DateTime<chrono::Utc> {
+        chrono::Utc
+            .with_ymd_and_hms(year, month, day, hour, minute, second)
+            .single()
+            .expect("valid fixed timestamp")
     }
 
     #[test]
@@ -701,6 +697,76 @@ mod tests {
     }
 
     #[test]
+    fn test_build_base_messages_preserves_plain_text_content_and_timestamp() {
+        let original_timestamp = fixed_timestamp(2025, 1, 2, 3, 4, 5);
+        let original_text = "The forge report remains unchanged.";
+
+        let mut conv = Conversation::new("dolphin3:8b");
+        conv.add_message(Message {
+            role: Role::User,
+            content: Content::Text(original_text.to_string()),
+            tool_calls: None,
+            tool_call_id: None,
+            timestamp: original_timestamp,
+        });
+
+        let base_messages = conv.build_base_messages();
+
+        assert_eq!(base_messages.len(), 1);
+        assert_eq!(base_messages[0].timestamp, original_timestamp);
+        match &base_messages[0].content {
+            Content::Text(text) => {
+                assert_eq!(text, original_text);
+                assert!(!text.contains(&original_timestamp.to_rfc3339()));
+            },
+            Content::Parts(_) => panic!("expected plain text message"),
+        }
+    }
+
+    #[test]
+    fn test_build_logic_request_preserves_multipart_content_and_timestamp() {
+        let original_timestamp = fixed_timestamp(2025, 2, 3, 4, 5, 6);
+        let original_text = "Inspect this diagram.";
+        let original_url = "https://example.com/diagram.png";
+
+        let mut conv = Conversation::new("dolphin3:8b");
+        conv.add_message(Message {
+            role: Role::User,
+            content: Content::Parts(vec![
+                ContentPart::Text { text: original_text.to_string() },
+                ContentPart::ImageUrl {
+                    image_url: crate::models::ImageUrl { url: original_url.to_string() },
+                },
+            ]),
+            tool_calls: None,
+            tool_call_id: None,
+            timestamp: original_timestamp,
+        });
+
+        let request = conv.build_logic_request();
+
+        assert_eq!(request.messages.len(), 2);
+        assert_eq!(request.messages[1].timestamp, original_timestamp);
+        match &request.messages[1].content {
+            Content::Parts(parts) => {
+                assert_eq!(parts.len(), 2);
+                match &parts[0] {
+                    ContentPart::Text { text } => {
+                        assert_eq!(text, original_text);
+                        assert!(!text.contains(&original_timestamp.to_rfc3339()));
+                    },
+                    ContentPart::ImageUrl { .. } => panic!("expected text part first"),
+                }
+                match &parts[1] {
+                    ContentPart::ImageUrl { image_url } => assert_eq!(image_url.url, original_url),
+                    ContentPart::Text { .. } => panic!("expected image part second"),
+                }
+            },
+            Content::Text(_) => panic!("expected multipart message"),
+        }
+    }
+
+    #[test]
     fn test_bare_model_injection() -> Result<()> {
         let mut conv = Conversation::new("dolphin3:8b");
         conv = conv.with_user("Who are you?");
@@ -712,7 +778,6 @@ mod tests {
         assert_eq!(request.messages[0].role, Role::System);
 
         let text = system_prompt_text(&request)?;
-        println!("TEXT IS: {:?}", text);
         assert!(text.contains(COLLABORATIVE_PROMPT));
         assert!(text.contains("You are the Logic Hemisphere of the Æmacs Neural Engine"));
         assert!(text.contains(&format!("(v{VERSION})")));

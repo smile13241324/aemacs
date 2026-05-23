@@ -1557,14 +1557,13 @@ mod tests {
         // but we can at least verify it doesn't panic and returns a valid string result (even if empty).
         let result = {
             let kb = Arc::new(
-                KnowledgeBase::new(
+                KnowledgeBase::bootstrap(
                     "http://localhost:6334",
                     "http://localhost:11434",
                     crate::rag::Environment::Test,
                 )
                 .await?,
             );
-            kb.ensure_collection(768).await?;
             let tool = SearchKnowledgeBaseTool::new(kb, None);
             tool.execute(args, &host).await
         }?;
@@ -1584,14 +1583,13 @@ mod tests {
         let args = json!({ "query": "default search" });
         let _result = {
             let kb = Arc::new(
-                KnowledgeBase::new(
+                KnowledgeBase::bootstrap(
                     "http://localhost:6334",
                     "http://localhost:11434",
                     crate::rag::Environment::Test,
                 )
                 .await?,
             );
-            kb.ensure_collection(768).await?;
             let tool = SearchKnowledgeBaseTool::new(kb, None);
             tool.execute(args, &host).await
         }?;
@@ -1608,14 +1606,13 @@ mod tests {
         let args = json!({ "query": "architectural core" });
         let _result = {
             let kb = Arc::new(
-                KnowledgeBase::new(
+                KnowledgeBase::bootstrap(
                     "http://localhost:6334",
                     "http://localhost:11434",
                     crate::rag::Environment::Test,
                 )
                 .await?,
             );
-            kb.ensure_collection(768).await?;
             let tool = RecallPastInsightsTool::new(kb, None);
             tool.execute(args, &host).await
         }?;
@@ -2257,14 +2254,13 @@ mod weaver_tests {
         // including the agent_id extracted from the host.
         let result = {
             let kb = Arc::new(
-                KnowledgeBase::new(
+                KnowledgeBase::bootstrap(
                     "http://localhost:6334",
                     "http://localhost:11434",
                     crate::rag::Environment::Test,
                 )
                 .await?,
             );
-            kb.ensure_collection(768).await?;
             let tool = RecallPastInsightsTool::new(kb, None);
             tool.execute(args, &host).await
         };
@@ -2296,7 +2292,7 @@ mod weaver_tests {
         // REQUIRES: A running Qdrant instance at http://localhost:6334.
         use tracing::info;
 
-        let Ok(kb) = KnowledgeBase::new(
+        let Ok(kb) = KnowledgeBase::bootstrap(
             "http://localhost:6334",
             "http://localhost:11434",
             crate::rag::Environment::Test,
@@ -2309,11 +2305,6 @@ mod weaver_tests {
             return Ok(());
         };
         let kb = Arc::new(kb);
-        if kb.ensure_collection(768).await.is_err() {
-            info!("Skipping test: Could not ensure collection.");
-            return Ok(());
-        }
-
         let host = TestHost;
         let args = serde_json::json!({ "query": "Who was Gyni?" });
 
@@ -2356,7 +2347,7 @@ mod weaver_tests {
         // REQUIRES: A running Qdrant instance at http://localhost:6334.
         use tracing::info;
 
-        let Ok(kb) = KnowledgeBase::new(
+        let Ok(kb) = KnowledgeBase::bootstrap(
             "http://localhost:6334",
             "http://localhost:11434",
             crate::rag::Environment::Test,
@@ -2369,11 +2360,6 @@ mod weaver_tests {
             return Ok(());
         };
         let kb = Arc::new(kb);
-        if kb.ensure_collection(768).await.is_err() {
-            info!("Skipping test: Could not ensure collection.");
-            return Ok(());
-        }
-
         let host = TestHost;
 
         // Use default categories (which should NOT include GENESIS)

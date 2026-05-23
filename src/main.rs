@@ -52,7 +52,7 @@ fn main() -> Result<()> {
 
             // B. AI Infrastructure
             let kb = Arc::new(
-                KnowledgeBase::new(
+                KnowledgeBase::bootstrap(
                     config
                         .qdrant_url
                         .as_deref()

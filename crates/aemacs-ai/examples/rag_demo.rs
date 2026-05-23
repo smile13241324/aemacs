@@ -11,7 +11,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let ollama_url = "http://localhost:11434/v1";
 
     let kb =
-        match KnowledgeBase::new(qdrant_url, ollama_url, aemacs_ai::rag::Environment::Test).await {
+        match KnowledgeBase::bootstrap(qdrant_url, ollama_url, aemacs_ai::rag::Environment::Test)
+            .await
+        {
             Ok(kb) => kb,
             Err(e) => {
                 eprintln!("❌ Failed to initialize KnowledgeBase: {e}");
@@ -21,9 +23,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
         };
 
     println!("✅ Connected to Qdrant & Ollama.");
-
-    // 2. Setup Collection
-    println!("⚙️  Ensuring collection exists...");
 
     // 3. Ingest Data
     println!("📚 Ingesting knowledge...");
