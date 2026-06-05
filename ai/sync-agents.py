@@ -1,30 +1,27 @@
-"""Install Aemacs AI Agents for GitHub Copilot and Gemini CLI."""
+"""Install Aemacs AI Agents for GitHub Copilot and Antigravity CLI."""
 
 import os
 import re
+from typing import List, Dict, Any, Final, Optional
 
 # ==========================================
-#  AEMACS AGENT BUILDER (V21 - MOPFL & REFORGED)
-# ==========================================
-# UPDATES:
-# - Added Mopfl (Config Wizard) mapping
-# - Updated Stakeholders (RMS -> Serge)
-# - Adjusted Markers to match new file headers
+#  AEMACS AGENT BUILDER (ANTIGRAVITY COMPLIANT)
 # ==========================================
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-BASE_DIR = ".github"
-GEMINI_CMD_DIR = os.path.join(".gemini", "commands")
-AEMACS_AGENT_DIR = os.path.join(".aemacs", "agents")
+SCRIPT_DIR: Final[str] = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR: Final[str] = ".github"
+GEMINI_CMD_DIR: Final[str] = os.path.join(".gemini", "commands")
+AEMACS_AGENT_DIR: Final[str] = os.path.join(".aemacs", "agents")
+ANTIGRAVITY_SKILLS_DIR: Final[str] = os.path.join(".agents", "skills")
+ANTIGRAVITY_AGENTS_DIR: Final[str] = os.path.join(".agents", "agents")
 
 # Define sources with EXACT header markers from your markdown files
-SOURCES = [
+SOURCES: Final[List[Dict[str, str]]] = [
     {
         "file": "coding_ai.md",
         "marker": "### The Specialist Team Roster",
         "type": "specialist",
         "footer_pattern": r"(?m)^## How to Choose.*",
-        # Split only on Role to avoid splitting on nested Name fields
         "split_regex": r"(?m)^\s*-\s+\*\*Role:\*\*\s+"
     },
     {
@@ -39,12 +36,11 @@ SOURCES = [
         "marker": "## The Core User Base (The Community)",
         "type": "simulation",
         "footer_pattern": r"(?m)^## How to Choose.*",
-        # Stakeholders are defined by Name
         "split_regex": r"(?m)^\s*-\s+\*\*Name:\*\*\s+"
     }
 ]
 
-NAME_MAPPING = {
+NAME_MAPPING: Final[Dict[str, str]] = {
     # Strategists
     "professor": "professor",
     "mckarthy": "professor",
@@ -87,8 +83,7 @@ NAME_MAPPING = {
     "sarah": "sarah"
 }
 
-# Maps Persona Slugs to their specific Profile Markdown file
-PROFILE_MAP = {
+PROFILE_MAP: Final[Dict[str, str]] = {
     "mopfl": "ai/profiles/config_wizard.md",
     "spacky": "ai/profiles/elisp.md",
     "bzzrts": "ai/profiles/gfx.md",
@@ -103,18 +98,18 @@ PROFILE_MAP = {
     "zolg": "ai/profiles/clojure.md"
 }
 
-def ensure_dir(directory):
+def ensure_dir(directory: str) -> None:
     if not os.path.exists(directory):
         os.makedirs(directory)
 
-def clean_slug(name):
+def clean_slug(name: str) -> str:
     name_lower = name.lower()
     for key, slug in NAME_MAPPING.items():
         if key in name_lower:
             return slug
     return name_lower.split()[0].replace(".", "").replace("'", "").strip()
 
-def get_mode_text(agent_type):
+def get_mode_text(agent_type: str) -> str:
     if agent_type == "strategic":
         return """
 MODE: STRATEGIC PLANNING & ARCHITECTURE
@@ -132,20 +127,33 @@ MODE: IMPLEMENTATION & CRAFTSMANSHIP
 """
     return ""
 
-def get_model_id(agent_type):
-    return "gpt-5.4"
+def get_agent_runtime_config(slug: str, agent_type: str) -> Dict[str, Any]:
+    """
+    Determiniert die exakte Laufzeitkonfiguration basierend auf der Architektur-Matrix.
+    """
+    # 1. Pure Coding / Deterministic execution (Specialists wie Kairon, Nagah)
+    if agent_type == "specialist":
+        return {
+            "model_id": "gemini-3.5-flash",
+            "mode": "off",
+            "budget": 0
+        }
 
-def clean_header_content(header):
-    cleaned = re.sub(r'(\n\s*[-*]{3,}\s*)+$', '', header.strip())
-    return cleaned.strip()
+    # 2. Tactical Planning & Analysis (Strategists & Simulators)
+    return {
+        "model_id": "gemini-3.5-flash",
+        "mode": "high",
+        "budget": 8192
+    }
 
-def clean_body_content(body):
-    cleaned = re.sub(r'(\n\s*[-*]{3,}\s*)+$', '', body.strip())
-    return cleaned.strip()
+def clean_header_content(header: str) -> str:
+    return re.sub(r'(\n\s*[-*]{3,}\s*)+$', '', header.strip()).strip()
 
-def parse_agents_from_text(roster_content, source_type, split_regex):
+def clean_body_content(body: str) -> str:
+    return re.sub(r'(\n\s*[-*]{3,}\s*)+$', '', body.strip()).strip()
+
+def parse_agents_from_text(roster_content: str, source_type: str, split_regex: str) -> List[Dict[str, Any]]:
     agents = []
-    # Split using the specific regex for this file type
     raw_splits = re.split(split_regex, roster_content)
 
     if len(raw_splits) < 2:
@@ -157,8 +165,6 @@ def parse_agents_from_text(roster_content, source_type, split_regex):
     for chunk in iterator:
         role = "Unknown"
         name = "Unknown"
-
-        # Clean trailing headers like "### " or "## "
         chunk = re.split(r"(?m)^#{2,3} ", chunk)[0]
 
         if key == "Role":
@@ -182,7 +188,7 @@ def parse_agents_from_text(roster_content, source_type, split_regex):
         })
     return agents
 
-def generate_copilot_files(global_headers, agents):
+def generate_copilot_files(global_headers: Dict[str, str], agents: List[Dict[str, Any]]) -> None:
     print(f"📝 Generating GitHub Copilot Agents in {BASE_DIR}/agents/...")
     agents_dir = os.path.join(BASE_DIR, "agents")
     ensure_dir(agents_dir)
@@ -190,7 +196,7 @@ def generate_copilot_files(global_headers, agents):
     for agent in agents:
         filename = f"{agent['slug']}.agent.md"
         path = os.path.join(agents_dir, filename)
-        target_model = get_model_id(agent["type"])
+        target_model = "gpt-5.4" # Fallback für Copilot
 
         yaml = f"---\nname: {agent['slug']}\ndescription: {agent['role']}\nmodel: {target_model}\n---"
         context = global_headers.get(agent["type"], "")
@@ -213,53 +219,7 @@ def generate_copilot_files(global_headers, agents):
 
     print(f"   Generated {len(agents)} agent files.")
 
-def generate_gemini_commands(global_headers, agents):
-    print(f"💎 Generating Gemini CLI Commands in {GEMINI_CMD_DIR}...")
-    ensure_dir(GEMINI_CMD_DIR)
-
-    for agent in agents:
-        slug = agent["slug"]
-        profile_path = PROFILE_MAP.get(slug)
-        mode_section = get_mode_text(agent["type"])
-        body_clean = clean_body_content(agent['body'])
-
-        toolbox_section = ""
-        if profile_path:
-            toolbox_section = f"\nTOOLBOX (AUTO-LOADED):\n!{{cat {profile_path}}}\n"
-        elif agent["type"] == "specialist":
-             toolbox_section = "\nTOOLBOX:\n(No specific profile loaded. Ask user to load one if implementation is needed.)\n"
-
-        system_header = global_headers.get(agent["type"], "")
-
-        prompt_text = f"""
-SYSTEM INSTRUCTIONS:
-{system_header}
-
----
-AGENT PERSONA:
-{body_clean}
-
----
-{mode_section}
-{toolbox_section}
----
-USER INPUT:
-{{{{args}}}}
-"""
-        clean_desc = agent['role'].replace('"', "'")
-        toml_content = f'description = "{clean_desc}"\n'
-        toml_content += 'prompt = """' + prompt_text + '"""\n'
-
-        filename = f"{slug}.toml"
-        path = os.path.join(GEMINI_CMD_DIR, filename)
-
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(toml_content)
-
-    print(f"   Generated {len(agents)} commands.")
-
-def generate_aemacs_native_files(global_headers: dict[str, str], agents: list[dict]) -> None:
-    """Generate native Æmacs Agent YAML files in .aemacs/agents/."""
+def generate_aemacs_native_files(global_headers: Dict[str, str], agents: List[Dict[str, Any]]) -> None:
     print(f"🐍 Generating Native Æmacs Agents in {AEMACS_AGENT_DIR}...")
     ensure_dir(AEMACS_AGENT_DIR)
 
@@ -270,10 +230,7 @@ def generate_aemacs_native_files(global_headers: dict[str, str], agents: list[di
         body_clean = clean_body_content(agent['body'])
         system_header = global_headers.get(agent["type"], "")
 
-        # Assemble full system prompt without {{args}}
         full_prompt = f"SYSTEM INSTRUCTIONS:\n{system_header}\n\n---\nAGENT PERSONA:\n{body_clean}\n\n---\n{mode_section}"
-
-        # Proper YAML block scalar indentation (2 spaces)
         indented_prompt = "\n".join([f"    {line}" for line in full_prompt.strip().split("\n")])
 
         yaml_content = f'name: "{slug}"\n'
@@ -291,9 +248,103 @@ def generate_aemacs_native_files(global_headers: dict[str, str], agents: list[di
 
     print(f"   Generated {len(agents)} native agent souls.")
 
-def main():
-    all_agents = []
-    global_headers = {}
+def generate_antigravity_skills(global_headers: Dict[str, str], agents: List[Dict[str, Any]]) -> None:
+    print(f"🌌 Generating Antigravity CLI Skills in {ANTIGRAVITY_SKILLS_DIR}...")
+    ensure_dir(ANTIGRAVITY_SKILLS_DIR)
+
+    for agent in agents:
+        slug = agent["slug"]
+        profile_path = PROFILE_MAP.get(slug)
+        mode_section = get_mode_text(agent["type"])
+        body_clean = clean_body_content(agent["body"])
+
+        toolbox_section = (
+            f"\n## Toolbox (Auto-Loaded)\n!{{cat {profile_path}}}\n"
+            if profile_path else
+            "\n## Toolbox\n(No specific profile loaded. Ask user to load one if implementation is needed.)\n"
+            if agent["type"] == "specialist" else ""
+        )
+
+        system_header = global_headers.get(agent["type"], "")
+        clean_desc = agent["role"].replace('"', "'")
+
+        markdown_content = (
+            f"---\n"
+            f"name: {slug}\n"
+            f"description: {clean_desc}\n"
+            f"---\n\n"
+            f"# System Instructions\n"
+            f"{system_header}\n\n"
+            f"---\n\n"
+            f"# Agent Persona\n"
+            f"{body_clean}\n\n"
+            f"---\n\n"
+            f"# Execution Mode\n"
+            f"{mode_section}\n"
+            f"{toolbox_section}\n"
+        )
+
+        skill_target_dir = os.path.join(ANTIGRAVITY_SKILLS_DIR, slug)
+        ensure_dir(skill_target_dir)
+
+        path = os.path.join(skill_target_dir, "SKILL.md")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(markdown_content)
+
+    print(f"   Generated {len(agents)} encapsulated Antigravity skills.")
+
+def generate_antigravity_agents(agents: List[Dict[str, Any]]) -> None:
+    """Generate stateful Antigravity Background Agents as strict JSON structures."""
+    print(f"🤖 Generating Antigravity Background Agents in {ANTIGRAVITY_AGENTS_DIR}...")
+    ensure_dir(ANTIGRAVITY_AGENTS_DIR)
+
+    generated_count = 0
+
+    for agent in agents:
+        slug = agent["slug"]
+        clean_desc = agent["role"].replace('"', "'")
+        runtime_config = get_agent_runtime_config(slug, agent["type"])
+
+        # Typsicherer Aufbau des Runtime-Dictionaries
+        runtime_dict: Dict[str, Any] = {
+            "async": True,
+            "sandbox": "nsjail",
+            "thinking_config": {
+                "mode": runtime_config["mode"]
+            }
+        }
+
+        # Budget wird nur injiziert, wenn der Mode nicht "off" ist
+        if runtime_config["mode"] != "off":
+            runtime_dict["thinking_config"]["thinking_budget"] = runtime_config["budget"]
+
+        # Komplette JSON-Repräsentation des Agenten
+        agent_data: Dict[str, Any] = {
+            "name": slug,
+            "type": "agent",
+            "description": clean_desc,
+            "model": runtime_config["model_id"],
+            "runtime": runtime_dict,
+            "skills": [slug],
+            "blueprint_note": f"This stateful background layer instantiates the identity mesh for the active task. It dynamically binds and inherits the logic from the skill: .agents/skills/{slug}/SKILL.md."
+        }
+
+        agent_target_dir = os.path.join(ANTIGRAVITY_AGENTS_DIR, slug)
+        ensure_dir(agent_target_dir)
+
+        path = os.path.join(agent_target_dir, "agent.json")
+
+        # Sauberes, eingerücktes Schreiben der JSON-Datei
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(agent_data, f, indent=2, ensure_ascii=False)
+
+        generated_count += 1
+
+    print(f"   Generated {generated_count} stateful background agents (JSON formatted).")
+
+def main() -> None:
+    all_agents: List[Dict[str, Any]] = []
+    global_headers: Dict[str, str] = {}
 
     for source in SOURCES:
         file_path = os.path.join(SCRIPT_DIR, source["file"])
@@ -307,8 +358,6 @@ def main():
 
         if source["marker"] not in full_content:
             print(f"⚠️ Warning: Marker '{source['marker']}' not found in {source['file']}.")
-            # Debugging hint
-            print(f"   (Check if header in .md file matches: '{source['marker']}')")
             continue
 
         parts = full_content.split(source["marker"])
@@ -332,7 +381,8 @@ def main():
         print(f"   Found {len(agents)} agents.")
 
     generate_copilot_files(global_headers, all_agents)
-    generate_gemini_commands(global_headers, all_agents)
+    generate_antigravity_skills(global_headers, all_agents)
+    generate_antigravity_agents(all_agents)
     generate_aemacs_native_files(global_headers, all_agents)
 
     print("\n✅ Done! Æmacs AI System synced.")
