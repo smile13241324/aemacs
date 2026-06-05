@@ -1,16 +1,17 @@
 """Install Aemacs AI Agents for GitHub Copilot and Antigravity CLI."""
 
+import json
 import os
 import re
+import shutil
 from typing import List, Dict, Any, Final, Optional
 
 # ==========================================
-#  AEMACS AGENT BUILDER (ANTIGRAVITY COMPLIANT)
+#  AEMACS AGENT BUILDER
 # ==========================================
 
 SCRIPT_DIR: Final[str] = os.path.dirname(os.path.abspath(__file__))
 BASE_DIR: Final[str] = ".github"
-GEMINI_CMD_DIR: Final[str] = os.path.join(".gemini", "commands")
 AEMACS_AGENT_DIR: Final[str] = os.path.join(".aemacs", "agents")
 ANTIGRAVITY_SKILLS_DIR: Final[str] = os.path.join(".agents", "skills")
 ANTIGRAVITY_AGENTS_DIR: Final[str] = os.path.join(".agents", "agents")
@@ -41,66 +42,43 @@ SOURCES: Final[List[Dict[str, str]]] = [
 ]
 
 NAME_MAPPING: Final[Dict[str, str]] = {
-    # Strategists
-    "professor": "professor",
-    "mckarthy": "professor",
-    "kael": "kaelthas",
-    "bob": "bob",
-    "lector": "lector",
-    "freud": "freud",
-    "griznak": "griznak",
-    "orb": "orb",
-    "magos": "magos",
-    "scribe": "veridian",
-    "reginald": "reginald",
-    "kallista": "kallista",
-    "mopfl": "mopfl",
-    "einafetz": "mopfl",
-
-    # Specialists
-    "spacky": "spacky",
-    "bzzrts": "bzzrts",
-    "vala": "vala",
-    "nexus": "nexus",
-    "marjin": "marjin",
-    "dok": "dok",
-    "golem": "golem",
-    "skeek": "skeek",
-    "don": "don",
-    "kairon": "kairon",
-    "nagah": "nagah",
-    "bwah": "bwah",
-    "resonance": "resonance",
-    "haskell": "resonance",
-    "zolg": "zolg",
-    "clojure": "zolg",
-
-    # Simulators
-    "chen": "chen",
-    "vlad": "vlad",
-    "serge": "serge",
-    "noobie": "noobie",
-    "sarah": "sarah"
+    "professor": "professor", "mckarthy": "professor", "kael": "kaelthas",
+    "bob": "bob", "lector": "lector", "freud": "freud", "griznak": "griznak",
+    "orb": "orb", "magos": "magos", "scribe": "veridian", "reginald": "reginald",
+    "kallista": "kallista", "mopfl": "mopfl", "einafetz": "mopfl",
+    "spacky": "spacky", "bzzrts": "bzzrts", "vala": "vala", "nexus": "nexus",
+    "marjin": "marjin", "dok": "dok", "golem": "golem", "skeek": "skeek",
+    "don": "don", "kairon": "kairon", "nagah": "nagah", "bwah": "bwah",
+    "resonance": "resonance", "haskell": "resonance", "zolg": "zolg",
+    "clojure": "zolg", "chen": "chen", "vlad": "vlad", "serge": "serge",
+    "noobie": "noobie", "sarah": "sarah"
 }
 
 PROFILE_MAP: Final[Dict[str, str]] = {
-    "mopfl": "ai/profiles/config_wizard.md",
-    "spacky": "ai/profiles/elisp.md",
-    "bzzrts": "ai/profiles/gfx.md",
-    "nexus": "ai/profiles/layers.md",
-    "vala": "ai/profiles/ci_github.md",
-    "don": "ai/profiles/rust_testing.md",
-    "golem": "ai/profiles/doc.md",
-    "kairon": "ai/profiles/rust.md",
-    "nagah": "ai/profiles/python.md",
-    "bwah": "ai/profiles/go.md",
-    "resonance": "ai/profiles/haskell.md",
-    "zolg": "ai/profiles/clojure.md"
+    "mopfl": "ai/profiles/config_wizard.md", "spacky": "ai/profiles/elisp.md",
+    "bzzrts": "ai/profiles/gfx.md", "nexus": "ai/profiles/layers.md",
+    "vala": "ai/profiles/ci_github.md", "don": "ai/profiles/rust_testing.md",
+    "golem": "ai/profiles/doc.md", "kairon": "ai/profiles/rust.md",
+    "nagah": "ai/profiles/python.md", "bwah": "ai/profiles/go.md",
+    "resonance": "ai/profiles/haskell.md", "zolg": "ai/profiles/clojure.md"
 }
 
-def ensure_dir(directory: str) -> None:
-    if not os.path.exists(directory):
-        os.makedirs(directory)
+# Standard-Tool-Set für die Antigravity Engine
+DEFAULT_AGENT_TOOLS: Final[List[str]] = [
+    "view_file",
+    "list_dir",
+    "write_to_file",
+    "replace_file_content",
+    "multi_replace_file_content",
+    "run_command",
+    "grep_search"
+]
+
+def purge_and_ensure_dir(directory: str) -> None:
+    """Idempotent directory management: Cleans up remnants and rebuilds the folder from scratch."""
+    if os.path.exists(directory):
+        shutil.rmtree(directory)
+    os.makedirs(directory)
 
 def clean_slug(name: str) -> str:
     name_lower = name.lower()
@@ -111,40 +89,12 @@ def clean_slug(name: str) -> str:
 
 def get_mode_text(agent_type: str) -> str:
     if agent_type == "strategic":
-        return """
-MODE: STRATEGIC PLANNING & ARCHITECTURE
-(Focus on high-level design, user stories, and requirements. Use Github MCP if available to read issues.)
-"""
+        return "\nMODE: STRATEGIC PLANNING & ARCHITECTURE\n(Focus on high-level design, user stories, and requirements. Use Github MCP if available to read issues.)\n"
     elif agent_type == "simulation":
-        return """
-MODE: USER SIMULATION
-(Focus on subjective feedback, usability, and constraints. Do not write code.)
-"""
+        return "\nMODE: USER SIMULATION\n(Focus on subjective feedback, usability, and constraints. Do not write code.)\n"
     elif agent_type == "specialist":
-        return """
-MODE: IMPLEMENTATION & CRAFTSMANSHIP
-(Focus on concrete code, strict rules, and technical correctness. Adhere to the loaded profile.)
-"""
+        return "\nMODE: IMPLEMENTATION & CRAFTSMANSHIP\n(Focus on concrete code, strict rules, and technical correctness. Adhere to the loaded profile.)\n"
     return ""
-
-def get_agent_runtime_config(slug: str, agent_type: str) -> Dict[str, Any]:
-    """
-    Determiniert die exakte Laufzeitkonfiguration basierend auf der Architektur-Matrix.
-    """
-    # 1. Pure Coding / Deterministic execution (Specialists wie Kairon, Nagah)
-    if agent_type == "specialist":
-        return {
-            "model_id": "gemini-3.5-flash",
-            "mode": "off",
-            "budget": 0
-        }
-
-    # 2. Tactical Planning & Analysis (Strategists & Simulators)
-    return {
-        "model_id": "gemini-3.5-flash",
-        "mode": "high",
-        "budget": 8192
-    }
 
 def clean_header_content(header: str) -> str:
     return re.sub(r'(\n\s*[-*]{3,}\s*)+$', '', header.strip()).strip()
@@ -191,12 +141,12 @@ def parse_agents_from_text(roster_content: str, source_type: str, split_regex: s
 def generate_copilot_files(global_headers: Dict[str, str], agents: List[Dict[str, Any]]) -> None:
     print(f"📝 Generating GitHub Copilot Agents in {BASE_DIR}/agents/...")
     agents_dir = os.path.join(BASE_DIR, "agents")
-    ensure_dir(agents_dir)
+    purge_and_ensure_dir(agents_dir)
 
     for agent in agents:
         filename = f"{agent['slug']}.agent.md"
         path = os.path.join(agents_dir, filename)
-        target_model = "gpt-5.4" # Fallback für Copilot
+        target_model = "gpt-5.4"
 
         yaml = f"---\nname: {agent['slug']}\ndescription: {agent['role']}\nmodel: {target_model}\n---"
         context = global_headers.get(agent["type"], "")
@@ -221,7 +171,7 @@ def generate_copilot_files(global_headers: Dict[str, str], agents: List[Dict[str
 
 def generate_aemacs_native_files(global_headers: Dict[str, str], agents: List[Dict[str, Any]]) -> None:
     print(f"🐍 Generating Native Æmacs Agents in {AEMACS_AGENT_DIR}...")
-    ensure_dir(AEMACS_AGENT_DIR)
+    purge_and_ensure_dir(AEMACS_AGENT_DIR)
 
     for agent in agents:
         slug = agent["slug"]
@@ -250,7 +200,7 @@ def generate_aemacs_native_files(global_headers: Dict[str, str], agents: List[Di
 
 def generate_antigravity_skills(global_headers: Dict[str, str], agents: List[Dict[str, Any]]) -> None:
     print(f"🌌 Generating Antigravity CLI Skills in {ANTIGRAVITY_SKILLS_DIR}...")
-    ensure_dir(ANTIGRAVITY_SKILLS_DIR)
+    purge_and_ensure_dir(ANTIGRAVITY_SKILLS_DIR)
 
     for agent in agents:
         slug = agent["slug"]
@@ -285,7 +235,7 @@ def generate_antigravity_skills(global_headers: Dict[str, str], agents: List[Dic
         )
 
         skill_target_dir = os.path.join(ANTIGRAVITY_SKILLS_DIR, slug)
-        ensure_dir(skill_target_dir)
+        os.makedirs(skill_target_dir, exist_ok=True)
 
         path = os.path.join(skill_target_dir, "SKILL.md")
         with open(path, "w", encoding="utf-8") as f:
@@ -293,54 +243,52 @@ def generate_antigravity_skills(global_headers: Dict[str, str], agents: List[Dic
 
     print(f"   Generated {len(agents)} encapsulated Antigravity skills.")
 
-def generate_antigravity_agents(agents: List[Dict[str, Any]]) -> None:
-    """Generate stateful Antigravity Background Agents as strict JSON structures."""
+def generate_antigravity_agents(global_headers: Dict[str, str], agents: List[Dict[str, Any]]) -> None:
+    """Generate stateful Antigravity Background Agents with strict customAgentSpec schema."""
     print(f"🤖 Generating Antigravity Background Agents in {ANTIGRAVITY_AGENTS_DIR}...")
-    ensure_dir(ANTIGRAVITY_AGENTS_DIR)
+    purge_and_ensure_dir(ANTIGRAVITY_AGENTS_DIR)
 
     generated_count = 0
 
     for agent in agents:
         slug = agent["slug"]
-        clean_desc = agent["role"].replace('"', "'")
-        runtime_config = get_agent_runtime_config(slug, agent["type"])
 
-        # Typsicherer Aufbau des Runtime-Dictionaries
-        runtime_dict: Dict[str, Any] = {
-            "async": True,
-            "sandbox": "nsjail",
-            "thinking_config": {
-                "mode": runtime_config["mode"]
+        clean_desc = agent["role"].replace('"', "'")
+        system_header = global_headers.get(agent["type"], "")
+        mode_section = get_mode_text(agent["type"])
+        body_clean = clean_body_content(agent["body"])
+        full_system_prompt = f"{system_header}\n\n---\n\nIdentity: {agent['name']}\n{body_clean}\n\n---\n\n{mode_section}"
+
+        # Strictly Protobuf-compliant schema with required fields and no extraneous properties
+        agent_data: Dict[str, Any] = {
+            "name": slug,
+            "displayName": agent["name"],
+            "description": clean_desc,
+            "hidden": False,
+            "customAgentSpec": {
+                "customAgent": {
+                    "systemPromptSections": [
+                        {
+                            "title": "Instructions",
+                            "content": full_system_prompt
+                        }
+                    ],
+                    "toolNames": DEFAULT_AGENT_TOOLS
+                }
             }
         }
 
-        # Budget wird nur injiziert, wenn der Mode nicht "off" ist
-        if runtime_config["mode"] != "off":
-            runtime_dict["thinking_config"]["thinking_budget"] = runtime_config["budget"]
-
-        # Komplette JSON-Repräsentation des Agenten
-        agent_data: Dict[str, Any] = {
-            "name": slug,
-            "type": "agent",
-            "description": clean_desc,
-            "model": runtime_config["model_id"],
-            "runtime": runtime_dict,
-            "skills": [slug],
-            "blueprint_note": f"This stateful background layer instantiates the identity mesh for the active task. It dynamically binds and inherits the logic from the skill: .agents/skills/{slug}/SKILL.md."
-        }
-
         agent_target_dir = os.path.join(ANTIGRAVITY_AGENTS_DIR, slug)
-        ensure_dir(agent_target_dir)
+        os.makedirs(agent_target_dir, exist_ok=True)
 
         path = os.path.join(agent_target_dir, "agent.json")
 
-        # Sauberes, eingerücktes Schreiben der JSON-Datei
         with open(path, "w", encoding="utf-8") as f:
             json.dump(agent_data, f, indent=2, ensure_ascii=False)
 
         generated_count += 1
 
-    print(f"   Generated {generated_count} stateful background agents (JSON formatted).")
+    print(f"   Generated {generated_count} stateful background agents (Protobuf strict schema).")
 
 def main() -> None:
     all_agents: List[Dict[str, Any]] = []
@@ -382,10 +330,10 @@ def main() -> None:
 
     generate_copilot_files(global_headers, all_agents)
     generate_antigravity_skills(global_headers, all_agents)
-    generate_antigravity_agents(all_agents)
+    generate_antigravity_agents(global_headers, all_agents)
     generate_aemacs_native_files(global_headers, all_agents)
 
-    print("\n✅ Done! Æmacs AI System synced.")
+    print("\n✅ Done! Æmacs AI System synced with Protobuf compliance.")
 
 if __name__ == "__main__":
     main()
