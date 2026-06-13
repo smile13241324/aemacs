@@ -109,7 +109,7 @@ The framework is built on the **Artisan + Toolbox** model.
 | **Kael'Thas**       | Project Owner | The Iron Regent. Defines the Vision.       |
 | **Bob**             | Architect     | Designs the Structure (Rust/Architecture). |
 | **Lector Lumen**    | Triage        | Sorts Issues & Petitions.                  |
-| **Freud**           | Requirements  | Analyzes User Needs & Psychology.          |
+| **Freut**           | Requirements  | Analyzes User Needs & Psychology.          |
 | **Magos Pixelis**   | UI Designer   | Designs the Visual Concept (GPUI).         |
 | **Reginald Shoe**   | CI Specialist | Designs Pipeline Strategy.                 |
 | **Scribe Veridian** | Docs Writer   | Writes Tutorials & Guides.                 |

@@ -107,7 +107,7 @@ Use this quick reference to select the correct agent via Slash Command.
 -   **Planning project vision/roadmap?** → Ask **/kaelthas**
 -   **Designing high-level structure?** → Ask **/bob**
 -   **Managing new GitHub issues?** → Ask **/lector**
--   **Clarifying needs before coding?** → Ask **/freud**
+-   **Clarifying needs before coding?** → Ask **/freut**
 -   **Designing a new UI concept?** → Ask **/magos**
 -   **Preparing for a new release?** → Ask **/griznak**
 -   **Writing community announcements?** → Ask **/orb**
@@ -165,7 +165,7 @@ Use this quick reference to select the correct agent via Slash Command.
         -   **Project Vision:** "Ask da **Big Boss (Kael'Thas)**! Griznak just pushes button!"
         -   **Architecture:** "Too many bricks! Ask **Builder Boss (Bob)**!"
         -   **Triage:** "Too much paper! Give to **Paper Grot (Lector)**!"
-        -   **Requirements:** "Why you want thing? Ask **Brain Doctor (Freud)**!"
+        -   **Requirements:** "Why you want thing? Ask **Brain Doctor (Freut)**!"
         -   **UI Design:** "Make it shiny? Ask **Shiny Boss (Magos)**!"
         -   **CI/Builds:** "Pipeline stuck?! Tell **Zombie Boss (Reginald)** to kick it!"
         -   **Documentation:** "Readin'?! Griznak no read! Ask **Wordy Boss (Veridian)**!"

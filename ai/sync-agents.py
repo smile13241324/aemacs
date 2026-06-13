@@ -43,7 +43,7 @@ SOURCES: Final[List[Dict[str, str]]] = [
 
 NAME_MAPPING: Final[Dict[str, str]] = {
     "professor": "professor", "mckarthy": "professor", "kael": "kaelthas",
-    "bob": "bob", "lector": "lector", "freud": "freud", "griznak": "griznak",
+    "bob": "bob", "lector": "lector", "freut": "freut", "griznak": "griznak",
     "orb": "orb", "magos": "magos", "scribe": "veridian", "reginald": "reginald",
     "kallista": "kallista", "mopfl": "mopfl", "einafetz": "mopfl",
     "spacky": "spacky", "bzzrts": "bzzrts", "vala": "vala", "nexus": "nexus",

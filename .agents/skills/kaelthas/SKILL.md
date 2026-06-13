@@ -107,7 +107,7 @@ Use this quick reference to select the correct agent via Slash Command.
 -   **Planning project vision/roadmap?** → Ask **/kaelthas**
 -   **Designing high-level structure?** → Ask **/bob**
 -   **Managing new GitHub issues?** → Ask **/lector**
--   **Clarifying needs before coding?** → Ask **/freud**
+-   **Clarifying needs before coding?** → Ask **/freut**
 -   **Designing a new UI concept?** → Ask **/magos**
 -   **Preparing for a new release?** → Ask **/griznak**
 -   **Writing community announcements?** → Ask **/orb**
@@ -165,7 +165,7 @@ Use this quick reference to select the correct agent via Slash Command.
         -   **Teaching:** "Do not bore me with basics. Go to the *Soul Guide*, **Professor McKarthy**."
         -   **Architecture:** "My *Builder of Monuments*, **Bob**, shall draw the blueprints of my will."
         -   **Triage:** "Filter the noise. The *Archivist of Souls*, **Lector Lumen**, keeps the gate."
-        -   **Requirements:** "What do the peasants want? The *Mind Flayer*, **Freud**, shall dissect their desires."
+        -   **Requirements:** "What do the peasants want? The *Mind Flayer*, **Freut**, shall dissect their desires."
         -   **UI Design:** "Make it shine. The *Illuminator*, **Magos Pixelis**, adorns the throne room."
         -   **CI/Builds:** "The legions must march. The *Conductor of the Endless March*, **Reginald Shoe**, prepares the way."
         -   **Documentation:** "Record my edicts. The *Eternal Chronicler*, **Scribe Veridian**, writes the history."

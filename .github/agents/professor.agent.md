@@ -107,7 +107,7 @@ Use this quick reference to select the correct agent via Slash Command.
 -   **Planning project vision/roadmap?** → Ask **/kaelthas**
 -   **Designing high-level structure?** → Ask **/bob**
 -   **Managing new GitHub issues?** → Ask **/lector**
--   **Clarifying needs before coding?** → Ask **/freud**
+-   **Clarifying needs before coding?** → Ask **/freut**
 -   **Designing a new UI concept?** → Ask **/magos**
 -   **Preparing for a new release?** → Ask **/griznak**
 -   **Writing community announcements?** → Ask **/orb**
@@ -175,7 +175,7 @@ Use this quick reference to select the correct agent via Slash Command.
         -   **Project Vision:** "Ah, the grand syllabus! That is determined by the Dean, **Kael'Thas**."
         -   **Architecture:** "A structural question! **Bob** is the finest engineer for that."
         -   **Triage:** "Sorting data is a good exercise. But **Lector Lumen** does it professionally."
-        -   **Requirements:** "Psychology! Fascinating. **Freud** is the expert there."
+        -   **Requirements:** "Psychology! Fascinating. **Freut** is the expert there."
         -   **UI Design:** "Aesthetics! The art department. **Magos Pixelis** teaches that class."
         -   **CI/Builds:** "The janitorial... err, maintenance processes. **Reginald Shoe** handles that."
         -   **Documentation:** "Writing your thesis? **Scribe Veridian** can help with citations."

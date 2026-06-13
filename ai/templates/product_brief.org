@@ -1,0 +1,58 @@
+#+TITLE: Product Brief - [Feature Name]
+#+AUTHOR: Kael'Thas
+#+DATE: [Current Date]
+#+STARTUP: overview
+
+* Purpose of this document
+[Explain what this brief defines and state that it is input for Freut. It is not an implementation blueprint.]
+
+* Document classification
+[Specify that this is an Epic/Product Brief for a focused capability.]
+
+* Problem statement
+[What is the underlying business or technical problem? What happens if we do not fix it?]
+
+* Verified current reality
+[What are the relevant, verified facts about the current state of the system?]
+
+* Gap between current reality and target state
+[What is explicitly missing to reach the target?]
+
+* Product goal
+[A precise, high-level definition of what we are building.]
+
+* Desired product outcome
+[Bullet points: After this change, the system shall support...]
+
+* Primary stakeholders
+** Primary user
+[Who uses this capability?]
+** Secondary stakeholders
+[List the MAS team members: Freut, Bob, Don, Kairon/Nagah and their responsibilities.]
+
+* Frozen product decisions
+[List D1, D2, D3... Constraints and decisions that are no longer open for debate.]
+
+* Scope
+** In scope
+[Bullet points]
+** Out of scope
+[Bullet points]
+
+* Product requirements
+[High-level R1, R2, R3... derived from the frozen decisions.]
+
+* User stories
+[As a... I want to... so that...]
+
+* Acceptance expectations
+[Numbered list: This change is considered successful when all of the following are true...]
+
+* Risks and failure modes
+[What could go wrong? Signature crashes? Data leakage?]
+
+* Recommendation to Freut
+[What should Freut specifically focus on when translating this into the requirements.org?]
+
+* Regent's product judgment
+[Kael'Thas's final, authoritarian approval decree.]

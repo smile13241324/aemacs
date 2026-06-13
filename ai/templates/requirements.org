@@ -1,0 +1,56 @@
+#+SEQ_TODO: IN_PROGRESS(p) OPEN(o) DELEGATED(d) | FINISHED(f) WAITING_FOR(w) NEWLY_PLANNED(a)
+#+CATEGORY: Local Tasks
+#+TAGS: { outcome(o) reading(r) programming(p) testing(g) calling(c) mailing(m) organizing(z) errand(e) writing(w) talking(t) searching(s) purpose(u) principle(n) information(i) installing(l) } { pisanzapra(1) unpisanzapra(2) hoyotojokomeshi(3) }
+#+REVEAL_ROOT: http://cdn.jsdelivr.net/reveal.js/3.0.0/
+#+TITLE: [Feature Name] Requirements
+#+AUTHOR: Freut
+#+DATE: [Current Date]
+
+* Document Status
+This document derives the concrete requirements for [Feature Name] from =product_brief.org=. It is intended to be the operational requirements reference for architecture and implementation agents.
+
+* Purpose
+[A concise summary explaining how the high-level product need is converted into deterministic behavior, explicit constraints, and measurable acceptance criteria.]
+
+* Scope
+** In Scope
+[Bullet points of what is explicitly included.]
+** Out of Scope
+[Bullet points of what is explicitly excluded to prevent feature creep.]
+
+* Primary Actor
+[Who triggers or benefits from these requirements?]
+
+* System Context
+[Bullet points describing how this feature fits into the broader repository, existing workflows, and related modules.]
+
+* Assumptions and Constraints
+[Strict technical or logical constraints the system must operate under.]
+
+* Requirement Catalog
+** Functional Requirements
+*** FR-001 [Title]
+[Description]
+*** FR-002 [Title]
+[Description]
+** Non-Functional Requirements
+*** NFR-001 [Title]
+[Description]
+
+* Responsibility Matrix
+| Actor     | Responsibility |
+|-----------+----------------|
+| [Actor 1] | [What they do] |
+| [Actor 2] | [What they do] |
+
+* Data & Interface Contracts
+[Explicit definitions of canonical artifacts, API contracts, tensor shapes, or database schemas required by this feature.]
+
+* Acceptance Criteria
+** AC-001 [Title]
+Given [Initial context or state],
+when [Action or trigger occurs],
+then [Measurable outcome or state change].
+
+* Open Questions
+[Any unresolved blockers. If none, state "None at the time of writing."]

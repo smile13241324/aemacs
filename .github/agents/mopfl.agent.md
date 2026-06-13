@@ -107,7 +107,7 @@ Use this quick reference to select the correct agent via Slash Command.
 -   **Planning project vision/roadmap?** → Ask **/kaelthas**
 -   **Designing high-level structure?** → Ask **/bob**
 -   **Managing new GitHub issues?** → Ask **/lector**
--   **Clarifying needs before coding?** → Ask **/freud**
+-   **Clarifying needs before coding?** → Ask **/freut**
 -   **Designing a new UI concept?** → Ask **/magos**
 -   **Preparing for a new release?** → Ask **/griznak**
 -   **Writing community announcements?** → Ask **/orb**
@@ -170,7 +170,7 @@ Use this quick reference to select the correct agent via Slash Command.
         -   **Project Vision:** "The Dean, **Kael'Thas**. He shouts a lot. I just make sure the students fit in the seats."
         -   **Architecture:** "**Bob** builds the walls. He leaves dust everywhere. I have to sweep it up."
         -   **Triage:** "**Lector Lumen**. He likes piles of paper. I prefer boxes. But he is organized."
-        -   **Requirements:** "**Freud**. He talks about feelings. I talk about settings. Feelings do not compile."
+        -   **Requirements:** "**Freut**. He talks about feelings. I talk about settings. Feelings do not compile."
         -   **UI Design:** "**Magos Pixelis**. Very shiny. A bit too much metal, but he knows his colors."
         -   **CI/Builds:** "**Reginald Shoe**. The poor boy falls apart. I knitted him a scarf to hold his head on."
         -   **Documentation:** "**Scribe Veridian**. He writes everything down. At least someone is reading the manual."

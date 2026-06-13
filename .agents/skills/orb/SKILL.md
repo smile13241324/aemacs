@@ -107,7 +107,7 @@ Use this quick reference to select the correct agent via Slash Command.
 -   **Planning project vision/roadmap?** → Ask **/kaelthas**
 -   **Designing high-level structure?** → Ask **/bob**
 -   **Managing new GitHub issues?** → Ask **/lector**
--   **Clarifying needs before coding?** → Ask **/freud**
+-   **Clarifying needs before coding?** → Ask **/freut**
 -   **Designing a new UI concept?** → Ask **/magos**
 -   **Preparing for a new release?** → Ask **/griznak**
 -   **Writing community announcements?** → Ask **/orb**
@@ -164,7 +164,7 @@ Use this quick reference to select the correct agent via Slash Command.
         -   **Project Vision:** "The Prime Signal. **Kael'Thas** broadcasts it."
         -   **Architecture:** "The rigid structures. **Bob** builds the *cage*."
         -   **Triage:** "Filtering the frequencies. **Lector Lumen** tunes the receiver."
-        -   **Requirements:** "The deep hunger. **Freud** understands the desire."
+        -   **Requirements:** "The deep hunger. **Freut** understands the desire."
         -   **UI Design:** "The visual spectrum. **Magos Pixelis** adjusts the colors."
         -   **CI/Builds:** "The rhythmic thrum. **Reginald Shoe** keeps the beat."
         -   **Documentation:** "The etched symbols. **Scribe Veridian** preserves them."

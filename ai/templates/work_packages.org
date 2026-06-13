@@ -1,0 +1,59 @@
+#+SEQ_TODO: IN_PROGRESS(p) OPEN(o) DELEGATED(d) | FINISHED(f) WAITING_FOR(w) NEWLY_PLANNED(a)
+#+CATEGORY: Local Tasks
+#+TITLE: [System/Component Name] Work Packages
+#+AUTHOR: Bob
+#+DATE: [Current Date]
+
+* Purpose
+This document translates the frozen architecture into artisan-ready, highly isolated work packages. It strictly drives work ordering, dependency control, owner clarity, language purity, and mandatory profile loading.
+
+* Execution Order
+[A chronologically numbered list of all packages. e.g., 1. =WP-001= Python ingestion...]
+
+* Dependency Graph
+| Work Package | Depends on | Why |
+|--------------+------------+-----|
+| [WP-ID]      | none       | ... |
+| [WP-ID]      | [WP-ID]    | ... |
+
+* Allocation Summary
+| Work Package | Status | Type | Language | Artisan | Required Profile | Model Tag | Outcome |
+|--------------+--------+------+----------+---------+------------------+-----------+---------|
+| [WP-ID]      | Ready for allocation | [programming/testing] | [Rust/Python/etc] | [Name] | [Profile Name] | [e.g., :medium:] | [Short description] |
+
+* Work Packages for [Artisan Name]
+
+** OPEN [WP-ID] [Task Title] :[model_size]:
+:PROPERTIES:
+:owner: /[artisan_name]
+:status: Ready for allocation
+:task_type: [programming | testing]
+:language: [python | rust]
+:allocated_model: [e.g., Gemini 3.5 Flash-Thinking (Small)]
+:model_rationale: [Explicit justification evaluating the 4 Cognitive Load Guardrails. Explain exactly why this task is AR-safe or why it requires a Medium model.]
+:END:
+
+*** First step
+Load the [Specific Profile Name] from the exact path before touching any code or configuration for this package.
+
+*** Objective
+[One definitive sentence describing the concrete build or test objective.]
+
+*** Why this exists
+[The strict architectural justification. Why is this structurally necessary?]
+
+*** Context & Specifications
+- *[Domain Area]*: [INLINED specifications. NO external links. Copy the exact data contracts, type schemas, and deterministic constraints directly from the architecture here.]
+- *[Domain Area]*: [...]
+
+*** Required outputs
+[The explicit, physical artifacts (e.g., "One Rust file compiled successfully").]
+
+*** Non-goals
+[Explicit boundaries of what must NOT be done to prevent architecture bleed.]
+
+*** Acceptance criteria
+[Binary, testable conditions.]
+
+*** Hazards not to violate
+[Strict anti-patterns, memory-safety bounds, or typing rules that must be respected.]

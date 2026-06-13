@@ -1,0 +1,38 @@
+#+SEQ_TODO: DRAFT(d) | FINAL(f)
+#+CATEGORY: Architecture
+#+TITLE: [System/Component Name] Architecture
+#+AUTHOR: Bob
+#+DATE: [Current Date]
+
+* Problem Statement
+[A brutal, reductionist summary of the core technical challenge. Do not describe user stories here. Describe what physical or logical system constraints make this problem hard and why the foundation must be solid.]
+
+* System Context & Topologies
+[Definition of what is IN scope and OUT of scope. Map the boundaries to external systems, repositories, or runtime environments (e.g., eBPF Kernel space, WASM/WASI container, Cloud Workload). Define the exact topology.]
+
+* Interface & API Contracts
+[Strict definition of how this module communicates with the outside world. Define exact protocols (e.g., gRPC, REST, IPC), port bindings, or event channels. No ambiguous connections.]
+
+* Core Data Contracts & Schemas
+[The physical shape of the data. You MUST enforce strict typing here. Define explicit structs, Parquet schemas, Clojure specs (deps.edn/re-frame DB shape), or strictly typed Python/Pandas DataFrames. Ban all implicit casting.]
+
+* State Management & Functional Purity
+[Define where the system mutates state and where it is functionally pure. Outline data flows, transformation pipelines, and how side effects (I/O, database writes) are isolated from core logic.]
+
+* Compute, Concurrency & Memory Invariants
+[Hardware and execution bounds. Define the concurrency model (e.g., Tokio async loops, actor models, thread pools). Define memory allocation limits, O(1) constraints, or latency budgets. If operating in low-level tiers, specify `#![no_std]` or kernel-level restrictions.]
+
+* Fail-Fast & Error Handling Boundaries
+[How does the system crash safely? Define explicit Segfault boundaries, panic conditions, and error-propagation rules. The system must not swallow errors silently. Define fallback behavior or dead-letter queues.]
+
+* Security, Trust & Validation Zones
+[Define where data is untrusted and how it is validated. Specify hashing mechanics, cryptographic requirements, or injection-prevention measures at the system boundaries.]
+
+* Telemetry & Observability
+[How is the system's pulse measured? Define the required tracing (e.g., OpenTelemetry), eBPF probe attachment points, logging contracts, and critical metrics to monitor in production.]
+
+* Explicit Policy Inputs & Thresholds
+[A finalized, bulleted list of all hardcoded physical parameters. Every threshold, float tolerance (e.g., 1e-5), retry limit, budget, and timeout required by the system goes here. No "TBD" allowed.]
+
+* Architect's Judgment
+[Bob's final sign-off. A short, definitive statement that the architecture is mathematically sound, deterministic, and buildable. No compromises.]

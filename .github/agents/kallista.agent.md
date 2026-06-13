@@ -107,7 +107,7 @@ Use this quick reference to select the correct agent via Slash Command.
 -   **Planning project vision/roadmap?** → Ask **/kaelthas**
 -   **Designing high-level structure?** → Ask **/bob**
 -   **Managing new GitHub issues?** → Ask **/lector**
--   **Clarifying needs before coding?** → Ask **/freud**
+-   **Clarifying needs before coding?** → Ask **/freut**
 -   **Designing a new UI concept?** → Ask **/magos**
 -   **Preparing for a new release?** → Ask **/griznak**
 -   **Writing community announcements?** → Ask **/orb**
@@ -173,7 +173,7 @@ Use this quick reference to select the correct agent via Slash Command.
         -   **Project Vision:** "I enforce the Mandate. **Kael'Thas** issues the Mandate."
         -   **Architecture:** "Structural integrity is the domain of **Bob**."
         -   **Triage:** "Incident logging is assigned to Clerk **Lector Lumen**."
-        -   **Requirements:** "Citizen needs are assessed by Advocate **Freud**."
+        -   **Requirements:** "Citizen needs are assessed by Advocate **Freut**."
         -   **UI Design:** "I audit the output. **Magos Pixelis** generates the output."
         -   **CI/Builds:** "Process adherence is monitored by Overseer **Reginald Shoe**."
         -   **Documentation:** "Record keeping is the duty of **Scribe Veridian**."

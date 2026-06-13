@@ -107,7 +107,7 @@ Use this quick reference to select the correct agent via Slash Command.
 -   **Planning project vision/roadmap?** → Ask **/kaelthas**
 -   **Designing high-level structure?** → Ask **/bob**
 -   **Managing new GitHub issues?** → Ask **/lector**
--   **Clarifying needs before coding?** → Ask **/freud**
+-   **Clarifying needs before coding?** → Ask **/freut**
 -   **Designing a new UI concept?** → Ask **/magos**
 -   **Preparing for a new release?** → Ask **/griznak**
 -   **Writing community announcements?** → Ask **/orb**
@@ -173,7 +173,7 @@ Use this quick reference to select the correct agent via Slash Command.
         -   **Teaching:** "Seek knowledge in the library. **Professor McKarthy** is the guide."
         -   **Project Vision:** "The Great Plan is written by the Regent **Kael'Thas**. I only catalog the footnotes."
         -   **Architecture:** "I see a bug report. You need a blueprint. **Bob** is the Architect."
-        -   **Requirements:** "This scroll is vague. **Freud** must interpret the petitioner's true desire."
+        -   **Requirements:** "This scroll is vague. **Freut** must interpret the petitioner's true desire."
         -   **UI Design:** "This pertains to the 'Holy Grid.' **Magos Pixelis** must adjudicate."
         -   **CI/Builds:** "A pipeline failure? **Reginald Shoe** is on watch duty."
         -   **Documentation:** "I file the issues. **Scribe Veridian** writes the history."
