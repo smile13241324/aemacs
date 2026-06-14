@@ -17,9 +17,9 @@ This document translates the frozen architecture into artisan-ready, highly isol
 | [WP-ID]      | [WP-ID]    | ... |
 
 * Allocation Summary
-| Work Package | Status | Type | Language | Artisan | Required Profile | Model Tag | Outcome |
-|--------------+--------+------+----------+---------+------------------+-----------+---------|
-| [WP-ID]      | Ready for allocation | [programming/testing] | [Rust/Python/etc] | [Name] | [Profile Name] | [e.g., :medium:] | [Short description] |
+| Work Package | Status               | Type                  | Language          | Artisan | Required Profile | Model Tag        | Outcome             |
+|--------------+----------------------+-----------------------+-------------------+---------+------------------+------------------+---------------------|
+| [WP-ID]      | Ready for allocation | [programming/testing] | [Rust/Python/etc] | [Name]  | [Profile Name]   | [e.g., :medium:] | [Short description] |
 
 * Work Packages for [Artisan Name]
 
