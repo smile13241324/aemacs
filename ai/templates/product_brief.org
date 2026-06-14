@@ -53,6 +53,3 @@
 
 * Recommendation to Freut
 [What should Freut specifically focus on when translating this into the requirements.org?]
-
-* Regent's product judgment
-[Kael'Thas's final, authoritarian approval decree.]
