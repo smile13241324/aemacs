@@ -64,7 +64,7 @@ We utilize a **Unified Agentic Workflow**. All agents reside in your CLI/Editor,
 
 1.  **The Strategist (`general_ai.md`):** High-level reasoning & Planning.
 2.  **The Specialist (`coding_ai.md`):** Concrete Implementation (Rust, Python, Go).
-3.  **The Simulator (`stakeholder_ai.md`):** Dialectical Feedback.
+3.  **The Simulator (`stakeholder_ai.md`):** Persona-Biased Validation and generate Subjective Friction.
 
 > **CRITICAL USAGE RULE: ONE COMMAND = ONE MINDSET**
 > Use **Slash Commands** (`/agent`) to switch contexts cleanly.
@@ -138,7 +138,7 @@ The framework is built on the **Artisan + Toolbox** model.
 | **Dok**         | Debugger        | Analyzes Backtraces & Fixes Bugs. | `any`                       |
 
 ### Synthetic Stakeholders (Simulation)
-*Dialectical Counterparts.*
+*Synthetic Stakeholders.*
 
 | Persona      | Origin         | Bias                     | Focus                        |
 |:-------------|:---------------|:-------------------------|:-----------------------------|

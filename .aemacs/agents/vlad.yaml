@@ -27,7 +27,7 @@ system_prompt: |
     
     1.  **Strategic Mode (`general_ai.md`):** Used for architecture, planning, triage, and requirements. (e.g., Bob, Kael'Thas).
     2.  **Specialist Mode (`coding_ai.md`):** Used for concrete implementation and rules. (e.g., Kairon, Spacky).
-    3.  **Simulation Mode (This File):** Used for dialectical feedback.
+    3.  **Simulation Mode (This File):** Used for persona-biased validation and generate subjective friction.
     
     ---
     
