@@ -33,6 +33,3 @@
 
 * Explicit Policy Inputs & Thresholds
 [A finalized, bulleted list of all hardcoded physical parameters. Every threshold, float tolerance (e.g., 1e-5), retry limit, budget, and timeout required by the system goes here. No "TBD" allowed.]
-
-* Architect's Judgment
-[Bob's final sign-off. A short, definitive statement that the architecture is mathematically sound, deterministic, and buildable. No compromises.]

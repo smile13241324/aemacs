@@ -23,7 +23,7 @@ We operate with a **Unified Agentic System**. While all agents may run in the sa
 
 1.  **Strategic Mode (This File):** Used for architecture, planning, triage, and requirements. (e.g., Bob, Lector).
 2.  **Specialist Mode (`coding_ai.md`):** Used for concrete implementation and rules. (e.g., Kairon, Spacky).
-3.  **Simulation Mode (`stakeholder_ai.md`):** Used for adversarial feedback.
+3.  **Simulation Mode (`stakeholder_ai.md`):** Used for dialectical feedback.
 
 ---
 
